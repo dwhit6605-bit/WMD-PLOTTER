@@ -152,9 +152,143 @@ input:checked+.slider:before{transform:translateX(16px)}
   #map-overlay{top:54px}
   #sb-time{display:none}
 }
+/* ── EULA Modal ── */
+#eula-overlay{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;padding:16px}
+#eula-modal{background:#0d1117;border:1px solid #30363d;border-radius:10px;max-width:680px;width:100%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.8);overflow:hidden}
+#eula-top{background:#161b22;border-bottom:1px solid #30363d;padding:20px 24px;display:flex;align-items:center;gap:16px;flex-shrink:0}
+#eula-top img{height:56px;width:56px;object-fit:contain;mix-blend-mode:screen;flex-shrink:0}
+#eula-top-text{flex:1}
+#eula-top-text h1{font-size:18px;font-weight:800;letter-spacing:.06em;color:#e6edf3;line-height:1.1}
+#eula-top-text h1 span{display:block;font-size:10px;font-weight:600;color:#8b949e;letter-spacing:.14em;text-transform:uppercase;margin-top:2px}
+#eula-warn-strip{background:rgba(248,81,73,.12);border-bottom:1px solid rgba(248,81,73,.35);padding:9px 24px;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:#f85149;letter-spacing:.06em;text-transform:uppercase;flex-shrink:0}
+#eula-body{overflow-y:auto;padding:20px 24px;flex:1;font-size:13px;line-height:1.7;color:#c9d1d9;scroll-behavior:smooth}
+#eula-body h2{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#8b949e;margin:18px 0 8px;padding-bottom:4px;border-bottom:1px solid #21262d}
+#eula-body h2:first-child{margin-top:0}
+#eula-body p{margin-bottom:10px}
+#eula-body ol{padding-left:20px;margin-bottom:10px}
+#eula-body ol li{margin-bottom:6px}
+#eula-body .warn-item{display:flex;gap:8px;margin-bottom:8px}
+#eula-body .warn-num{color:#f78166;font-weight:700;flex-shrink:0;min-width:18px}
+#eula-body strong{color:#e6edf3}
+#eula-body .model-limits{background:rgba(255,255,255,.04);border:1px solid #30363d;border-radius:6px;padding:10px 14px;margin:8px 0;font-size:12px}
+#eula-body .model-limits li{margin-bottom:3px;color:#8b949e}
+#eula-footer{border-top:1px solid #30363d;padding:16px 24px;flex-shrink:0;background:#161b22}
+#eula-check-row{display:flex;align-items:flex-start;gap:10px;margin-bottom:14px;cursor:pointer}
+#eula-check-row input[type=checkbox]{width:16px;height:16px;margin-top:2px;accent-color:#f78166;flex-shrink:0;cursor:pointer}
+#eula-check-row label{font-size:12px;color:#c9d1d9;cursor:pointer;line-height:1.5}
+#eula-btns{display:flex;gap:10px}
+#btn-eula-accept{flex:2;padding:11px;background:#f85149;border:none;border-radius:6px;color:#fff;font-weight:700;font-size:13px;letter-spacing:.04em;cursor:pointer;transition:opacity .2s}
+#btn-eula-accept:disabled{opacity:.3;cursor:not-allowed}
+#btn-eula-accept:not(:disabled):hover{opacity:.85}
+#btn-eula-decline{flex:1;padding:11px;background:transparent;border:1px solid #30363d;border-radius:6px;color:#8b949e;font-size:13px;cursor:pointer;transition:color .2s,border-color .2s}
+#btn-eula-decline:hover{color:#e6edf3;border-color:#8b949e}
+#eula-declined{display:none;text-align:center;padding:40px 24px;color:#8b949e}
+#eula-declined h2{font-size:16px;color:#f85149;margin-bottom:10px}
+@media(max-width:600px){
+  #eula-overlay{padding:0;align-items:flex-end}
+  #eula-modal{max-height:95vh;border-radius:10px 10px 0 0}
+  #eula-top{padding:14px 16px}
+  #eula-top img{height:44px;width:44px}
+  #eula-body{padding:16px}
+  #eula-footer{padding:14px 16px}
+}
 </style>
 </head>
 <body>
+
+<!-- ── EULA / Warning Banner Modal ─────────────────────────────────────────── -->
+<div id="eula-overlay">
+  <div id="eula-modal" role="dialog" aria-modal="true" aria-labelledby="eula-title">
+
+    <!-- Header -->
+    <div id="eula-top">
+      <img src="/static/logo.png" alt="WHITWERX">
+      <div id="eula-top-text">
+        <h1 id="eula-title">WHITWERX<span>Model Display (WMD) · CBRN Planning System</span></h1>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-size:10px;font-weight:700;color:#f85149;letter-spacing:.08em">FOR AUTHORIZED</div>
+        <div style="font-size:10px;font-weight:700;color:#f85149;letter-spacing:.08em">USE ONLY</div>
+        <div id="eula-version-label" style="font-size:9px;color:#8b949e;margin-top:3px;letter-spacing:.05em"></div>
+      </div>
+    </div>
+
+    <!-- Warning strip -->
+    <div id="eula-warn-strip">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="#f85149"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm.75 10.5h-1.5v-1.5h1.5v1.5zm0-3h-1.5V4h1.5v4.5z"/></svg>
+      READ CAREFULLY — This agreement limits WHITWERX liability. Access constitutes acceptance.
+    </div>
+
+    <!-- Scrollable body -->
+    <div id="eula-body">
+
+      <h2>Warning Banner</h2>
+      <div class="warn-item"><span class="warn-num">1.</span><span><strong>FOR PLANNING PURPOSES ONLY.</strong> All outputs — plume contours, blast radii, fireball zones, ERG isolation distances, radiation dose rates, population estimates, and shelter/evacuation guidance — are <strong>mathematical modeling estimates</strong>. They are not certified predictions, not validated emergency alerts, and must not be used as the sole basis for life-safety decisions.</span></div>
+      <div class="warn-item"><span class="warn-num">2.</span><span><strong>NOT A SUBSTITUTE FOR PROFESSIONAL JUDGMENT.</strong> All results must be reviewed and validated by a qualified CBRN specialist, incident commander, or emergency management professional before operational use.</span></div>
+      <div class="warn-item"><span class="warn-num">3.</span><span><strong>NO WARRANTY.</strong> This system is provided "as is" without any warranty of accuracy, fitness for purpose, or reliability. WHITWERX makes no representations regarding the completeness or correctness of any output.</span></div>
+      <div class="warn-item"><span class="warn-num">4.</span><span><strong>AUTHORIZED USERS ONLY.</strong> Unauthorized access, use, copying, or distribution is prohibited and may violate applicable federal and state law.</span></div>
+      <div class="warn-item"><span class="warn-num">5.</span><span><strong>EXPORT CONTROLLED.</strong> This tool incorporates models relevant to weapons effects and CBRN hazards. Do not access, export, or share outputs in violation of U.S. export control laws (EAR / ITAR).</span></div>
+
+      <h2>Model Accuracy Limitations</h2>
+      <p>The following inherent uncertainties apply to all model outputs:</p>
+      <ul class="model-limits">
+        <li>Gaussian plume (P-G): typical accuracy ±2–5× actual concentrations</li>
+        <li>Blast model (Brode / Hopkinson-Cranz): assumes free-field, unobstructed terrain</li>
+        <li>BLEVE fireball (Roberts 1982): assumes idealized fuel-air conditions</li>
+        <li>ERG 2024 (DOT/PHMSA Table 1): pre-computed conservative estimates, not site-specific</li>
+        <li>Radiation cloudshine (EPA FGR-12): uniform source-term assumption</li>
+        <li>Population estimates (US Census): uniform county density ±50–500% error possible</li>
+        <li>Meteorological data: sourced from third-party APIs; may not reflect on-scene conditions</li>
+      </ul>
+
+      <h2>End User License Agreement (v<span class="eula-ver-inline"></span>)</h2>
+
+      <p><strong>§1 Authorization.</strong> Access is restricted to personnel expressly authorized by WHITWERX or a sponsoring agency. You represent that your use is within the scope of that authorization. WHITWERX reserves the right to revoke access at any time without notice.</p>
+
+      <p><strong>§2 License Grant.</strong> WHITWERX grants you a limited, non-exclusive, non-transferable, revocable license to access this system solely for authorized CBRN planning, emergency management, and training purposes. You may not copy, distribute, sublicense, reverse-engineer, or use this system for commercial resale without written authorization.</p>
+
+      <p><strong>§3 No Life-Safety Reliance.</strong> Outputs must be reviewed and validated by a qualified professional before any operational or life-safety decision is made. This system has no connection to emergency dispatch, notification, or alerting infrastructure. It does not automatically notify authorities and is not a substitute for calling 911 or activating official emergency protocols.</p>
+
+      <p><strong>§4 Disclaimer of Warranties.</strong> THE SYSTEM IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, COMPLETENESS, OR RELIABILITY. WHITWERX DOES NOT WARRANT THAT THE SYSTEM WILL BE ERROR-FREE OR UNINTERRUPTED.</p>
+
+      <p><strong>§5 Limitation of Liability.</strong> TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, WHITWERX AND ITS OFFICERS, EMPLOYEES, AND AFFILIATES SHALL NOT BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES ARISING FROM YOUR USE OF OR RELIANCE ON THIS SYSTEM — INCLUDING LOSS OF LIFE, PERSONAL INJURY, OR PROPERTY DAMAGE RESULTING FROM DECISIONS MADE IN RELIANCE ON SYSTEM OUTPUTS — REGARDLESS OF LEGAL THEORY AND EVEN IF WHITWERX HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.</p>
+
+      <p><strong>§6 Indemnification.</strong> You agree to indemnify, defend, and hold harmless WHITWERX and its officers, employees, and agents from any claims, liabilities, damages, or expenses arising from your use of the system, violation of this Agreement, or violation of applicable law.</p>
+
+      <p><strong>§7 Export Controls.</strong> You agree to comply with all applicable U.S. and international export control laws, including EAR and ITAR. You will not export, re-export, or transfer this system or its outputs to any party on U.S. Government restricted or denied party lists.</p>
+
+      <p><strong>§8 Data.</strong> Do not enter classified information, Controlled Unclassified Information (CUI), or sensitive personally identifiable information (SPII) into this system unless it has been accredited for that purpose.</p>
+
+      <p><strong>§9 Governing Law.</strong> This Agreement is governed by applicable U.S. federal law and the laws of the jurisdiction in which WHITWERX operates. Continued use of the system after any update to this Agreement constitutes acceptance of the revised terms.</p>
+
+      <p style="font-size:11px;color:#8b949e;margin-top:16px;padding-top:12px;border-top:1px solid #21262d">
+        This agreement is accepted per session and re-presented when the system version changes. Acceptance is stored locally in your browser and is not transmitted to any server.
+      </p>
+
+    </div><!-- /eula-body -->
+
+    <!-- Footer -->
+    <div id="eula-footer">
+      <div id="eula-accepted-view">
+        <div id="eula-check-row">
+          <input type="checkbox" id="eula-checkbox" onchange="onEulaCheck()">
+          <label for="eula-checkbox">I am an authorized user. I have read, understand, and agree to the Warning Banner and End User License Agreement above. I acknowledge that all outputs are planning estimates only and must not be used as the sole basis for life-safety decisions.</label>
+        </div>
+        <div id="eula-btns">
+          <button id="btn-eula-decline" onclick="declineEULA()">Exit / Decline</button>
+          <button id="btn-eula-accept" disabled onclick="acceptEULA()">✓ I Understand — Enter System</button>
+        </div>
+      </div>
+      <div id="eula-declined">
+        <h2>Access Declined</h2>
+        <p style="margin-bottom:16px;font-size:13px">You must accept the terms to access this system.<br>You may close this window.</p>
+        <button onclick="showEULAAgain()" style="background:transparent;border:1px solid #30363d;color:#8b949e;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:12px">← Review Terms Again</button>
+      </div>
+    </div>
+
+  </div><!-- /eula-modal -->
+</div><!-- /eula-overlay -->
+
 <div id="app">
   <div id="header">
     <img src="/static/logo.png" class="site-logo" alt="WHITWERX">
@@ -460,6 +594,59 @@ input:checked+.slider:before{transform:translateX(16px)}
 <div id="toast"></div>
 
 <script>
+// ─────────────────────────────────────────────────────────────────────────────
+// EULA — runs before anything else
+// ─────────────────────────────────────────────────────────────────────────────
+(function initEULA() {
+  const EULA_VERSION = '2.0.0';
+  const STORAGE_KEY  = `wmd_eula_accepted_v${EULA_VERSION}`;
+
+  // Stamp version strings into the modal
+  document.querySelectorAll('.eula-ver-inline').forEach(el => el.textContent = EULA_VERSION);
+  const verLabel = document.getElementById('eula-version-label');
+  if (verLabel) verLabel.textContent = `v${EULA_VERSION}`;
+
+  // If already accepted for this version, hide immediately and return
+  if (localStorage.getItem(STORAGE_KEY) === 'accepted') {
+    document.getElementById('eula-overlay').style.display = 'none';
+    return;
+  }
+
+  // Block app interaction while modal is open
+  document.getElementById('app').style.pointerEvents = 'none';
+  document.getElementById('app').style.userSelect = 'none';
+})();
+
+function onEulaCheck() {
+  document.getElementById('btn-eula-accept').disabled =
+    !document.getElementById('eula-checkbox').checked;
+}
+
+function acceptEULA() {
+  const EULA_VERSION = '2.0.0';
+  localStorage.setItem(`wmd_eula_accepted_v${EULA_VERSION}`, 'accepted');
+  const overlay = document.getElementById('eula-overlay');
+  overlay.style.transition = 'opacity .35s';
+  overlay.style.opacity = '0';
+  setTimeout(() => {
+    overlay.style.display = 'none';
+    // Restore app interaction
+    document.getElementById('app').style.pointerEvents = '';
+    document.getElementById('app').style.userSelect = '';
+  }, 360);
+}
+
+function declineEULA() {
+  document.getElementById('eula-accepted-view').style.display = 'none';
+  document.getElementById('eula-declined').style.display = 'block';
+}
+
+function showEULAAgain() {
+  document.getElementById('eula-declined').style.display = 'none';
+  document.getElementById('eula-accepted-view').style.display = 'block';
+  document.getElementById('eula-body').scrollTop = 0;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────────────────────
