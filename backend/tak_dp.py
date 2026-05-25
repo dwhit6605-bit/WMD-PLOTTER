@@ -13,7 +13,7 @@ References:
 import io
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 _MANIFEST_TEMPLATE = """\
@@ -60,3 +60,72 @@ def build_tak_data_package(kml_bytes: bytes, active_tools: list[str]) -> tuple[b
     buf.seek(0)
 
     return buf.read(), f"{pkg_name}.zip"
+
+
+# ── CoT XML ───────────────────────────────────────────────────────────────────
+
+def _hex_to_argb_int(hex_color: str, alpha: int = 160) -> int:
+    """#RRGGBB → signed ARGB int (ATAK color format)."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    val = (alpha << 24) | (r << 16) | (g << 8) | b
+    return val - 0x100000000 if val >= 0x80000000 else val
+
+
+def _cot_time(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _polygon_cot_event(uid: str, label: str, color: str,
+                       lonlat_ring: list, center_lat: float, center_lon: float) -> str:
+    now   = datetime.now(timezone.utc)
+    stale = now + timedelta(hours=24)
+    fill  = _hex_to_argb_int(color, 80)
+    stroke = _hex_to_argb_int(color, 220)
+    vertices = "\n        ".join(
+        f'<vertex lat="{pt[1]:.6f}" lon="{pt[0]:.6f}"/>' for pt in lonlat_ring
+    )
+    return f"""<event version="2.0" uid="{uid}" type="u-d-r" how="m-g"
+       time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}"
+       access="Undefined" qos="0-r-r" opex="o-">
+  <point lat="{center_lat:.6f}" lon="{center_lon:.6f}" hae="9999999.0" ce="9999999.0" le="9999999.0"/>
+  <detail>
+    <shape>
+      <polyline closed="true" fillColor="{fill}" strokeColor="{stroke}" strokeWeight="3.0" fillStyle="1" strokeStyle="0">
+        {vertices}
+      </polyline>
+    </shape>
+    <remarks>{label}</remarks>
+    <color argb="{stroke}"/>
+    <contact callsign="WMD PLOTTER"/>
+    <uid Droid="WMD PLOTTER"/>
+  </detail>
+</event>"""
+
+
+def build_cot_xml(overlay_state: dict) -> str:
+    """
+    Generate a CoT XML document for all active overlays.
+    Feed into ATAK via FreeTAKServer, WinTAK Network Link,
+    or UDP broadcast to 239.2.3.1:6969.
+    """
+    events: list[str] = []
+
+    for tool, state in overlay_state.items():
+        if not state:
+            continue
+        src_lat = state.get("source_lat", 0.0)
+        src_lon = state.get("source_lon", 0.0)
+        zones   = state.get("zones", [])
+
+        for i, z in enumerate(zones):
+            lonlat = z.get("lonlat") or z.get("coords", [])
+            if not lonlat:
+                continue
+            label = z.get("label") or z.get("level", tool)
+            color = z.get("color", "#888888")
+            uid   = f"wmd-{tool}-{z.get('level','z')}-{i}"
+            events.append(_polygon_cot_event(uid, label, color, lonlat, src_lat, src_lon))
+
+    body = "\n\n".join(events)
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n<events>\n{body}\n</events>'

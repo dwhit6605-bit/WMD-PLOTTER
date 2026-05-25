@@ -310,6 +310,65 @@ def _radiation_folder(state: dict) -> tuple[str, str]:
     return styles, folder
 
 
+def _erg_folder(state: dict) -> tuple[str, str]:
+    """Return (styles_xml, folder_xml) for an ERG overlay state."""
+    un    = state.get("un_number", "????")
+    name  = state.get("name", "Unknown")
+    size  = state.get("spill_size", "small").title()
+    guide = state.get("guide", "—")
+    sz    = state.get(state.get("spill_size", "small"), {})
+    now   = state.get("computed_at", "")
+
+    COLOR_MAP = {
+        "isolation": "#FF2200",
+        "pad_day":   "#FFAA00",
+        "pad_night": "#FF4400",
+    }
+
+    styles = ""
+    placemarks = _point_placemark(
+        name=f"🧪 SPILL SOURCE — UN{un}",
+        desc=(
+            f"<b>UN{un}</b> — {name}<br/>"
+            f"<b>Guide:</b> #{guide}<br/>"
+            f"<b>Spill size:</b> {size}<br/>"
+            f"<b>Isolation:</b> {sz.get('isolation_m', '?')} m<br/>"
+            f"<b>PAD (day):</b> {sz.get('day_pad_km', '?')} km<br/>"
+            f"<b>PAD (night):</b> {sz.get('night_pad_km', '?')} km<br/>"
+            f"<b>Source:</b> ERG 2024 Table 1 · DOT/PHMSA<br/>"
+            f"<b>Computed:</b> {now}"
+        ),
+        lat=state["source_lat"],
+        lon=state["source_lon"],
+        icon_color="ff0000ff",
+    )
+
+    level_order = ["pad_night", "pad_day", "isolation"]
+    for level in level_order:
+        zone = next((z for z in state.get("zones", []) if z.get("level") == level), None)
+        if not zone:
+            continue
+        color = COLOR_MAP.get(level, "#888888")
+        styles += _kml_style(f"erg_{level}", color, 25)
+        coords = _lonlat_ring_to_kml(zone["lonlat"])
+        r_m = zone.get("radius_m", 0)
+        desc = (
+            f"<b>{zone['label']}</b><br/>"
+            f"Radius: {r_m} m ({r_m/1000:.2f} km)<br/>"
+            f"{zone.get('desc', '')}"
+        )
+        placemarks += _polygon_placemark(zone["label"], desc, f"erg_{level}", coords)
+
+    folder = f"""
+  <Folder>
+    <name>ERG Zones — UN{un} {name} ({size})</name>
+    <description><![CDATA[ERG 2024 Table 1 · Initial Isolation &amp; Protective Action Distances · Guide #{guide}]]></description>
+    <open>1</open>
+    {placemarks}
+  </Folder>"""
+    return styles, folder
+
+
 # Registry: map overlay_state key → folder builder function.
 # To add a new tool: implement _<tool>_folder(state) and add it here.
 _FOLDER_BUILDERS: dict = {
@@ -317,6 +376,7 @@ _FOLDER_BUILDERS: dict = {
     "blast":     _blast_folder,
     "radiation": _radiation_folder,
     "bleve":     _bleve_folder,
+    "erg":       _erg_folder,
 }
 
 

@@ -320,6 +320,30 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div id="bleve-results-content"></div>
       </div>
 
+      <!-- ERG 2024 -->
+      <div class="section tool-panel" id="panel-erg" style="display:none">
+        <div class="section-hdr">🧪 ERG 2024 — Isolation &amp; PAD</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">DOT Emergency Response Guidebook 2024 · Table 1 · Toxic Inhalation Hazard materials.</div>
+        <label>UN Number or Chemical Name</label>
+        <input type="text" id="inp-erg-search" placeholder="e.g. 1017  or  chlorine" oninput="searchERG()" autocomplete="off" style="font-size:14px"/>
+        <div id="erg-search-results" style="display:none;max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;margin-top:2px;background:var(--panel)"></div>
+        <div id="erg-selected" style="display:none;margin-top:10px">
+          <div id="erg-selected-name" style="font-weight:600;color:var(--accent);font-size:13px;margin-bottom:8px"></div>
+          <div style="display:flex;align-items:center;gap:16px;margin-bottom:6px;font-size:13px">
+            <span style="color:var(--muted)">Spill size:</span>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="erg-size" value="small" checked onchange="renderERGStats()"> Small</label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="erg-size" value="large" onchange="renderERGStats()"> Large</label>
+          </div>
+          <div id="erg-stats-table"></div>
+          <div style="margin-top:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span id="erg-latlabel" style="font-size:11px;color:var(--muted);flex:1">No location set</span>
+            <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px" onclick="snapERGToIncident()">📍 Incident</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px" onclick="startERGPlaceMode()">🖱 Place</button>
+          </div>
+          <button class="btn btn-primary btn-full" id="btn-erg-run" onclick="plotERGZones()" style="margin-top:10px" disabled>🧪 Plot ERG Zones</button>
+        </div>
+      </div>
+
       <!-- INFRASTRUCTURE -->
       <div class="section tool-panel" id="panel-infra" style="display:none">
         <div class="section-hdr">🏗 Critical Infrastructure</div>
@@ -381,6 +405,7 @@ input:checked+.slider:before{transform:translateX(16px)}
           <button class="btn btn-ghost" id="btn-kml-dl" onclick="downloadKML()" disabled>⬇ Download KML</button>
           <button class="btn btn-ghost" id="btn-kml-net" onclick="copyNetworkLink()" disabled>🔗 Network Link</button>
           <button class="btn btn-ghost" id="btn-tak-dp" onclick="downloadTAKDP()" disabled style="grid-column:1/-1;background:rgba(0,120,200,0.12);border-color:rgba(0,120,200,0.4);color:#5bb8ff">📦 TAK Data Package (.zip)</button>
+          <button class="btn btn-ghost" id="btn-cot-xml" onclick="downloadCoT()" disabled style="grid-column:1/-1;background:rgba(0,160,120,0.10);border-color:rgba(0,160,120,0.35);color:#4dd9b0;font-size:11px">📡 CoT XML — ATAK / FreeTAKServer / WinTAK</button>
         </div>
         <div id="export-url" style="display:none;margin-top:8px">
           <input type="text" id="inp-export-url" readonly onclick="this.select()" style="font-size:11px;cursor:pointer"/>
@@ -445,8 +470,10 @@ let plumeLayers = [], blastLayers = [], radLayers = [], bleveLayers = [], infraL
 let placingMode = false, blastPlacingMode = false, radPlacingMode = false, blevePlacingMode = false;
 let blastUnitKg = true, radUnitCi = true, bleveUnitKg = true;
 let wxData = null, selectedChem = null;
-let lastPlumeData = null, lastBlastData = null, lastRadData = null, lastBleveData = null;
-const _activeOverlays = { plume: false, blast: false, radiation: false, bleve: false };
+let lastPlumeData = null, lastBlastData = null, lastRadData = null, lastBleveData = null, lastERGData = null;
+let ergLatLon = null;
+const ergLayers = [];
+const _activeOverlays = { plume: false, blast: false, radiation: false, bleve: false, erg: false };
 const activePanels = new Set();
 let timeline = JSON.parse(localStorage.getItem('wmd_timeline') || '[]');
 
@@ -455,6 +482,7 @@ const TOOLS = [
   { id:'radiation',  icon:'☢',  label:'Radiation (RDD)',   desc:'Radiological dispersal',           needsWeather:true  },
   { id:'blast',      icon:'💥', label:'Blast Zones',       desc:'Explosive / IED damage',           needsWeather:false },
   { id:'bleve',      icon:'🔥', label:'BLEVE / Fireball',  desc:'Pressurized fuel thermal hazard',  needsWeather:false },
+  { id:'erg',        icon:'🧪', label:'ERG 2024',          desc:'UN hazmat isolation & PAD zones',  needsWeather:false },
   { id:'infra',      icon:'🏗',  label:'Infrastructure',   desc:'Critical facilities nearby',       needsWeather:false },
   { id:'population', icon:'👥', label:'Population Impact', desc:'Exposure estimates (Census)',       needsWeather:false },
   { id:'shelter',    icon:'🏠', label:'Shelter / Evac',    desc:'Protective action guidance',       needsWeather:false },
@@ -607,6 +635,7 @@ function activateTool(id) {
   if (id === 'blast'     && incidentLatLon && !blastLatLon) snapBlastToIncident();
   if (id === 'radiation' && incidentLatLon && !radLatLon)   snapRadToIncident();
   if (id === 'bleve'     && incidentLatLon && !bleveLatLon) snapBleveToIncident();
+  if (id === 'erg'    && incidentLatLon && !ergLatLon) snapERGToIncident();
   if (id === 'infra')     runInfraSearch();
   if (id === 'shelter')   calculateShelterEvac();
   if (id === 'timeline')  renderTimeline();
@@ -1275,6 +1304,149 @@ function renderBleveResults(data) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ERG 2024
+// ─────────────────────────────────────────────────────────────────────────────
+let _ergSearchTimer = null;
+let _currentERGEntry = null;
+
+function clearERGLayers() { ergLayers.forEach(l => map.removeLayer(l)); ergLayers.length = 0; }
+
+async function searchERG() {
+  clearTimeout(_ergSearchTimer);
+  _ergSearchTimer = setTimeout(async () => {
+    const q = document.getElementById('inp-erg-search').value.trim();
+    const box = document.getElementById('erg-search-results');
+    if (q.length < 2) { box.style.display = 'none'; return; }
+    try {
+      const r = await fetch(`${API}/api/erg/search?q=${encodeURIComponent(q)}`);
+      const d = await r.json();
+      if (!d.results?.length) {
+        box.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--muted)">No matches in ERG 2024 Table 1</div>';
+        box.style.display = 'block'; return;
+      }
+      box.innerHTML = d.results.map(e =>
+        `<div onclick="selectERGEntry('${e.un_number}')"
+              style="padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px"
+              onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background=''">
+          <span style="color:var(--accent);font-weight:600;margin-right:6px">UN${e.un_number}</span>${e.name}
+          ${e.hl ? '<span style="color:#ff4444;font-size:10px;margin-left:4px">⚠ HIGHLIGHTED</span>' : ''}
+        </div>`
+      ).join('');
+      box.style.display = 'block';
+    } catch(e) { /* silent */ }
+  }, 250);
+}
+
+async function selectERGEntry(un) {
+  document.getElementById('erg-search-results').style.display = 'none';
+  document.getElementById('inp-erg-search').value = `UN${un}`;
+  try {
+    const r = await fetch(`${API}/api/erg/${un}`);
+    if (!r.ok) { toast('ERG entry not found', 2000); return; }
+    _currentERGEntry = await r.json();
+    document.getElementById('erg-selected').style.display = 'block';
+    document.getElementById('erg-selected-name').textContent =
+      `UN${_currentERGEntry.un_number} — ${_currentERGEntry.name} · Guide #${_currentERGEntry.guide}`;
+    renderERGStats();
+  } catch(e) { toast(`ERG lookup error: ${e.message}`, 3000); }
+}
+
+function renderERGStats() {
+  if (!_currentERGEntry) return;
+  const size = document.querySelector('input[name="erg-size"]:checked').value;
+  const d = _currentERGEntry[size];
+  const hlNote = _currentERGEntry.hl
+    ? '<div style="color:#ff6666;font-size:11px;margin-bottom:6px">⚠ Highlighted — unusually large PAD for this hazard class</div>' : '';
+  document.getElementById('erg-stats-table').innerHTML = `${hlNote}
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr style="background:rgba(255,34,0,0.12)">
+        <td style="padding:5px 6px">🔴 Initial Isolation</td>
+        <td style="padding:5px 6px;text-align:right;font-weight:600">${d.isolation_m} m</td>
+        <td style="padding:5px 6px;font-size:10px;color:var(--muted)">all directions</td>
+      </tr>
+      <tr style="background:rgba(255,170,0,0.10)">
+        <td style="padding:5px 6px">🟡 PAD — Day</td>
+        <td style="padding:5px 6px;text-align:right;font-weight:600">${d.day_pad_km} km</td>
+        <td style="padding:5px 6px;font-size:10px;color:var(--muted)">downwind</td>
+      </tr>
+      <tr style="background:rgba(255,68,0,0.12)">
+        <td style="padding:5px 6px">🟠 PAD — Night</td>
+        <td style="padding:5px 6px;text-align:right;font-weight:600">${d.night_pad_km} km</td>
+        <td style="padding:5px 6px;font-size:10px;color:var(--muted)">downwind</td>
+      </tr>
+    </table>
+    <div style="font-size:10px;color:var(--muted);margin-top:4px">
+      Source: ERG 2024 Table 1 · DOT/PHMSA · planning estimates only
+    </div>`;
+  document.getElementById('btn-erg-run').disabled = !ergLatLon;
+}
+
+function snapERGToIncident() {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  ergLatLon = { lat: incidentLatLon.lat, lon: incidentLatLon.lon };
+  document.getElementById('erg-latlabel').textContent =
+    `${ergLatLon.lat.toFixed(4)}, ${ergLatLon.lon.toFixed(4)}`;
+  if (_currentERGEntry) document.getElementById('btn-erg-run').disabled = false;
+}
+
+function startERGPlaceMode() {
+  toast('Click map to place spill location', 2500);
+  map.once('click', e => {
+    ergLatLon = { lat: e.latlng.lat, lon: e.latlng.lng };
+    document.getElementById('erg-latlabel').textContent =
+      `${ergLatLon.lat.toFixed(4)}, ${ergLatLon.lon.toFixed(4)}`;
+    if (_currentERGEntry) document.getElementById('btn-erg-run').disabled = false;
+  });
+}
+
+async function plotERGZones() {
+  if (!ergLatLon || !_currentERGEntry) return;
+  const size = document.querySelector('input[name="erg-size"]:checked').value;
+  const btn = document.getElementById('btn-erg-run');
+  btn.innerHTML = '<span class="spin">⟳</span> Computing…';
+  btn.disabled = true;
+  try {
+    const body = {
+      lat: ergLatLon.lat, lon: ergLatLon.lon,
+      un_number: _currentERGEntry.un_number,
+      spill_size: size,
+      wind_dir_from_deg: wxData?.wind_dir_from_deg ?? null,
+    };
+    const r = await fetch(`${API}/api/erg/zones`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const data = await r.json();
+    lastERGData = data;
+    renderERGOnMap(data);
+    enableExport('erg');
+    const sz = data[size];
+    addTimelineEntry('erg',
+      `🧪 UN${data.un_number} ${data.name} — ${size} spill · ISO ${sz.isolation_m}m / PAD ${sz.day_pad_km}km`,
+      data, ergLatLon.lat, ergLatLon.lon);
+    toast(`🧪 ERG zones plotted — Isolation ${sz.isolation_m} m · PAD (day) ${sz.day_pad_km} km`, 3000);
+    if (isMobile()) closeMobileSidebar();
+  } catch(e) { toast(`ERG error: ${e.message}`, 4000); }
+  finally { btn.innerHTML = '🧪 Plot ERG Zones'; btn.disabled = false; }
+}
+
+function renderERGOnMap(data) {
+  clearERGLayers();
+  const order = ['pad_night', 'pad_day', 'isolation'];
+  const features = (data.geojson?.features || []).filter(f => f.properties.type === 'erg_zone');
+  const sorted = order.map(lvl => features.find(f => f.properties.level === lvl)).filter(Boolean);
+  for (const f of sorted) {
+    const p = f.properties;
+    const layer = L.geoJSON(f, {
+      style: { color: p.color, fillColor: p.color, fillOpacity: 0.2, weight: 2, opacity: 0.9 },
+    }).bindPopup(`<strong>${p.label}</strong><br/><small>${p.desc || ''}</small>`);
+    layer.addTo(map);
+    ergLayers.push(layer);
+  }
+  if (ergLayers.length) map.fitBounds(L.featureGroup(ergLayers).getBounds().pad(0.15));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Critical Infrastructure (Overpass API)
 // ─────────────────────────────────────────────────────────────────────────────
 function clearInfraLayers() { for(const l of infraLayers) map.removeLayer(l); infraLayers=[]; }
@@ -1535,6 +1707,8 @@ function replayTimelineEntry(idx) {
       lastRadData = data; renderRadiationOnMap(data); renderRadiationResults(data); enableExport('radiation');
     } else if (entry.toolType==='bleve') {
       lastBleveData = data; renderBleveOnMap(data); renderBleveResults(data); enableExport('bleve');
+    } else if (entry.toolType==='erg') {
+      lastERGData = data; renderERGOnMap(data); enableExport('erg');
     }
     map.setView([entry.lat,entry.lon], 12);
     toast(`Replaying: ${entry.summary}`, 2000);
@@ -1575,6 +1749,7 @@ function _refreshExportUI() {
   document.getElementById('btn-kml-dl').disabled  = !hasAny;
   document.getElementById('btn-kml-net').disabled = !hasAny;
   document.getElementById('btn-tak-dp').disabled  = !hasAny;
+  document.getElementById('btn-cot-xml').disabled = !hasAny;
   document.getElementById('export-summary').textContent = hasAny ? `Exporting: ${active.join(' + ')}` : 'No overlays computed yet.';
 }
 
@@ -1604,6 +1779,17 @@ async function downloadTAKDP() {
   a.download = filename;
   a.click();
   toast('TAK Data Package downloaded — import via ATAK Files menu', 2500);
+}
+
+async function downloadCoT() {
+  const r = await fetch(`${API}/api/cot`);
+  if (!r.ok) { toast('No overlays to export yet', 2000); return; }
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `wmd_cot_${Date.now()}.xml`;
+  a.click();
+  toast('CoT XML downloaded — import into ATAK / FreeTAKServer / WinTAK', 3000);
 }
 
 function copyNetworkLink() {

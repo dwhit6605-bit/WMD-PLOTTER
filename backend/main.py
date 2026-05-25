@@ -35,7 +35,8 @@ from blast import EXPLOSIVES, compute_blast_zones
 from radiation import RADIONUCLIDES, get_radionuclide, compute_radiation_contours
 from bleve import FUELS, compute_bleve_zones
 from population import estimate_population_impact
-from tak_dp import build_tak_data_package
+from tak_dp import build_tak_data_package, build_cot_xml
+from erg import search_erg, get_erg_entry, compute_erg_zones
 
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="WMD Plotter API", version="1.0.0")
@@ -60,6 +61,7 @@ _overlay_state: dict = {
     "blast": {},
     "radiation": {},
     "bleve": {},
+    "erg": {},
 }
 
 
@@ -611,6 +613,74 @@ async def compute_radiation(req: RadiationRequest, request: Request):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "active_overlays": {k: bool(v) for k, v in _overlay_state.items()}}
+
+
+# ── ERG 2024 ──────────────────────────────────────────────────────────────────
+
+class ERGZonesRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    un_number: str
+    spill_size: str = "small"           # "small" | "large"
+    wind_dir_from_deg: Optional[float] = None
+
+
+@app.get("/api/erg/search")
+async def erg_search(q: str = Query(..., min_length=1)):
+    """Search ERG 2024 Table 1 by UN number or chemical name."""
+    results = search_erg(q)
+    return JSONResponse(content={"results": results, "count": len(results)})
+
+
+@app.get("/api/erg/{un_number}")
+async def erg_entry(un_number: str):
+    """Return full ERG entry (both spill sizes) for a UN number."""
+    entry = get_erg_entry(un_number)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"UN{un_number} not found in ERG 2024 Table 1.")
+    return JSONResponse(content=entry)
+
+
+@app.post("/api/erg/zones")
+async def erg_zones(req: ERGZonesRequest):
+    """Compute ERG isolation and PAD zones as GeoJSON."""
+    if req.spill_size not in ("small", "large"):
+        raise HTTPException(status_code=422, detail="spill_size must be 'small' or 'large'.")
+    result = compute_erg_zones(
+        lat=req.lat, lon=req.lon, un_number=req.un_number,
+        spill_size=req.spill_size, wind_dir_from_deg=req.wind_dir_from_deg,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"UN{req.un_number} not in ERG 2024 Table 1.")
+
+    global _overlay_state
+    _overlay_state["erg"] = {
+        **result,
+        "source_lat": req.lat,
+        "source_lon": req.lon,
+        "zones": [
+            {**f["properties"], "lonlat": f["geometry"]["coordinates"][0]}
+            for f in result["geojson"]["features"]
+            if f["properties"]["type"] == "erg_zone"
+        ],
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return JSONResponse(content=result)
+
+
+# ── CoT XML (ATAK streaming) ──────────────────────────────────────────────────
+
+@app.get("/api/cot")
+async def get_cot_xml():
+    """
+    Return Cursor-on-Target (CoT) XML for all active overlays.
+    Feed into WinTAK / iTAK / FreeTAKServer or stream over UDP 239.2.3.1:6969.
+    """
+    if not any(_overlay_state.values()):
+        raise HTTPException(status_code=404, detail="No overlays computed yet.")
+    xml = build_cot_xml(_overlay_state)
+    return Response(content=xml, media_type="application/xml",
+                    headers={"Content-Disposition": 'attachment; filename="wmd_cot.xml"'})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
