@@ -163,6 +163,96 @@ input:checked + .slider:before { transform: translateX(16px); }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Mobile ── */
+#mobile-fab     { display: none; }
+#mobile-overlay { display: none; }
+
+@media (max-width: 768px) {
+  :root { --hdr: 44px; }
+
+  /* Header: single compact row */
+  #header { gap: 8px; padding: 0 10px; flex-wrap: nowrap; }
+  .site-logo { height: 30px; width: 30px; }
+  .logo { font-size: 13px; }
+  .logo span { font-size: 9px; }
+  .hdr-badge { font-size: 9px; padding: 2px 5px; white-space: nowrap; }
+
+  /* Map fills body, sidebar hidden off-screen */
+  #body { position: relative; }
+  #sidebar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    width: 100%;
+    max-height: 72vh;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    transform: translateY(100%);
+    transition: transform 0.28s cubic-bezier(0.4,0,0.2,1);
+    z-index: 2000;
+    padding-top: 4px;
+    overflow-y: auto;
+  }
+  #sidebar.mob-open { transform: translateY(0); }
+  /* drag handle */
+  #sidebar::before {
+    content: '';
+    display: block;
+    width: 36px; height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 8px auto 4px;
+  }
+
+  /* Semi-transparent backdrop */
+  #mobile-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 1999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.28s;
+  }
+  #mobile-overlay.show { opacity: 1; pointer-events: all; }
+
+  /* Floating action button */
+  #mobile-fab {
+    display: flex;
+    position: fixed;
+    bottom: 24px; right: 16px;
+    z-index: 1500;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent2);
+    color: #0d1117;
+    border: none;
+    border-radius: 28px;
+    padding: 13px 20px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  #mobile-fab:active { background: #a5d6ff; }
+
+  /* Touch-friendly targets */
+  .btn { min-height: 44px; }
+
+  /* Prevent iOS double-tap zoom on inputs (needs ≥16px) */
+  select,
+  input[type=text],
+  input[type=number] { font-size: 16px !important; }
+
+  /* Nudge map overlays clear of FAB */
+  #legend      { bottom: 80px; }
+  #map-overlay { top: 54px; }
+
+  /* Status bar: drop the clock */
+  #sb-time { display: none; }
+}
 </style>
 </head>
 <body>
@@ -361,6 +451,10 @@ input:checked + .slider:before { transform: translateX(16px); }
     <span id="sb-time">—</span>
   </div>
 </div>
+
+<!-- Mobile sheet overlay & FAB -->
+<div id="mobile-overlay" onclick="closeMobileSidebar()"></div>
+<button id="mobile-fab" onclick="toggleMobileSidebar()">☰ Controls</button>
 
 <!-- Toast -->
 <div id="toast"></div>
@@ -735,6 +829,7 @@ async function runPlume() {
       `PG-${model.stability_class} · ${model.wind_speed_ms.toFixed(1)} m/s from ${model.wind_dir_from_deg.toFixed(0)}° · Q=${model.Q_gs.toFixed(1)} g/s`;
 
     toast(`✓ Plume computed — ${selectedChem.name}`, 2500);
+    if (isMobile()) closeMobileSidebar();
   } catch(e) {
     toast(`Error: ${e.message}`, 5000);
   } finally {
@@ -891,6 +986,29 @@ function toast(msg, duration = 2500) {
   el.textContent = msg;
   el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), duration);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mobile sidebar sheet
+// ─────────────────────────────────────────────────────────────────────────────
+function isMobile() { return window.innerWidth <= 768; }
+
+function openMobileSidebar() {
+  document.getElementById('sidebar').classList.add('mob-open');
+  document.getElementById('mobile-overlay').classList.add('show');
+  document.getElementById('mobile-fab').textContent = '✕ Close';
+}
+
+function closeMobileSidebar() {
+  document.getElementById('sidebar').classList.remove('mob-open');
+  document.getElementById('mobile-overlay').classList.remove('show');
+  document.getElementById('mobile-fab').textContent = '☰ Controls';
+}
+
+function toggleMobileSidebar() {
+  document.getElementById('sidebar').classList.contains('mob-open')
+    ? closeMobileSidebar()
+    : openMobileSidebar();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
