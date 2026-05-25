@@ -37,9 +37,12 @@ from bleve import FUELS, compute_bleve_zones
 from population import estimate_population_impact
 from tak_dp import build_tak_data_package, build_cot_xml
 from erg import search_erg, get_erg_entry, compute_erg_zones
+from dense_gas import compute_dense_gas_zones, list_dense_gases, get_dense_gas
+from probit import compute_probit_zones
+from fire_smoke import compute_fire_smoke_zones, list_fire_types
 
-APP_VERSION = "2.0.0"
-BUILD_DATE  = "2026-05-25"
+APP_VERSION = "2.1.0"
+BUILD_DATE  = "2026-05-25"   # v2.1.0: dense gas, fire/smoke, probit
 
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="WMD Plotter API", version=APP_VERSION)
@@ -65,6 +68,10 @@ _overlay_state: dict = {
     "radiation": {},
     "bleve": {},
     "erg": {},
+    "dense_gas": {},
+    "fire_smoke": {},
+    "population": {},
+    "infra": {},
 }
 
 
@@ -460,12 +467,44 @@ async def compute_population(req: PopulationRequest):
     """
     Estimate population exposure within each hazard zone.
     Uses US Census ACS 5-year county density (uniform distribution assumption).
+    Caches result (with zone geometries) for KML export.
     """
     try:
         result = await estimate_population_impact(req.lat, req.lon, req.zones)
+
+        # Merge latlon from request zones back into results for KML export
+        zones_with_geo = [
+            {**res_z, "latlon": req_z.get("latlon", [])}
+            for req_z, res_z in zip(req.zones, result["zones"])
+        ]
+        global _overlay_state
+        _overlay_state["population"] = {
+            "source_lat":          req.lat,
+            "source_lon":          req.lon,
+            "county_name":         result["county_name"],
+            "pop_density_per_km2": result["pop_density_per_km2"],
+            "data_source":         result["data_source"],
+            "zones":               zones_with_geo,
+            "computed_at":         datetime.now(timezone.utc).isoformat(),
+        }
+
         return JSONResponse(content=result)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Population estimate failed: {e}")
+
+
+@app.post("/api/infra/cache")
+async def cache_infra(req: InfraCacheRequest):
+    """Cache infrastructure search results (from frontend Overpass query) for KML export."""
+    global _overlay_state
+    _overlay_state["infra"] = {
+        "source_lat": req.lat,
+        "source_lon": req.lon,
+        "radius":     req.radius,
+        "items":      req.items,
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return JSONResponse(content={"cached": len(req.items)})
 
 
 @app.get("/api/radionuclides")
@@ -637,6 +676,40 @@ class ERGZonesRequest(BaseModel):
     wind_dir_from_deg: Optional[float] = None
 
 
+class DenseGasRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    gas_id: str
+    release_rate_kg_min: float = Field(..., gt=0, le=10_000)
+    release_height_m: float = Field(default=0.0, ge=0, le=500)
+    wind_speed_ms: float = Field(..., ge=0)
+    wind_dir_from_deg: float = Field(..., ge=0, lt=360)
+    stability_class: str = Field(..., pattern="^[A-Fa-f]$")
+
+
+class FireSmokeRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    fire_type_id: str
+    wind_speed_ms: float = Field(..., ge=0)
+    wind_dir_from_deg: float = Field(..., ge=0, lt=360)
+    stability_class: str = Field(..., pattern="^[A-Fa-f]$")
+    h_stack: float = Field(default=0.0, ge=0, le=500)
+
+
+class ProbitRequest(BaseModel):
+    zones: list[dict]
+    exposure_min: float = Field(..., gt=0, le=480)
+    gas_id: Optional[str] = None
+
+
+class InfraCacheRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    radius: int = Field(..., gt=0, le=50_000)
+    items: list[dict]  # [{type, name, lat, lon, distKm}, ...]
+
+
 @app.get("/api/erg/search")
 async def erg_search(q: str = Query(..., min_length=1)):
     """Search ERG 2024 Table 1 by UN number or chemical name."""
@@ -677,6 +750,128 @@ async def erg_zones(req: ERGZonesRequest):
         ],
         "computed_at": datetime.now(timezone.utc).isoformat(),
     }
+    return JSONResponse(content=result)
+
+
+# ── Dense Gas Dispersion ─────────────────────────────────────────────────────
+
+@app.get("/api/dense_gas/chemicals")
+async def list_dense_gas_chemicals():
+    """Return dense-gas chemical database (all gases with thresholds)."""
+    return JSONResponse(content={"chemicals": list_dense_gases()})
+
+
+@app.post("/api/dense_gas/zones")
+async def compute_dense_gas(req: DenseGasRequest):
+    """
+    Compute modified-PG dense-gas dispersion zones (GeoJSON + stats).
+    Weather parameters must be supplied by the caller (pre-fetched).
+    """
+    gas = get_dense_gas(req.gas_id)
+    if not gas:
+        raise HTTPException(status_code=404, detail=f"Gas '{req.gas_id}' not found.")
+
+    stability = req.stability_class.upper()
+    result = compute_dense_gas_zones(
+        lat=req.lat,
+        lon=req.lon,
+        gas_id=req.gas_id,
+        release_rate_kg_min=req.release_rate_kg_min,
+        release_height_m=req.release_height_m,
+        wind_speed_ms=req.wind_speed_ms,
+        wind_dir_from_deg=req.wind_dir_from_deg,
+        stability_class=stability,
+    )
+
+    global _overlay_state
+    _overlay_state["dense_gas"] = {
+        "source_lat":          req.lat,
+        "source_lon":          req.lon,
+        "gas_id":              req.gas_id,
+        "gas_name":            gas["name"],
+        "gas_formula":         gas.get("formula", ""),
+        "release_rate_kg_min": req.release_rate_kg_min,
+        "release_height_m":    req.release_height_m,
+        "wind_speed_ms":       req.wind_speed_ms,
+        "wind_dir_from_deg":   req.wind_dir_from_deg,
+        "stability_class":     stability,
+        "zones": [
+            {
+                **feat["properties"],
+                "lonlat": feat["geometry"]["coordinates"][0],
+            }
+            for feat in result["geojson"]["features"]
+            if feat["geometry"]["coordinates"]
+        ],
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return JSONResponse(content=result)
+
+
+# ── Fire / Smoke Plume ────────────────────────────────────────────────────────
+
+@app.get("/api/fire_smoke/types")
+async def list_fire_smoke_types():
+    """Return fire-type database."""
+    return JSONResponse(content={"fire_types": list_fire_types()})
+
+
+@app.post("/api/fire_smoke/zones")
+async def compute_fire_smoke(req: FireSmokeRequest):
+    """
+    Compute Briggs (1975) buoyant plume smoke zones (PM2.5 and CO).
+    Weather parameters must be supplied by the caller (pre-fetched).
+    """
+    stability = req.stability_class.upper()
+    result = compute_fire_smoke_zones(
+        lat=req.lat,
+        lon=req.lon,
+        fire_type_id=req.fire_type_id,
+        wind_speed_ms=req.wind_speed_ms,
+        wind_dir_from_deg=req.wind_dir_from_deg,
+        stability_class=stability,
+        h_stack=req.h_stack,
+    )
+
+    global _overlay_state
+    _overlay_state["fire_smoke"] = {
+        "source_lat":        req.lat,
+        "source_lon":        req.lon,
+        "fire_type_id":      req.fire_type_id,
+        "fire_name":         result["fire"]["name"],
+        "hrr_mw":            result["fire"]["hrr_mw"],
+        "wind_speed_ms":     req.wind_speed_ms,
+        "wind_dir_from_deg": req.wind_dir_from_deg,
+        "stability_class":   stability,
+        "h_stack_m":         req.h_stack,
+        "zones": [
+            {
+                **feat["properties"],
+                "lonlat": feat["geometry"]["coordinates"][0],
+            }
+            for feat in result["geojson"]["features"]
+            if feat["geometry"]["coordinates"]
+        ],
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return JSONResponse(content=result)
+
+
+# ── Probit Casualty Estimator ─────────────────────────────────────────────────
+
+@app.post("/api/probit")
+async def run_probit(req: ProbitRequest):
+    """
+    Estimate casualties in each hazard zone using probit analysis.
+    Zones must include 'pop_estimate' field (from /api/population).
+    """
+    result = compute_probit_zones(
+        zones=req.zones,
+        exposure_min=req.exposure_min,
+        gas_id=req.gas_id,
+    )
     return JSONResponse(content=result)
 
 

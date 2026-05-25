@@ -296,6 +296,7 @@ input:checked+.slider:before{transform:translateX(16px)}
     <div class="hdr-badge">⚠ FOR AUTHORIZED USE ONLY</div>
     <div style="flex:1"></div>
     <div id="version-badge" class="version-badge" title="WHITWERX Model Display">v—</div>
+    <button id="btn-units" onclick="toggleUnits()" title="Toggle distance units (imperial / metric)" style="font-size:10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:4px;padding:2px 8px;letter-spacing:.06em;cursor:pointer;transition:color .2s,border-color .2s;color:var(--muted);font-weight:700">MI</button>
     <div id="hdr-status" style="font-size:12px;color:var(--muted)">Ready</div>
   </div>
 
@@ -496,6 +497,62 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div id="infra-list" style="margin-top:4px;max-height:300px;overflow-y:auto"></div>
       </div>
 
+      <!-- DENSE GAS -->
+      <div class="section tool-panel" id="panel-dense_gas" style="display:none">
+        <div class="section-hdr">🌫 Dense Gas Dispersion</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Modified Pasquill-Gifford model for heavier-than-air gases. Reduces vertical spread (σ_z) by √(ρ_gas/ρ_air) to simulate ground-level pooling.</div>
+        <label>Gas / Chemical</label>
+        <select id="sel-dense-gas" onchange="_onDenseGasChange()"><option value="">Loading…</option></select>
+        <div id="dense-gas-warning" style="display:none;font-size:11px;color:#FF8C00;background:rgba(255,140,0,0.1);padding:6px 8px;border-radius:4px;margin-top:6px;line-height:1.4"></div>
+        <div class="row2" style="margin-top:8px">
+          <div><label>Release Rate (kg/min)</label><input type="number" id="inp-dg-rate" value="10" min="0.01" max="10000" step="0.1" style="font-size:16px"/></div>
+          <div><label>Release Height (m)</label><input type="number" id="inp-dg-height" value="0" min="0" max="500" style="font-size:16px"/></div>
+        </div>
+        <button class="btn btn-primary btn-full" style="margin-top:10px" onclick="runDenseGas()">🌫 Compute Dense Gas Zones</button>
+        <div id="dense-gas-status" style="font-size:11px;color:var(--muted);margin-top:6px;min-height:14px"></div>
+        <div id="dense-gas-results" style="margin-top:6px"></div>
+      </div>
+
+      <!-- FIRE / SMOKE -->
+      <div class="section tool-panel" id="panel-fire_smoke" style="display:none">
+        <div class="section-hdr">🔥 Fire / Smoke Plume</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Briggs (1975) buoyant plume rise with Gaussian dispersion. Computes downwind PM2.5 and CO hazard zones from EPA AQI thresholds.</div>
+        <label>Fire Type</label>
+        <select id="sel-fire-type" onchange="_onFireTypeChange()"><option value="">Loading…</option></select>
+        <div id="fire-type-desc" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
+        <div class="row2" style="margin-top:8px">
+          <div><label>Stack / Flame Height (m)</label><input type="number" id="inp-fs-stack" value="0" min="0" max="500" style="font-size:16px"/></div>
+          <div><label style="visibility:hidden">_</label><button class="btn btn-primary" style="width:100%;margin-top:0" onclick="runFireSmoke()">🔥 Compute</button></div>
+        </div>
+        <div id="fire-smoke-status" style="font-size:11px;color:var(--muted);margin-top:6px;min-height:14px"></div>
+        <div id="fire-smoke-results" style="margin-top:6px"></div>
+      </div>
+
+      <!-- PROBIT / CASUALTY -->
+      <div class="section tool-panel" id="panel-probit" style="display:none">
+        <div class="section-hdr">☠ Probit / Casualty</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Estimates fatalities and injuries using the Ten Berge probit model (Pr = a + b·ln(C^n·t)) or TNO zone-fraction fallback when chemical parameters are unavailable.</div>
+        <div class="row2">
+          <div><label>Exposure Duration (min)</label><input type="number" id="inp-probit-exp" value="30" min="1" max="480" style="font-size:16px"/></div>
+          <div>
+            <label>Chemical (probit coeffs)</label>
+            <select id="sel-probit-gas">
+              <option value="">None — use zone fractions</option>
+              <option value="cl2">Chlorine (Cl₂)</option>
+              <option value="nh3">Ammonia (NH₃)</option>
+              <option value="hcn">Hydrogen Cyanide (HCN)</option>
+              <option value="so2">Sulfur Dioxide (SO₂)</option>
+              <option value="h2s">Hydrogen Sulfide (H₂S)</option>
+              <option value="cg">Phosgene (CG)</option>
+              <option value="no2">Nitrogen Dioxide (NO₂)</option>
+            </select>
+          </div>
+        </div>
+        <div id="probit-prereq" style="display:none;font-size:11px;color:var(--muted);background:rgba(255,255,255,0.04);padding:8px;border-radius:4px;margin-top:8px;line-height:1.5">Run <b>Population Impact</b> first to estimate zone populations, then return here.</div>
+        <button class="btn btn-primary btn-full" style="margin-top:8px" onclick="runProbit()">☠ Estimate Casualties</button>
+        <div id="probit-results" style="margin-top:8px"></div>
+      </div>
+
       <!-- POPULATION -->
       <div class="section tool-panel" id="panel-population" style="display:none">
         <div class="section-hdr">👥 Population Impact</div>
@@ -553,8 +610,9 @@ input:checked+.slider:before{transform:translateX(16px)}
       <!-- DISCLAIMER -->
       <div class="section" style="font-size:10px;color:var(--muted);line-height:1.5;padding-bottom:16px">
         All outputs are <em>planning estimates only</em> — not for life-safety decisions.<br/>
-        Gaussian plume (P-G) ±2–5× · Blast Brode (1955) · BLEVE Roberts (1982) ·
-        Radiation cloudshine EPA FGR-12 · Infrastructure via OpenStreetMap (may be incomplete) ·
+        Gaussian plume (P-G) ±2–5× · Dense gas modified P-G σ_z · Blast Brode (1955) · BLEVE Roberts (1982) ·
+        Radiation cloudshine EPA FGR-12 · Fire/Smoke Heskestad (1984) flame ht + P-G ·
+        Probit Ten Berge (1986) / TNO Green Book fallback · Infrastructure via OpenStreetMap ·
         Population US Census county density (uniform distribution ±50–500%).<br/>
         Always follow official emergency management guidance.
       </div>
@@ -659,11 +717,17 @@ let bleveLatLon = null, bleveMarker = null;
 let plumeLayers = [], blastLayers = [], radLayers = [], bleveLayers = [], infraLayers = [];
 let placingMode = false, blastPlacingMode = false, radPlacingMode = false, blevePlacingMode = false;
 let blastUnitKg = true, radUnitCi = true, bleveUnitKg = true;
+let useImperial = localStorage.getItem('wmd_units') !== 'metric';
+let _lastInfraResult = null;
+let lastDenseGasData = null, lastFireSmokeData = null;
+let denseGasLayers = [], firesmokeLayersList = [];
+let _lastPopResult = null;
+let denseGasChems = [], fireTypesList = [];
 let wxData = null, selectedChem = null;
 let lastPlumeData = null, lastBlastData = null, lastRadData = null, lastBleveData = null, lastERGData = null;
 let ergLatLon = null;
 const ergLayers = [];
-const _activeOverlays = { plume: false, blast: false, radiation: false, bleve: false, erg: false };
+const _activeOverlays = { plume: false, blast: false, radiation: false, bleve: false, erg: false, dense_gas: false, fire_smoke: false };
 const activePanels = new Set();
 let timeline = JSON.parse(localStorage.getItem('wmd_timeline') || '[]');
 
@@ -672,6 +736,9 @@ const TOOLS = [
   { id:'radiation',  icon:'☢',  label:'Radiation (RDD)',   desc:'Radiological dispersal',           needsWeather:true  },
   { id:'blast',      icon:'💥', label:'Blast Zones',       desc:'Explosive / IED damage',           needsWeather:false },
   { id:'bleve',      icon:'🔥', label:'BLEVE / Fireball',  desc:'Pressurized fuel thermal hazard',  needsWeather:false },
+  { id:'dense_gas',  icon:'🌫',  label:'Dense Gas',          desc:'Heavy gas cloud hazard zones',     needsWeather:true  },
+  { id:'fire_smoke', icon:'🔥', label:'Fire / Smoke',      desc:'Buoyant plume: PM2.5 & CO zones',  needsWeather:true  },
+  { id:'probit',     icon:'☠',  label:'Probit / Casualty', desc:'Dose-response casualty estimate',  needsWeather:false },
   { id:'erg',        icon:'🧪', label:'ERG 2024',          desc:'UN hazmat isolation & PAD zones',  needsWeather:false },
   { id:'infra',      icon:'🏗',  label:'Infrastructure',   desc:'Critical facilities nearby',       needsWeather:false },
   { id:'population', icon:'👥', label:'Population Impact', desc:'Exposure estimates (Census)',       needsWeather:false },
@@ -763,7 +830,10 @@ function clearIncident() {
   if (radMarker)   { map.removeLayer(radMarker);   radMarker = null;   } radLatLon = null;
   if (bleveMarker) { map.removeLayer(bleveMarker); bleveMarker = null; } bleveLatLon = null;
   hideToolPicker();
+  denseGasLayers.forEach(l => map.removeLayer(l)); denseGasLayers = [];
+  firesmokeLayersList.forEach(l => map.removeLayer(l)); firesmokeLayersList = [];
   lastPlumeData = lastBlastData = lastRadData = lastBleveData = null;
+  lastDenseGasData = lastFireSmokeData = null;
   updateCoordDisplay();
   updateBlastCoordDisplay(); updateRadCoordDisplay(); updateBleveCoordDisplay();
   document.getElementById('results-section').style.display = 'none';
@@ -826,10 +896,13 @@ function activateTool(id) {
   if (id === 'radiation' && incidentLatLon && !radLatLon)   snapRadToIncident();
   if (id === 'bleve'     && incidentLatLon && !bleveLatLon) snapBleveToIncident();
   if (id === 'erg'    && incidentLatLon && !ergLatLon) snapERGToIncident();
-  if (id === 'infra')     runInfraSearch();
-  if (id === 'shelter')   calculateShelterEvac();
-  if (id === 'timeline')  renderTimeline();
+  if (id === 'infra')      runInfraSearch();
+  if (id === 'shelter')    calculateShelterEvac();
+  if (id === 'timeline')   renderTimeline();
   if (id === 'population') { /* user clicks estimate button */ }
+  if (id === 'dense_gas')  { loadDenseGases(); }
+  if (id === 'fire_smoke') { loadFireTypes(); }
+  if (id === 'probit')     { _refreshProbitPanel(); }
 
   if (isMobile()) {
     setTimeout(() => { const p = document.getElementById(`panel-${id}`); if(p) p.scrollIntoView({behavior:'smooth'}); }, 100);
@@ -934,6 +1007,13 @@ function fmtPpm(v) {
   return Math.round(v)+' ppm';
 }
 
+function fmtKm(km, d=2)  { return useImperial ? `${(km*0.621371).toFixed(d)} mi`  : `${km.toFixed(d)} km`; }
+function fmtM(m)         { return useImperial ? `${Math.round(m*3.28084)} ft`      : `${Math.round(m)} m`; }
+function fmtMs(ms)       { return useImperial ? `${(ms*2.23694).toFixed(1)} mph`   : `${(ms*3.6).toFixed(1)} km/h`; }
+function fmtMph(mph)     { return useImperial ? `${mph} mph`                       : `${(mph*1.60934).toFixed(1)} km/h`; }
+function fmtTempF(f)     { return useImperial ? `${Math.round(f)}°F`               : `${Math.round((f-32)*5/9)}°C`; }
+function fmtDist(km)     { if(useImperial){const mi=km*0.621371;return mi<0.5?`${Math.round(mi*5280)} ft`:`${mi.toFixed(2)} mi`;}return km<1?`${Math.round(km*1000)} m`:`${km.toFixed(2)} km`; }
+
 function applyPreset() {
   const sel = document.getElementById('sel-preset');
   const opt = sel.options[sel.selectedIndex];
@@ -996,7 +1076,7 @@ function renderPlumeOnMap(data) {
   for (const feat of sorted) {
     const p = feat.properties;
     const layer = L.geoJSON(feat,{style:{color:p.color,weight:2,fillColor:p.color,fillOpacity:.22,opacity:.85}}).addTo(map);
-    layer.bindPopup(`<b>${p.label}</b><br/>Threshold: ${fmtPpm(p.threshold_ppm)}<br/>Downwind: ${p.max_downwind_km.toFixed(2)} km<br/>Width: ${p.max_width_km.toFixed(2)} km`);
+    layer.bindPopup(`<b>${p.label}</b><br/>Threshold: ${fmtPpm(p.threshold_ppm)}<br/>Downwind: ${fmtKm(p.max_downwind_km)}<br/>Width: ${fmtKm(p.max_width_km)}`);
     plumeLayers.push(layer);
     legendRows.push({label:p.label,color:p.color,km:p.max_downwind_km});
   }
@@ -1016,7 +1096,7 @@ function updateLegend(rows, title, source) {
     `<div class="legend-row">
       <div class="legend-box" style="background:${r.color}88;border-color:${r.color}"></div>
       <span>${r.label}</span>
-      ${r.km!==undefined?`<span style="margin-left:auto;font-family:monospace;font-size:11px">${r.km.toFixed?r.km.toFixed(2):r.km} km ↓</span>`:''}
+      ${r.km!==undefined?`<span style="margin-left:auto;font-family:monospace;font-size:11px">${fmtKm(r.km)} ↓</span>`:''}
     </div>`
   ).join('');
   document.getElementById('legend-source').textContent = source;
@@ -1031,11 +1111,12 @@ function renderResults(data) {
     const color = level==='high'?'var(--red)':level==='medium'?'#FF8C00':'#FFD700';
     return `<div class="result-row">
       <span class="result-label"><span class="threshold-dot" style="background:${color}"></span>${s.label}</span>
-      <span>${s.has_contour?`<span class="result-val">${s.max_downwind_km.toFixed(2)}</span><span class="result-unit">km</span>`:'<span style="color:var(--muted);font-size:11px">below release</span>'}</span>
+      <span>${s.has_contour?`<span class="result-val">${fmtKm(s.max_downwind_km)}</span>`:'<span style="color:var(--muted);font-size:11px">below release</span>'}</span>
     </div>`;
   });
   const wx=data.weather, m=data.model;
-  content.innerHTML = rows.join('') + `<div style="margin-top:8px;font-size:11px;color:var(--muted)">${wx&&wx.wind_dir_label?`Wind: ${wx.wind_dir_label} at ${wx.wind_speed_mph} mph`:`Wind: ${m.wind_speed_ms.toFixed(1)} m/s from ${m.wind_dir_from_deg}°`}<br/>Stability: PG-${m.stability_class} · Q = ${m.Q_gs.toFixed(1)} g/s</div>`;
+  const windStr = wx&&wx.wind_dir_label ? `Wind: ${wx.wind_dir_label} at ${fmtMph(wx.wind_speed_mph)}` : `Wind: ${fmtMs(m.wind_speed_ms)} from ${m.wind_dir_from_deg}°`;
+  content.innerHTML = rows.join('') + `<div style="margin-top:8px;font-size:11px;color:var(--muted)">${windStr}<br/>Stability: PG-${m.stability_class} · Q = ${m.Q_gs.toFixed(1)} g/s</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1060,16 +1141,16 @@ function renderWeather() {
   if (!wxData) return;
   document.getElementById('wx-panel').style.display = 'block';
   document.getElementById('wx-grid').innerHTML = `
-    <div class="wx-item"><div class="wx-label">Wind Speed</div><div class="wx-value">${wxData.wind_speed_mph} <span style="font-size:11px">mph</span></div></div>
+    <div class="wx-item"><div class="wx-label">Wind Speed</div><div class="wx-value">${fmtMph(wxData.wind_speed_mph)}</div></div>
     <div class="wx-item"><div class="wx-label">From Direction</div><div class="wx-value">${wxData.wind_dir_label} <span style="font-size:11px">${wxData.wind_dir_from_deg}°</span></div></div>
-    <div class="wx-item"><div class="wx-label">Temperature</div><div class="wx-value">${wxData.temp_f}°F</div></div>
+    <div class="wx-item"><div class="wx-label">Temperature</div><div class="wx-value">${fmtTempF(wxData.temp_f)}</div></div>
     <div class="wx-item"><div class="wx-label">Cloud Cover</div><div class="wx-value">${wxData.cloud_cover_pct}%</div></div>`;
   const cls = wxData.stability_class;
   document.getElementById('wx-stability-label').textContent = wxData.stability_desc;
   document.getElementById('stability-bar').innerHTML = ['A','B','C','D','E','F'].map(c=>
     `<div class="stab-cell ${c===cls?'active':''}" title="${c}"></div>`).join('');
   document.getElementById('pill-wind').style.display = 'flex';
-  document.getElementById('pill-wind-txt').textContent = `${wxData.wind_dir_label} ${wxData.wind_speed_mph} mph`;
+  document.getElementById('pill-wind-txt').textContent = `${wxData.wind_dir_label} ${fmtMph(wxData.wind_speed_mph)}`;
   const plumeDir = (wxData.wind_dir_from_deg+180)%360;
   document.getElementById('wind-arrow').style.transform = `rotate(${plumeDir-90}deg)`;
   document.getElementById('pill-stability').style.display = 'flex';
@@ -1193,7 +1274,7 @@ function renderBlastOnMap(data) {
   for (const feat of zones) {
     const p = feat.properties;
     const layer = L.geoJSON(feat,{style:{color:p.color,weight:2,fillColor:p.color,fillOpacity:.20,opacity:.85,dashArray:'4 3'}}).addTo(map);
-    layer.bindPopup(`<b>${p.label}</b><br/>${p.psi} psi / ${p.kPa} kPa<br/>Radius: ${p.radius_km.toFixed(3)} km<br/><em>${p.desc}</em>`);
+    layer.bindPopup(`<b>${p.label}</b><br/>${p.psi} psi / ${p.kPa} kPa<br/>Radius: ${fmtKm(p.radius_km, 3)}<br/><em>${p.desc}</em>`);
     blastLayers.push(layer);
   }
   if (blastLayers.length>0) {
@@ -1206,7 +1287,7 @@ function renderBlastResults(data) {
   document.getElementById('blast-results-section').style.display = 'block';
   const rows = Object.values(data.stats).reverse().map(s=>
     `<div class="result-row"><span class="result-label"><span class="threshold-dot" style="background:${s.color};border:1px solid #fff4"></span>${s.full_label}</span>
-    <span><span class="result-val">${s.radius_km.toFixed(3)}</span><span class="result-unit">km</span></span></div>`).join('');
+    <span><span class="result-val">${fmtKm(s.radius_km, 3)}</span></span></div>`).join('');
   const expName = explosives.find(e=>e.id===data.explosive_id)?.name||data.explosive_id;
   document.getElementById('blast-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${expName} · ${data.weight_kg.toFixed(1)} kg → ${data.W_tnt_kg} kg TNT equiv<br/>Model: Brode (1955) / Hopkinson-Cranz</div>`;
 }
@@ -1335,7 +1416,7 @@ function renderRadiationOnMap(data) {
   for (const feat of sorted) {
     const p = feat.properties;
     const layer = L.geoJSON(feat,{style:{color:p.color,weight:2,fillColor:p.color,fillOpacity:.18,opacity:.85,dashArray:'6 3'}}).addTo(map);
-    layer.bindPopup(`<b>${p.label}</b><br/>Dose: ${p.dose_msvhr} mSv/hr<br/>Downwind: ${p.max_downwind_km.toFixed(2)} km<br/><em>${p.desc}</em>`);
+    layer.bindPopup(`<b>${p.label}</b><br/>Dose: ${p.dose_msvhr} mSv/hr<br/>Downwind: ${fmtKm(p.max_downwind_km)}<br/><em>${p.desc}</em>`);
     radLayers.push(layer);
   }
   if (radLayers.length>0) {
@@ -1350,12 +1431,12 @@ function renderRadiationResults(data) {
   const rows = order.map(level=>{
     const s=data.stats[level]; if(!s) return '';
     return `<div class="result-row"><span class="result-label"><span class="threshold-dot" style="background:${s.color};border:1px solid #fff4"></span>${s.label}</span>
-    <span>${s.has_contour?`<span class="result-val">${s.max_downwind_km.toFixed(2)}</span><span class="result-unit">km</span>`:'<span style="color:var(--muted);font-size:11px">not reached</span>'}</span></div>`;
+    <span>${s.has_contour?`<span class="result-val">${fmtKm(s.max_downwind_km)}</span>`:'<span style="color:var(--muted);font-size:11px">not reached</span>'}</span></div>`;
   }).join('');
   const m=data.model;
   const n=radionuclides.find(x=>x.id===document.getElementById('sel-radionuclide').value);
   const ciMin=m.Q_ci_s*60;
-  document.getElementById('rad-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${n?n.name:''} · ${ciMin<0.01?(ciMin*1000).toFixed(3)+' mCi/min':ciMin.toFixed(4)+' Ci/min'}<br/>PG-${m.stability_class} · ${m.wind_speed_ms.toFixed(1)} m/s · EPA FGR-12 cloudshine</div>`;
+  document.getElementById('rad-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${n?n.name:''} · ${ciMin<0.01?(ciMin*1000).toFixed(3)+' mCi/min':ciMin.toFixed(4)+' Ci/min'}<br/>PG-${m.stability_class} · ${fmtMs(m.wind_speed_ms)} · EPA FGR-12 cloudshine</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1450,7 +1531,7 @@ async function runBleve() {
     renderBleveResults(data);
     enableExport('bleve');
     addTimelineEntry('bleve',`🔥 ${data.fuel_name} ${massKg.toFixed(0)} kg · fireball r=${data.fireball.radius_m.toFixed(0)}m`,data,bleveLatLon.lat,bleveLatLon.lon);
-    toast(`🔥 BLEVE zones computed — fireball r=${data.fireball.radius_m.toFixed(0)} m`, 2500);
+    toast(`🔥 BLEVE zones computed — fireball r=${fmtM(data.fireball.radius_m)}`, 2500);
     if (isMobile()) closeMobileSidebar();
   } catch(e) { toast(`BLEVE error: ${e.message}`, 4000); }
   finally { btn.innerHTML='🔥 Compute BLEVE Zones'; btn.disabled=false; }
@@ -1470,7 +1551,7 @@ function renderBleveOnMap(data) {
   for (const feat of sorted) {
     const p = feat.properties;
     const layer = L.geoJSON(feat,{style:{color:p.color,weight:2,fillColor:p.color,fillOpacity:.20,opacity:.85}}).addTo(map);
-    layer.bindPopup(`<b>${p.label}</b><br/>${p.q_kwm2!=null?`${p.q_kwm2} kW/m²<br/>`:''}Radius: ${p.radius_km.toFixed(3)} km<br/><em>${p.desc}</em>`);
+    layer.bindPopup(`<b>${p.label}</b><br/>${p.q_kwm2!=null?`${p.q_kwm2} kW/m²<br/>`:''}Radius: ${fmtKm(p.radius_km, 3)}<br/><em>${p.desc}</em>`);
     bleveLayers.push(layer);
     legendRows.push({label:p.label,color:p.color,km:p.radius_km});
   }
@@ -1487,10 +1568,10 @@ function renderBleveResults(data) {
   const rows = order.map(level=>{
     const s=data.stats[level]; if(!s) return '';
     return `<div class="result-row"><span class="result-label"><span class="threshold-dot" style="background:${s.color};border:1px solid #fff4"></span>${s.label}</span>
-    <span><span class="result-val">${s.radius_km.toFixed(3)}</span><span class="result-unit">km</span></span></div>`;
+    <span><span class="result-val">${fmtKm(s.radius_km, 3)}</span></span></div>`;
   }).filter(Boolean).join('');
   const fb = data.fireball;
-  document.getElementById('bleve-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${data.fuel_name} · ${data.mass_kg.toFixed(0)} kg<br/>Fireball: r=${fb.radius_m.toFixed(0)} m · t=${fb.duration_s.toFixed(1)} s · SEP=${fb.sep_kwm2} kW/m²<br/>Model: Roberts (1982)</div>`;
+  document.getElementById('bleve-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${data.fuel_name} · ${data.mass_kg.toFixed(0)} kg<br/>Fireball: r=${fmtM(fb.radius_m)} · t=${fb.duration_s.toFixed(1)} s · SEP=${fb.sep_kwm2} kW/m²<br/>Model: Roberts (1982)</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1551,17 +1632,17 @@ function renderERGStats() {
     <table style="width:100%;border-collapse:collapse;font-size:12px">
       <tr style="background:rgba(255,34,0,0.12)">
         <td style="padding:5px 6px">🔴 Initial Isolation</td>
-        <td style="padding:5px 6px;text-align:right;font-weight:600">${d.isolation_m} m</td>
+        <td style="padding:5px 6px;text-align:right;font-weight:600">${fmtM(d.isolation_m)}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--muted)">all directions</td>
       </tr>
       <tr style="background:rgba(255,170,0,0.10)">
         <td style="padding:5px 6px">🟡 PAD — Day</td>
-        <td style="padding:5px 6px;text-align:right;font-weight:600">${d.day_pad_km} km</td>
+        <td style="padding:5px 6px;text-align:right;font-weight:600">${fmtKm(d.day_pad_km)}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--muted)">downwind</td>
       </tr>
       <tr style="background:rgba(255,68,0,0.12)">
         <td style="padding:5px 6px">🟠 PAD — Night</td>
-        <td style="padding:5px 6px;text-align:right;font-weight:600">${d.night_pad_km} km</td>
+        <td style="padding:5px 6px;text-align:right;font-weight:600">${fmtKm(d.night_pad_km)}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--muted)">downwind</td>
       </tr>
     </table>
@@ -1614,7 +1695,7 @@ async function plotERGZones() {
     addTimelineEntry('erg',
       `🧪 UN${data.un_number} ${data.name} — ${size} spill · ISO ${sz.isolation_m}m / PAD ${sz.day_pad_km}km`,
       data, ergLatLon.lat, ergLatLon.lon);
-    toast(`🧪 ERG zones plotted — Isolation ${sz.isolation_m} m · PAD (day) ${sz.day_pad_km} km`, 3000);
+    toast(`🧪 ERG zones plotted — Isolation ${fmtM(sz.isolation_m)} · PAD (day) ${fmtKm(sz.day_pad_km)}`, 3000);
     if (isMobile()) closeMobileSidebar();
   } catch(e) { toast(`ERG error: ${e.message}`, 4000); }
   finally { btn.innerHTML = '🧪 Plot ERG Zones'; btn.disabled = false; }
@@ -1640,6 +1721,33 @@ function renderERGOnMap(data) {
 // Critical Infrastructure (Overpass API)
 // ─────────────────────────────────────────────────────────────────────────────
 function clearInfraLayers() { for(const l of infraLayers) map.removeLayer(l); infraLayers=[]; }
+
+function _renderInfraFromCache() {
+  if (!_lastInfraResult) return;
+  const { deduped, radius } = _lastInfraResult;
+  clearInfraLayers();
+  document.getElementById('infra-status').textContent = `${deduped.length} facilities found within ${fmtDist(radius/1000)}`;
+  for (const item of deduped) {
+    const info = INFRA_TYPES[item.type]||{icon:'📍',label:item.type,color:'#888'};
+    const icon = L.divIcon({className:'',html:`<div style="font-size:18px;filter:drop-shadow(0 0 3px ${info.color})">${info.icon}</div>`,iconSize:[24,24],iconAnchor:[12,12]});
+    const marker = L.marker([item.lat,item.lon],{icon}).addTo(map)
+      .bindPopup(`<b>${info.icon} ${item.name}</b><br/>${info.label}<br/>${fmtDist(item.distKm)} from incident`);
+    infraLayers.push(marker);
+  }
+  const groups = {};
+  for (const item of deduped) { if (!groups[item.type]) groups[item.type]=[]; groups[item.type].push(item); }
+  let html = '';
+  const priority = ['hospital','fire_station','police','school','nursing_home','shelter','power_plant','water_works','government','military','pharmacy','fuel'];
+  for (const type of priority) {
+    if (!groups[type]) continue;
+    const info = INFRA_TYPES[type]||{icon:'📍',label:type};
+    html += `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:8px 0 4px">${info.icon} ${info.label} (${groups[type].length})</div>`;
+    for (const item of groups[type]) {
+      html += `<div class="infra-item"><div class="infra-name">${item.name}</div><div class="infra-dist">${fmtDist(item.distKm)}</div></div>`;
+    }
+  }
+  document.getElementById('infra-list').innerHTML = html;
+}
 
 function _getInfraType(tags) {
   if (tags.amenity==='hospital')     return 'hospital';
@@ -1689,7 +1797,7 @@ out center;`;
     const data = await r.json();
     const elements = data.elements||[];
     if (!elements.length) {
-      document.getElementById('infra-status').textContent = `No critical infrastructure found within ${radius/1000} km.`;
+      document.getElementById('infra-status').textContent = `No critical infrastructure found within ${fmtDist(radius/1000)}.`;
       return;
     }
 
@@ -1713,43 +1821,11 @@ out center;`;
       return true;
     });
 
-    document.getElementById('infra-status').textContent = `${deduped.length} facilities found within ${radius/1000} km`;
-
-    // Map markers
-    for (const item of deduped) {
-      const info = INFRA_TYPES[item.type]||{icon:'📍',label:item.type,color:'#888'};
-      const icon = L.divIcon({
-        className:'',
-        html:`<div style="font-size:18px;filter:drop-shadow(0 0 3px ${info.color})">${info.icon}</div>`,
-        iconSize:[24,24], iconAnchor:[12,12]
-      });
-      const marker = L.marker([item.lat,item.lon],{icon})
-        .addTo(map)
-        .bindPopup(`<b>${info.icon} ${item.name}</b><br/>${info.label}<br/>${(item.distKm*1000).toFixed(0)} m from incident`);
-      infraLayers.push(marker);
-    }
-
-    // Priority grouping
-    const groups = {};
-    for (const item of deduped) {
-      if (!groups[item.type]) groups[item.type] = [];
-      groups[item.type].push(item);
-    }
-
-    let html = '';
-    const priority = ['hospital','fire_station','police','school','nursing_home','shelter','power_plant','water_works','government','military','pharmacy','fuel'];
-    for (const type of priority) {
-      if (!groups[type]) continue;
-      const info = INFRA_TYPES[type]||{icon:'📍',label:type};
-      html += `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:8px 0 4px">${info.icon} ${info.label} (${groups[type].length})</div>`;
-      for (const item of groups[type]) {
-        html += `<div class="infra-item">
-          <div class="infra-name">${item.name}</div>
-          <div class="infra-dist">${item.distKm<1?(item.distKm*1000).toFixed(0)+' m':item.distKm.toFixed(2)+' km'}</div>
-        </div>`;
-      }
-    }
-    document.getElementById('infra-list').innerHTML = html;
+    _lastInfraResult = { deduped, radius };
+    _renderInfraFromCache();
+    // Push to backend so infra appears in KML / TAK exports
+    fetch(`${API}/api/infra/cache`, {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({lat, lon, radius, items: deduped})}).catch(()=>{});
   } catch(e) {
     document.getElementById('infra-status').textContent = `Search failed: ${e.message}. Check internet connection.`;
   }
@@ -1763,16 +1839,20 @@ function _getActiveZones() {
   const addZonesFromGeoJSON = (geojson, typeFilter) => {
     if (!geojson) return;
     for (const feat of geojson.features) {
-      if (feat.properties.type === typeFilter && feat.geometry.type === 'Polygon') {
+      if (feat.properties.type === typeFilter && feat.geometry.type === 'Polygon' && feat.geometry.coordinates[0]?.length) {
         const latlon = feat.geometry.coordinates[0].map(c=>[c[1],c[0]]);
-        zones.push({ level:feat.properties.level, label:feat.properties.label, color:feat.properties.color, latlon });
+        const z = { level:feat.properties.level, label:feat.properties.label, color:feat.properties.color, latlon };
+        if (feat.properties.threshold_ppm != null) z.threshold_ppm = feat.properties.threshold_ppm;
+        zones.push(z);
       }
     }
   };
-  if (_activeOverlays.plume    && lastPlumeData)  addZonesFromGeoJSON(lastPlumeData.geojson,  'plume_contour');
-  if (_activeOverlays.radiation && lastRadData)    addZonesFromGeoJSON(lastRadData.geojson,    'rad_contour');
-  if (_activeOverlays.blast    && lastBlastData)  addZonesFromGeoJSON(lastBlastData.geojson,  'blast_zone');
-  if (_activeOverlays.bleve    && lastBleveData)  addZonesFromGeoJSON(lastBleveData.geojson,  'bleve_zone');
+  if (_activeOverlays.plume      && lastPlumeData)     addZonesFromGeoJSON(lastPlumeData.geojson,    'plume_contour');
+  if (_activeOverlays.radiation  && lastRadData)       addZonesFromGeoJSON(lastRadData.geojson,      'rad_contour');
+  if (_activeOverlays.blast      && lastBlastData)     addZonesFromGeoJSON(lastBlastData.geojson,    'blast_zone');
+  if (_activeOverlays.bleve      && lastBleveData)     addZonesFromGeoJSON(lastBleveData.geojson,    'bleve_zone');
+  if (_activeOverlays.dense_gas  && lastDenseGasData)  addZonesFromGeoJSON(lastDenseGasData.geojson, 'dense_gas_contour');
+  if (_activeOverlays.fire_smoke && lastFireSmokeData) addZonesFromGeoJSON(lastFireSmokeData.geojson,'smoke_pm25');
   return zones;
 }
 
@@ -1786,7 +1866,9 @@ async function runPopulationEstimate() {
       body:JSON.stringify({lat:incidentLatLon.lat,lon:incidentLatLon.lon,zones})});
     if (!r.ok) throw new Error((await r.json()).detail||'Population query failed');
     const data = await r.json();
+    _lastPopResult = data;
     renderPopulationResults(data);
+    _refreshProbitPanel();
   } catch(e) { document.getElementById('pop-results').innerHTML = `<div style="font-size:11px;color:var(--red)">Error: ${e.message}</div>`; }
 }
 
@@ -1798,7 +1880,7 @@ function renderPopulationResults(data) {
     </div>`).join('');
   document.getElementById('pop-results').innerHTML = rows+`
     <div style="margin-top:8px;font-size:10px;color:var(--muted);line-height:1.5">
-      ${data.county_name} · pop density ${data.pop_density_per_km2.toFixed(0)}/km²<br/>
+      ${data.county_name} · pop density ${useImperial?(data.pop_density_per_km2*2.58999).toFixed(0)+'/mi²':data.pop_density_per_km2.toFixed(0)+'/km²'}<br/>
       ${data.accuracy_note}<br/>
       Source: ${data.data_source}
     </div>`;
@@ -2001,6 +2083,277 @@ function toast(msg, duration=2500) {
   setTimeout(()=>el.classList.remove('show'), duration);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Dense Gas Dispersion
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadDenseGases() {
+  try {
+    const r = await fetch(`${API}/api/dense_gas/chemicals`);
+    const d = await r.json();
+    denseGasChems = d.chemicals;
+    const sel = document.getElementById('sel-dense-gas');
+    if (!sel) return;
+    sel.innerHTML = denseGasChems.map(c =>
+      `<option value="${c.id}">${c.name} (${c.formula})${c.flammable?' ⚠ FLAMMABLE':''}</option>`
+    ).join('');
+    _onDenseGasChange();
+  } catch(e) { /* silent */ }
+}
+
+function _onDenseGasChange() {
+  const id = document.getElementById('sel-dense-gas')?.value;
+  const warn = document.getElementById('dense-gas-warning');
+  if (!warn) return;
+  const gas = denseGasChems.find(c => c.id === id);
+  if (gas?.warning) { warn.textContent = '⚠ ' + gas.warning; warn.style.display = 'block'; }
+  else warn.style.display = 'none';
+}
+
+function clearDenseGasLayers() {
+  denseGasLayers.forEach(l => map.removeLayer(l));
+  denseGasLayers = [];
+}
+
+async function runDenseGas() {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  if (!wxData) { toast('Fetch weather first', 2000); return; }
+  const gasId = document.getElementById('sel-dense-gas').value;
+  if (!gasId) { toast('Select a gas', 2000); return; }
+  const rate   = parseFloat(document.getElementById('inp-dg-rate').value)   || 10;
+  const height = parseFloat(document.getElementById('inp-dg-height').value) || 0;
+  const body = {
+    lat: incidentLatLon.lat, lon: incidentLatLon.lon,
+    gas_id: gasId, release_rate_kg_min: rate, release_height_m: height,
+    wind_speed_ms: wxData.wind_speed_ms, wind_dir_from_deg: wxData.wind_dir_from_deg,
+    stability_class: wxData.stability_class,
+  };
+  document.getElementById('dense-gas-status').innerHTML = '<span class="spin">⟳</span> Computing…';
+  try {
+    const r = await fetch(`${API}/api/dense_gas/zones`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    if (!r.ok) throw new Error((await r.json()).detail || 'Computation failed');
+    const data = await r.json();
+    lastDenseGasData = data;
+    clearDenseGasLayers();
+    for (const feat of data.geojson.features) {
+      if (!feat.geometry.coordinates[0]?.length) continue;
+      const color = feat.properties.color;
+      const poly = L.polygon(feat.geometry.coordinates[0].map(c=>[c[1],c[0]]), {
+        color, fillColor:color, fillOpacity:0.25, weight:2
+      }).addTo(map);
+      poly.bindPopup(`<b>${feat.properties.label}</b><br/>${feat.properties.threshold_ppm} ppm<br/>Max downwind: ${fmtKm(feat.properties.max_downwind_km)}<br/>Max width: ${fmtKm(feat.properties.max_width_km)}`);
+      denseGasLayers.push(poly);
+    }
+    renderDenseGasResults(data);
+    enableExport('dense_gas');
+    _activeOverlays.dense_gas = true;
+    _refreshExportUI();
+    addTimelineEvent(`Dense Gas: ${data.gas.name}`, `${rate} kg/min · PG-${wxData.stability_class}`);
+  } catch(e) {
+    document.getElementById('dense-gas-status').textContent = `Error: ${e.message}`;
+  }
+}
+
+function renderDenseGasResults(data) {
+  const gas   = data.gas;
+  const stats = data.stats;
+  const model = data.model;
+  let html = `<div style="font-size:11px;color:var(--muted);margin-bottom:6px">
+    ${gas.name} (${gas.formula}) · UN ${gas.un} · ${gas.density_kg_m3} kg/m³${gas.flammable?' · ⚠ FLAMMABLE':''}
+  </div>`;
+  if (gas.warning) html += `<div style="font-size:11px;color:#FF8C00;background:rgba(255,140,0,0.1);padding:6px;border-radius:4px;margin-bottom:8px">⚠ ${gas.warning}</div>`;
+  html += `<table style="width:100%;border-collapse:collapse;font-size:11px">
+    <tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 0;font-weight:600">Zone</th><th style="font-weight:600">Threshold</th><th style="font-weight:600">Downwind</th><th style="font-weight:600">Width</th></tr>`;
+  for (const s of stats) {
+    html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+      <td style="padding:4px 0"><span class="threshold-dot" style="background:${s.color}"></span>${s.label.split('/ ')[1]||s.label}</td>
+      <td style="text-align:center">${s.threshold_ppm} ppm</td>
+      <td style="text-align:center">${s.has_contour ? fmtKm(s.max_downwind_km) : '—'}</td>
+      <td style="text-align:center">${s.has_contour ? fmtKm(s.max_width_km) : '—'}</td>
+    </tr>`;
+  }
+  html += `</table><div style="font-size:10px;color:var(--muted);margin-top:6px">PG-${model.stability_class} · density ×${model.dense_factor} suppression · ${fmtMs(model.wind_speed_ms)} from ${model.wind_dir_from_deg.toFixed(0)}°</div>`;
+  document.getElementById('dense-gas-status').textContent = '';
+  document.getElementById('dense-gas-results').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fire / Smoke Plume
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadFireTypes() {
+  try {
+    const r = await fetch(`${API}/api/fire_smoke/types`);
+    const d = await r.json();
+    fireTypesList = d.fire_types;
+    const sel = document.getElementById('sel-fire-type');
+    if (!sel) return;
+    sel.innerHTML = fireTypesList.map(t =>
+      `<option value="${t.id}">${t.name} (${t.hrr_mw} MW)</option>`
+    ).join('');
+    _onFireTypeChange();
+  } catch(e) { /* silent */ }
+}
+
+function _onFireTypeChange() {
+  const id = document.getElementById('sel-fire-type')?.value;
+  const desc = document.getElementById('fire-type-desc');
+  if (!desc) return;
+  const ft = fireTypesList.find(t => t.id === id);
+  desc.textContent = ft ? ft.desc : '';
+}
+
+function clearFireSmokeLayers() {
+  firesmokeLayersList.forEach(l => map.removeLayer(l));
+  firesmokeLayersList = [];
+}
+
+async function runFireSmoke() {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  if (!wxData) { toast('Fetch weather first', 2000); return; }
+  const fireTypeId = document.getElementById('sel-fire-type').value;
+  if (!fireTypeId) { toast('Select a fire type', 2000); return; }
+  const hStack = parseFloat(document.getElementById('inp-fs-stack').value) || 0;
+  const body = {
+    lat: incidentLatLon.lat, lon: incidentLatLon.lon,
+    fire_type_id: fireTypeId, h_stack: hStack,
+    wind_speed_ms: wxData.wind_speed_ms, wind_dir_from_deg: wxData.wind_dir_from_deg,
+    stability_class: wxData.stability_class,
+  };
+  document.getElementById('fire-smoke-status').innerHTML = '<span class="spin">⟳</span> Computing…';
+  try {
+    const r = await fetch(`${API}/api/fire_smoke/zones`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    if (!r.ok) throw new Error((await r.json()).detail || 'Computation failed');
+    const data = await r.json();
+    lastFireSmokeData = data;
+    clearFireSmokeLayers();
+    for (const feat of data.geojson.features) {
+      if (!feat.geometry.coordinates[0]?.length) continue;
+      const color = feat.properties.color;
+      const poly = L.polygon(feat.geometry.coordinates[0].map(c=>[c[1],c[0]]), {
+        color, fillColor:color, fillOpacity:0.2, weight:2
+      }).addTo(map);
+      const prop = feat.properties;
+      const threshStr = prop.type==='smoke_pm25' ? `${prop.threshold_ugm3} µg/m³ PM2.5` : `${prop.threshold_ppm} ppm CO`;
+      poly.bindPopup(`<b>${prop.label}</b><br/>${threshStr}<br/>Max downwind: ${fmtKm(prop.max_downwind_km)}<br/>Max width: ${fmtKm(prop.max_width_km)}`);
+      firesmokeLayersList.push(poly);
+    }
+    renderFireSmokeResults(data);
+    enableExport('fire_smoke');
+    _activeOverlays.fire_smoke = true;
+    _refreshExportUI();
+    addTimelineEvent(`Fire/Smoke: ${data.fire.name}`, `${data.fire.hrr_mw} MW · PG-${wxData.stability_class}`);
+  } catch(e) {
+    document.getElementById('fire-smoke-status').textContent = `Error: ${e.message}`;
+  }
+}
+
+function renderFireSmokeResults(data) {
+  const fire  = data.fire;
+  const stats = data.stats;
+  const model = data.model;
+  let pm25Rows = '', coRows = '';
+  for (const s of stats) {
+    const row = `<tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+      <td style="padding:4px 0"><span class="threshold-dot" style="background:${s.color}"></span>${s.label.split('(')[0].trim()}</td>
+      <td style="text-align:center">${s.pollutant==='PM2.5'?s.threshold_ugm3+' µg/m³':s.threshold_ppm+' ppm'}</td>
+      <td style="text-align:center">${s.has_contour ? fmtKm(s.max_downwind_km) : '—'}</td>
+    </tr>`;
+    if (s.pollutant==='PM2.5') pm25Rows += row; else coRows += row;
+  }
+  const tbl = (header, rows) => rows ? `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:8px 0 4px">${header}</div>
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:2px 0;font-weight:600">Zone</th><th style="font-weight:600">Threshold</th><th style="font-weight:600">Downwind</th></tr>
+      ${rows}</table>` : '';
+  let html = `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">${fire.name} · ${fire.hrr_mw} MW · Plume rise: ${fmtM(model.final_rise_m)} at ${fmtKm(model.final_rise_dist_m/1000)}</div>`;
+  html += tbl('PM2.5 Smoke Zones', pm25Rows);
+  html += tbl('Carbon Monoxide Zones', coRows);
+  html += `<div style="font-size:10px;color:var(--muted);margin-top:6px">Briggs (1975) · PG-${model.stability_class} · ${fmtMs(model.wind_speed_ms)} from ${model.wind_dir_from_deg.toFixed(0)}°</div>`;
+  document.getElementById('fire-smoke-status').textContent = '';
+  document.getElementById('fire-smoke-results').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Probit / Casualty Estimator
+// ─────────────────────────────────────────────────────────────────────────────
+function _refreshProbitPanel() {
+  const prereq = document.getElementById('probit-prereq');
+  if (!prereq) return;
+  prereq.style.display = _lastPopResult ? 'none' : 'block';
+}
+
+async function runProbit() {
+  if (!_lastPopResult) {
+    document.getElementById('probit-results').innerHTML = '<div style="font-size:11px;color:var(--muted)">Run <b>Population Impact</b> first to get zone populations, then return here.</div>';
+    return;
+  }
+  const exposureMin = parseFloat(document.getElementById('inp-probit-exp').value) || 30;
+  const gasId = document.getElementById('sel-probit-gas').value || null;
+  const zones = _lastPopResult.zones.map(z => ({
+    level: z.level, label: z.label, color: z.color,
+    pop_estimate: z.pop_estimate,
+    ...(z.threshold_ppm != null ? { threshold_ppm: z.threshold_ppm } : {}),
+  }));
+  try {
+    const r = await fetch(`${API}/api/probit`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ zones, exposure_min: exposureMin, gas_id: gasId }),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || 'Probit failed');
+    const data = await r.json();
+    renderProbitResults(data);
+  } catch(e) {
+    document.getElementById('probit-results').innerHTML = `<div style="font-size:11px;color:var(--red)">Error: ${e.message}</div>`;
+  }
+}
+
+function renderProbitResults(data) {
+  const t = data.totals;
+  let html = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:10px">
+    <div class="stat-box"><div class="stat-num" style="color:#FF4444">${t.fatalities.toLocaleString()}</div><div class="stat-lbl">Fatal</div></div>
+    <div class="stat-box"><div class="stat-num" style="color:#FF8C00">${t.serious_injuries.toLocaleString()}</div><div class="stat-lbl">Serious</div></div>
+    <div class="stat-box"><div class="stat-num" style="color:#FFCC00">${t.minor_injuries.toLocaleString()}</div><div class="stat-lbl">Minor</div></div>
+    <div class="stat-box"><div class="stat-num">${t.total_casualties.toLocaleString()}</div><div class="stat-lbl">Total</div></div>
+  </div>`;
+  html += `<table style="width:100%;border-collapse:collapse;font-size:11px">
+    <tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:2px 0;font-weight:600">Zone</th><th style="font-weight:600">Pop</th><th style="font-weight:600">Fatal%</th><th style="font-weight:600">Serious%</th></tr>`;
+  for (const z of data.zones) {
+    html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+      <td style="padding:4px 0"><span class="threshold-dot" style="background:${z.color}"></span>${z.label}</td>
+      <td style="text-align:center">${(z.pop_estimate||0).toLocaleString()}</td>
+      <td style="text-align:center;color:#FF6666">${z.lethality_pct}%</td>
+      <td style="text-align:center;color:#FFAA44">${z.serious_pct}%</td>
+    </tr>`;
+  }
+  html += `</table><div style="font-size:10px;color:var(--muted);margin-top:8px;line-height:1.5">${data.method} · ${data.exposure_min} min<br/>${data.note}</div>`;
+  document.getElementById('probit-results').innerHTML = html;
+}
+
+function _updateUnitBtn() {
+  const btn = document.getElementById('btn-units');
+  if (!btn) return;
+  btn.textContent      = useImperial ? 'MI' : 'KM';
+  btn.style.color      = useImperial ? 'var(--accent)' : 'var(--muted)';
+  btn.style.borderColor= useImperial ? 'var(--accent)' : 'var(--border)';
+}
+
+function toggleUnits() {
+  useImperial = !useImperial;
+  localStorage.setItem('wmd_units', useImperial ? 'imperial' : 'metric');
+  _updateUnitBtn();
+  refreshAllResults();
+}
+
+function refreshAllResults() {
+  if (lastPlumeData)     renderResults(lastPlumeData);
+  if (lastBlastData)     renderBlastResults(lastBlastData);
+  if (lastRadData)       renderRadiationResults(lastRadData);
+  if (lastBleveData)     renderBleveResults(lastBleveData);
+  if (_currentERGEntry)  renderERGStats();
+  if (wxData)            renderWeather();
+  if (_lastInfraResult)  _renderInfraFromCache();
+  if (lastDenseGasData)  renderDenseGasResults(lastDenseGasData);
+  if (lastFireSmokeData) renderFireSmokeResults(lastFireSmokeData);
+}
+
 function isMobile() { return window.innerWidth<=768; }
 
 function openMobileSidebar() {
@@ -2034,11 +2387,14 @@ async function loadVersion() {
 }
 
 buildToolPicker();
+_updateUnitBtn();
 loadVersion();
 loadChemicals();
 loadExplosives();
 loadRadionuclides();
 loadFuels();
+loadDenseGases();
+loadFireTypes();
 renderTimeline();
 </script>
 </body>

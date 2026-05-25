@@ -369,6 +369,236 @@ def _erg_folder(state: dict) -> tuple[str, str]:
     return styles, folder
 
 
+def _dense_gas_folder(state: dict) -> tuple[str, str]:
+    """Return (styles_xml, folder_xml) for a dense-gas overlay state."""
+    gas_name  = state.get("gas_name",    state.get("gas_id", "Unknown"))
+    formula   = state.get("gas_formula", "")
+    rate_kpm  = state.get("release_rate_kg_min", 0)
+    H_m       = state.get("release_height_m", 0)
+    wind_ms   = state.get("wind_speed_ms", 0)
+    wind_from = state.get("wind_dir_from_deg", 0)
+    stab      = state.get("stability_class", "D")
+    now       = state.get("computed_at", "")
+    wind_mph  = wind_ms * 2.237
+
+    styles = ""
+    for zone in state.get("zones", []):
+        styles += _kml_style(f"dg_{zone['level']}", zone["color"], 25)
+
+    source_desc = (
+        f"<b>Gas:</b> {gas_name} ({formula})<br/>"
+        f"<b>Release rate:</b> {rate_kpm:.1f} kg/min<br/>"
+        f"<b>Height:</b> {H_m:.0f} m<br/>"
+        f"<b>Wind:</b> {wind_mph:.1f} mph from {wind_from:.0f}°<br/>"
+        f"<b>Stability:</b> PG-{stab}<br/>"
+        f"<b>Model:</b> Modified Pasquill-Gifford (dense-gas σ_z)<br/>"
+        f"<b>Computed:</b> {now}"
+    )
+    placemarks = _point_placemark(
+        name=f"🌫 DENSE GAS: {gas_name}",
+        desc=source_desc,
+        lat=state["source_lat"],
+        lon=state["source_lon"],
+        icon_color="ff00aaff",
+    )
+
+    for zone in state.get("zones", []):
+        if not zone.get("lonlat"):
+            continue
+        coords = _lonlat_ring_to_kml(zone["lonlat"])
+        desc = (
+            f"<b>{zone['label']}</b><br/>"
+            f"Threshold: {zone.get('threshold_ppm', '?')} ppm<br/>"
+            f"Max downwind: {zone.get('max_downwind_km', 0):.2f} km<br/>"
+            f"Max width: {zone.get('max_width_km', 0):.2f} km"
+        )
+        placemarks += _polygon_placemark(zone["label"], desc, f"dg_{zone['level']}", coords)
+
+    folder = f"""
+  <Folder>
+    <name>Dense Gas — {gas_name} ({rate_kpm:.1f} kg/min)</name>
+    <description><![CDATA[Modified PG dispersion · PG-{stab} · {wind_mph:.1f} mph from {wind_from:.0f}°]]></description>
+    <open>1</open>
+    {placemarks}
+  </Folder>"""
+    return styles, folder
+
+
+def _fire_smoke_folder(state: dict) -> tuple[str, str]:
+    """Return (styles_xml, folder_xml) for a fire/smoke overlay state."""
+    fire_name = state.get("fire_name", state.get("fire_type_id", "Unknown"))
+    hrr_mw    = state.get("hrr_mw", 0)
+    wind_ms   = state.get("wind_speed_ms", 0)
+    wind_from = state.get("wind_dir_from_deg", 0)
+    stab      = state.get("stability_class", "D")
+    now       = state.get("computed_at", "")
+    wind_mph  = wind_ms * 2.237
+
+    styles = ""
+    for zone in state.get("zones", []):
+        styles += _kml_style(f"fs_{zone['level']}", zone["color"], 25)
+
+    source_desc = (
+        f"<b>Fire type:</b> {fire_name}<br/>"
+        f"<b>HRR:</b> {hrr_mw:.0f} MW<br/>"
+        f"<b>Wind:</b> {wind_mph:.1f} mph from {wind_from:.0f}°<br/>"
+        f"<b>Stability:</b> PG-{stab}<br/>"
+        f"<b>Model:</b> Briggs (1975) buoyant plume + Gaussian<br/>"
+        f"<b>Computed:</b> {now}"
+    )
+    placemarks = _point_placemark(
+        name=f"🔥 FIRE: {fire_name}",
+        desc=source_desc,
+        lat=state["source_lat"],
+        lon=state["source_lon"],
+        icon_color="ff0055ff",
+    )
+
+    for zone in state.get("zones", []):
+        if not zone.get("lonlat"):
+            continue
+        coords = _lonlat_ring_to_kml(zone["lonlat"])
+        poll = zone.get("type", "smoke")
+        if poll == "smoke_pm25":
+            thresh_str = f"PM2.5: {zone.get('threshold_ugm3', '?')} µg/m³"
+        else:
+            thresh_str = f"CO: {zone.get('threshold_ppm', '?')} ppm"
+        desc = (
+            f"<b>{zone['label']}</b><br/>"
+            f"{thresh_str}<br/>"
+            f"Max downwind: {zone.get('max_downwind_km', 0):.2f} km<br/>"
+            f"Max width: {zone.get('max_width_km', 0):.2f} km"
+        )
+        placemarks += _polygon_placemark(zone["label"], desc, f"fs_{zone['level']}", coords)
+
+    folder = f"""
+  <Folder>
+    <name>Fire / Smoke — {fire_name} ({hrr_mw:.0f} MW)</name>
+    <description><![CDATA[Briggs (1975) buoyant plume · PG-{stab} · {wind_mph:.1f} mph from {wind_from:.0f}°]]></description>
+    <open>1</open>
+    {placemarks}
+  </Folder>"""
+    return styles, folder
+
+
+def _population_folder(state: dict) -> tuple[str, str]:
+    """Return (styles_xml, folder_xml) for a population exposure overlay state."""
+    county  = state.get("county_name", "Unknown")
+    density = state.get("pop_density_per_km2", 0)
+    source  = state.get("data_source", "")
+    now     = state.get("computed_at", "")
+    zones   = state.get("zones", [])
+
+    total_pop = sum(z.get("pop_estimate", 0) for z in zones)
+
+    styles = ""
+    for i, zone in enumerate(zones):
+        styles += _kml_style(f"pop_{i}", zone.get("color", "#888888"), 20)
+
+    source_desc = (
+        f"<b>County:</b> {county}<br/>"
+        f"<b>Pop density:</b> {density:.1f} people/km²<br/>"
+        f"<b>Total estimated exposed:</b> ~{total_pop:,}<br/>"
+        f"<b>Source:</b> {source}<br/>"
+        f"<b>Computed:</b> {now}"
+    )
+    placemarks = _point_placemark(
+        name="👥 POPULATION EXPOSURE CENTER",
+        desc=source_desc,
+        lat=state["source_lat"],
+        lon=state["source_lon"],
+        icon_color="ff00ffaa",
+    )
+
+    for i, zone in enumerate(zones):
+        latlon = zone.get("latlon", [])
+        if not latlon:
+            continue
+        coords = _latlon_ring_to_kml(latlon)
+        desc = (
+            f"<b>{zone['label']}</b><br/>"
+            f"Estimated population: ~{zone.get('pop_estimate', 0):,}<br/>"
+            f"Area: {zone.get('area_km2', 0):.2f} km²"
+        )
+        placemarks += _polygon_placemark(zone["label"], desc, f"pop_{i}", coords)
+
+    folder = f"""
+  <Folder>
+    <name>Population Exposure — {county}</name>
+    <description><![CDATA[~{total_pop:,} estimated exposed · {density:.0f} people/km² · {source}]]></description>
+    <open>1</open>
+    {placemarks}
+  </Folder>"""
+    return styles, folder
+
+
+# Infra type → (KML AABBGGRR icon color, human label)
+_INFRA_KML_COLORS: dict[str, tuple[str, str]] = {
+    "hospital":     ("ff4444ff", "Hospital"),
+    "fire_station": ("ff0088ff", "Fire Station"),
+    "police":       ("ffff8844", "Police Station"),
+    "school":       ("ff44aa44", "School"),
+    "nursing_home": ("ffaa88ff", "Care Facility"),
+    "pharmacy":     ("ff88aa00", "Pharmacy"),
+    "shelter":      ("ff006688", "Emergency Shelter"),
+    "power_plant":  ("ff00aaff", "Power Plant"),
+    "water_works":  ("ffff8800", "Water Treatment"),
+    "government":   ("ff888888", "Government"),
+    "military":     ("ff006644", "Military"),
+    "fuel":         ("ff006688", "Gas Station"),
+}
+
+
+def _infra_folder(state: dict) -> tuple[str, str]:
+    """Return (styles_xml, folder_xml) for a cached infrastructure overlay state."""
+    radius = state.get("radius", 0)
+    items  = state.get("items", [])
+    now    = state.get("computed_at", "")
+
+    source_desc = (
+        f"<b>Search radius:</b> {radius/1000:.1f} km<br/>"
+        f"<b>Facilities found:</b> {len(items)}<br/>"
+        f"<b>Source:</b> OpenStreetMap / Overpass API<br/>"
+        f"<b>Queried:</b> {now}"
+    )
+    placemarks = _point_placemark(
+        name="🏢 INFRA SEARCH CENTER",
+        desc=source_desc,
+        lat=state["source_lat"],
+        lon=state["source_lon"],
+        icon_color="ff00ffaa",
+    )
+
+    for item in items:
+        itype = item.get("type", "")
+        icon_color, type_label = _INFRA_KML_COLORS.get(itype, ("ff888888", itype.replace("_", " ").title()))
+        name     = item.get("name", type_label)
+        dist_km  = item.get("distKm", 0)
+        item_lat = item.get("lat", 0)
+        item_lon = item.get("lon", 0)
+        desc = (
+            f"<b>{name}</b><br/>"
+            f"Type: {type_label}<br/>"
+            f"Distance from incident: {dist_km:.2f} km"
+        )
+        placemarks += _point_placemark(
+            name=f"{name} ({type_label})",
+            desc=desc,
+            lat=item_lat,
+            lon=item_lon,
+            icon_color=icon_color,
+        )
+
+    folder = f"""
+  <Folder>
+    <name>Critical Infrastructure ({len(items)} facilities)</name>
+    <description><![CDATA[{len(items)} facilities within {radius/1000:.1f} km · Source: OpenStreetMap]]></description>
+    <open>1</open>
+    {placemarks}
+  </Folder>"""
+    return "", folder
+
+
 # Registry: map overlay_state key → folder builder function.
 # To add a new tool: implement _<tool>_folder(state) and add it here.
 _FOLDER_BUILDERS: dict = {
@@ -377,6 +607,10 @@ _FOLDER_BUILDERS: dict = {
     "radiation": _radiation_folder,
     "bleve":     _bleve_folder,
     "erg":       _erg_folder,
+    "dense_gas":  _dense_gas_folder,
+    "fire_smoke": _fire_smoke_folder,
+    "population": _population_folder,
+    "infra":      _infra_folder,
 }
 
 
