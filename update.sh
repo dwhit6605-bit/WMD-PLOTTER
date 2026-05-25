@@ -11,7 +11,7 @@ SERVICE="wmd-plotter"
 echo "=== WMD Plotter Update ==="
 
 echo "→ Pulling latest code…"
-git -C "$APP_DIR" pull
+sudo -u "$APP_USER" git -C "$APP_DIR" pull
 
 echo "→ Updating Python dependencies…"
 "$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip

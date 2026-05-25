@@ -171,7 +171,7 @@ set -euo pipefail
 APP_DIR="/opt/wmd-plotter"
 SERVICE="wmd-plotter"
 echo "→ Pulling latest code…"
-git -C "$APP_DIR" pull
+sudo -u wmdplotter git -C "$APP_DIR" pull
 echo "→ Updating Python dependencies…"
 "$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
 "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
