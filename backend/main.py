@@ -40,9 +40,13 @@ from erg import search_erg, get_erg_entry, compute_erg_zones
 from dense_gas import compute_dense_gas_zones, list_dense_gases, get_dense_gas
 from probit import compute_probit_zones
 from fire_smoke import compute_fire_smoke_zones, list_fire_types
+from firms import fetch_firms_hotspots
+from nws_forecast import fetch_nws_forecast
+from hifld import fetch_hifld_infra
+from nifc import fetch_nifc_perimeters
 
-APP_VERSION = "2.1.0"
-BUILD_DATE  = "2026-05-25"   # v2.1.0: dense gas, fire/smoke, probit
+APP_VERSION = "2.2.0"
+BUILD_DATE  = "2026-05-25"   # v2.2.0: NASA FIRMS, NWS forecast, HIFLD, NIFC feeds
 
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="WMD Plotter API", version=APP_VERSION)
@@ -888,6 +892,70 @@ async def get_cot_xml():
     xml = build_cot_xml(_overlay_state)
     return Response(content=xml, media_type="application/xml",
                     headers={"Content-Disposition": 'attachment; filename="wmd_cot.xml"'})
+
+
+# ── NASA FIRMS hotspots ───────────────────────────────────────────────────────
+
+@app.get("/api/firms/hotspots")
+async def firms_hotspots(
+    lat:       float = Query(..., ge=-90,  le=90),
+    lon:       float = Query(..., ge=-180, le=180),
+    radius_km: float = Query(default=200, ge=10, le=1000),
+    days:      int   = Query(default=1,   ge=1,  le=7),
+):
+    """VIIRS S-NPP NRT fire hotspots within radius_km for the past `days` days."""
+    try:
+        result = await fetch_firms_hotspots(lat, lon, radius_km, days)
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"FIRMS fetch failed: {e}")
+
+
+# ── NOAA NWS hourly forecast ──────────────────────────────────────────────────
+
+@app.get("/api/weather/forecast")
+async def nws_forecast(
+    lat: float = Query(..., ge=-90,  le=90),
+    lon: float = Query(..., ge=-180, le=180),
+):
+    """NOAA NWS 24-hour hourly wind/stability forecast (US locations only)."""
+    try:
+        periods = await fetch_nws_forecast(lat, lon)
+        return JSONResponse(content={"periods": periods, "count": len(periods)})
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"NWS forecast failed: {e}")
+
+
+# ── HIFLD critical infrastructure ────────────────────────────────────────────
+
+@app.get("/api/hifld/infra")
+async def hifld_infra(
+    lat:       float = Query(..., ge=-90,  le=90),
+    lon:       float = Query(..., ge=-180, le=180),
+    radius_km: float = Query(default=5, ge=0.5, le=50),
+):
+    """HIFLD DHS critical infrastructure within radius_km (US only)."""
+    try:
+        items = await fetch_hifld_infra(lat, lon, radius_km)
+        return JSONResponse(content={"items": items, "count": len(items), "source": "HIFLD"})
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"HIFLD fetch failed: {e}")
+
+
+# ── NIFC active fire perimeters ───────────────────────────────────────────────
+
+@app.get("/api/nifc/perimeters")
+async def nifc_perimeters(
+    lat:       Optional[float] = Query(default=None, ge=-90,  le=90),
+    lon:       Optional[float] = Query(default=None, ge=-180, le=180),
+    radius_km: float           = Query(default=500,  ge=10,   le=3000),
+):
+    """NIFC/WFIGS active wildfire perimeters (optionally filtered by bbox)."""
+    try:
+        result = await fetch_nifc_perimeters(lat, lon, radius_km)
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"NIFC fetch failed: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

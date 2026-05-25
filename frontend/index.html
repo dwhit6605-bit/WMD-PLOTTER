@@ -483,8 +483,63 @@ input:checked+.slider:before{transform:translateX(16px)}
       </div>
 
       <!-- INFRASTRUCTURE -->
+      <!-- LIVE DATA FEEDS -->
+      <div class="section tool-panel" id="panel-live_data" style="display:none">
+        <div class="section-hdr">📡 Live Data Feeds</div>
+
+        <!-- NWS Forecast -->
+        <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🌤 NWS 24-Hour Forecast</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:6px;line-height:1.4">Click a row to apply that hour's wind to the next model run. US locations only.</div>
+        <button class="btn btn-ghost btn-full" onclick="loadNWSForecast()">📅 Load NWS Forecast</button>
+        <div id="nws-status" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
+        <div id="nws-forecast-table" style="margin-top:2px"></div>
+
+        <div style="border-top:1px solid var(--border);margin:10px 0"></div>
+
+        <!-- NASA FIRMS -->
+        <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🛰 NASA FIRMS Hotspots</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:6px;line-height:1.4">VIIRS S-NPP near real-time fire detections. Colored by FRP (fire radiative power). Click a hotspot to use it as a fire/smoke source.</div>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <select id="sel-firms-days" style="flex:1">
+            <option value="1">Past 24h</option>
+            <option value="2">Past 48h</option>
+            <option value="7">Past 7 days</option>
+          </select>
+          <select id="sel-firms-radius" style="flex:1">
+            <option value="100">100 km</option>
+            <option value="200" selected>200 km</option>
+            <option value="500">500 km</option>
+          </select>
+        </div>
+        <button class="btn btn-ghost btn-full" onclick="loadFIRMS()">🔍 Fetch FIRMS Hotspots</button>
+        <button class="btn btn-ghost btn-full" style="margin-top:4px;color:var(--muted)" onclick="clearFIRMSLayers()">✕ Clear Hotspots</button>
+        <div id="firms-status" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
+        <div id="firms-results" style="margin-top:4px"></div>
+
+        <div style="border-top:1px solid var(--border);margin:10px 0"></div>
+
+        <!-- NIFC Perimeters -->
+        <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">🔥 NIFC Active Fire Perimeters</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:6px;line-height:1.4">WFIGS interagency active fire perimeters. Click a perimeter or list row to use it as a fire/smoke source.</div>
+        <select id="sel-nifc-radius" style="width:100%;margin-bottom:6px">
+          <option value="300">300 km radius</option>
+          <option value="500" selected>500 km radius</option>
+          <option value="1000">1,000 km radius</option>
+          <option value="3000">All US</option>
+        </select>
+        <button class="btn btn-ghost btn-full" onclick="loadNIFC()">🔍 Load Active Perimeters</button>
+        <button class="btn btn-ghost btn-full" style="margin-top:4px;color:var(--muted)" onclick="clearNIFCLayers()">✕ Clear Perimeters</button>
+        <div id="nifc-status" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
+        <div id="nifc-results" style="margin-top:4px;max-height:220px;overflow-y:auto"></div>
+      </div>
+
       <div class="section tool-panel" id="panel-infra" style="display:none">
         <div class="section-hdr">🏗 Critical Infrastructure</div>
+        <!-- Data source toggle -->
+        <div style="display:flex;gap:4px;margin-bottom:8px">
+          <button id="btn-infra-osm"   class="btn btn-primary" style="flex:1;font-size:10px;padding:4px 2px" onclick="setInfraSource('osm')">📍 OpenStreetMap</button>
+          <button id="btn-infra-hifld" class="btn btn-ghost"   style="flex:1;font-size:10px;padding:4px 2px" onclick="setInfraSource('hifld')">🏛 HIFLD (DHS)</button>
+        </div>
         <label>Search Radius</label>
         <select id="sel-infra-radius" onchange="runInfraSearch()">
           <option value="1000">1 km</option>
@@ -719,6 +774,9 @@ let placingMode = false, blastPlacingMode = false, radPlacingMode = false, bleve
 let blastUnitKg = true, radUnitCi = true, bleveUnitKg = true;
 let useImperial = localStorage.getItem('wmd_units') !== 'metric';
 let _lastInfraResult = null;
+let firmsLayers = [], nifcLayers = [];
+let _nwsForecastData = null;
+let _infraSource = 'osm';
 let lastDenseGasData = null, lastFireSmokeData = null;
 let denseGasLayers = [], firesmokeLayersList = [];
 let _lastPopResult = null;
@@ -741,6 +799,7 @@ const TOOLS = [
   { id:'probit',     icon:'☠',  label:'Probit / Casualty', desc:'Dose-response casualty estimate',  needsWeather:false },
   { id:'erg',        icon:'🧪', label:'ERG 2024',          desc:'UN hazmat isolation & PAD zones',  needsWeather:false },
   { id:'infra',      icon:'🏗',  label:'Infrastructure',   desc:'Critical facilities nearby',       needsWeather:false },
+  { id:'live_data',  icon:'📡', label:'Live Data Feeds',  desc:'FIRMS · NIFC · NWS Forecast',      needsWeather:false },
   { id:'population', icon:'👥', label:'Population Impact', desc:'Exposure estimates (Census)',       needsWeather:false },
   { id:'shelter',    icon:'🏠', label:'Shelter / Evac',    desc:'Protective action guidance',       needsWeather:false },
   { id:'timeline',   icon:'📅', label:'Incident Timeline', desc:'CBRN scenario log & replay',       needsWeather:false },
@@ -759,6 +818,8 @@ const INFRA_TYPES = {
   government:  { icon:'🏛', label:'Government',        color:'#888888' },
   military:    { icon:'🪖', label:'Military',          color:'#446600' },
   fuel:        { icon:'⛽', label:'Gas Station',       color:'#886600' },
+  ems:         { icon:'🚑', label:'EMS Station',       color:'#FF6633' },
+  urgent_care: { icon:'🏥', label:'Urgent Care',       color:'#DD4444' },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -897,6 +958,7 @@ function activateTool(id) {
   if (id === 'bleve'     && incidentLatLon && !bleveLatLon) snapBleveToIncident();
   if (id === 'erg'    && incidentLatLon && !ergLatLon) snapERGToIncident();
   if (id === 'infra')      runInfraSearch();
+  if (id === 'live_data')  { /* user initiates each feed manually */ }
   if (id === 'shelter')    calculateShelterEvac();
   if (id === 'timeline')   renderTimeline();
   if (id === 'population') { /* user clicks estimate button */ }
@@ -1771,8 +1833,18 @@ function _haversineKm(lat1,lon1,lat2,lon2) {
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 
+function setInfraSource(source) {
+  _infraSource = source;
+  document.getElementById('btn-infra-osm').className   = source === 'osm'   ? 'btn btn-primary' : 'btn btn-ghost';
+  document.getElementById('btn-infra-hifld').className = source === 'hifld' ? 'btn btn-primary' : 'btn btn-ghost';
+  document.getElementById('btn-infra-osm').style.cssText   = 'flex:1;font-size:10px;padding:4px 2px';
+  document.getElementById('btn-infra-hifld').style.cssText = 'flex:1;font-size:10px;padding:4px 2px';
+  runInfraSearch();
+}
+
 async function runInfraSearch() {
   if (!incidentLatLon) return;
+  if (_infraSource === 'hifld') { runHIFLDSearch(); return; }
   const radius = parseInt(document.getElementById('sel-infra-radius').value)||2000;
   const { lat, lon } = incidentLatLon;
   document.getElementById('infra-status').textContent = 'Searching…';
@@ -1856,6 +1928,244 @@ function _getActiveZones() {
   return zones;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HIFLD Infrastructure (DHS federal dataset)
+// ─────────────────────────────────────────────────────────────────────────────
+async function runHIFLDSearch() {
+  if (!incidentLatLon) return;
+  const radius   = parseInt(document.getElementById('sel-infra-radius').value) || 2000;
+  const radiusKm = radius / 1000;
+  const { lat, lon } = incidentLatLon;
+  document.getElementById('infra-status').textContent = '⟳ Loading HIFLD data…';
+  document.getElementById('infra-list').innerHTML = '';
+  clearInfraLayers();
+  try {
+    const r = await fetch(`${API}/api/hifld/infra?lat=${lat}&lon=${lon}&radius_km=${radiusKm}`);
+    if (!r.ok) throw new Error((await r.json()).detail || 'HIFLD error');
+    const data = await r.json();
+    if (!data.count) {
+      document.getElementById('infra-status').textContent =
+        `No HIFLD facilities found within ${fmtDist(radiusKm)}. Try increasing radius or switching to OSM.`;
+      return;
+    }
+    _lastInfraResult = { deduped: data.items, radius };
+    _renderInfraFromCache();
+    fetch(`${API}/api/infra/cache`, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ lat, lon, radius, items: data.items }) }).catch(() => {});
+  } catch(e) {
+    document.getElementById('infra-status').textContent = `HIFLD error: ${e.message}`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NWS Hourly Forecast
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadNWSForecast() {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  const { lat, lon } = incidentLatLon;
+  const statusEl = document.getElementById('nws-status');
+  const tableEl  = document.getElementById('nws-forecast-table');
+  statusEl.innerHTML = '<span class="spin">⟳</span> Loading NWS forecast…';
+  tableEl.innerHTML  = '';
+  try {
+    const r = await fetch(`${API}/api/weather/forecast?lat=${lat}&lon=${lon}`);
+    if (!r.ok) throw new Error((await r.json()).detail || 'NWS error');
+    const data = await r.json();
+    _nwsForecastData = data.periods;
+    statusEl.textContent = `${data.count} hours loaded — click a row to apply`;
+    _renderNWSTable(data.periods);
+  } catch(e) {
+    statusEl.textContent = `Error: ${e.message}`;
+  }
+}
+
+function _renderNWSTable(periods) {
+  const rows = periods.slice(0, 12).map((p, i) => {
+    const d  = new Date(p.startTime);
+    const hh = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12:false, timeZone:'UTC' }) + 'Z';
+    const icon = p.is_daytime ? '☀' : '🌙';
+    return `<tr style="cursor:pointer" onmouseover="this.style.background='rgba(255,255,255,.06)'" onmouseout="this.style.background=''" onclick="applyForecastHour(${i})" title="${p.short_forecast}">
+      <td style="padding:3px 4px;white-space:nowrap">${hh}</td>
+      <td style="padding:3px 4px">${p.wind_speed_mph} mph</td>
+      <td style="padding:3px 4px">${p.wind_dir_label}</td>
+      <td style="padding:3px 4px">PG-${p.stability_class}</td>
+      <td style="padding:3px 4px;font-size:9px;color:var(--muted);max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${icon} ${p.short_forecast}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('nws-forecast-table').innerHTML = `
+    <table style="width:100%;font-size:10px;border-collapse:collapse;margin-top:2px">
+      <thead><tr style="color:var(--muted)">
+        <th style="text-align:left;padding:2px 4px">Hour</th>
+        <th style="text-align:left;padding:2px 4px">Speed</th>
+        <th style="text-align:left;padding:2px 4px">Dir</th>
+        <th style="text-align:left;padding:2px 4px">Stab</th>
+        <th style="text-align:left;padding:2px 4px">Sky</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="font-size:9px;color:var(--muted);margin-top:3px">Stability is a forecast proxy — verify before use</div>`;
+}
+
+function applyForecastHour(i) {
+  if (!_nwsForecastData?.[i]) return;
+  const p = _nwsForecastData[i];
+  const d = new Date(p.startTime);
+  const label = d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12:false, timeZone:'UTC' }) + 'Z';
+  wxData = {
+    ...(wxData || {}),
+    wind_speed_ms:     p.wind_speed_ms,
+    wind_speed_mph:    p.wind_speed_mph,
+    wind_dir_from_deg: p.wind_dir_from_deg,
+    wind_dir_label:    p.wind_dir_label,
+    stability_class:   p.stability_class,
+    stability_desc:    p.stability_desc,
+    source:            'NWS Forecast',
+  };
+  renderWeather();
+  toast(`Weather set: ${p.wind_speed_mph} mph from ${p.wind_dir_label} · PG-${p.stability_class} (${label} NWS forecast)`, 3500);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NASA FIRMS Fire Hotspots
+// ─────────────────────────────────────────────────────────────────────────────
+function clearFIRMSLayers() {
+  firmsLayers.forEach(l => map.removeLayer(l));
+  firmsLayers = [];
+  document.getElementById('firms-status').textContent  = '';
+  document.getElementById('firms-results').innerHTML   = '';
+}
+
+async function loadFIRMS() {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  const { lat, lon } = incidentLatLon;
+  const days   = parseInt(document.getElementById('sel-firms-days').value);
+  const radius = parseInt(document.getElementById('sel-firms-radius').value);
+  const statusEl  = document.getElementById('firms-status');
+  const resultsEl = document.getElementById('firms-results');
+  statusEl.innerHTML = '<span class="spin">⟳</span> Querying NASA FIRMS…';
+  resultsEl.innerHTML = '';
+  firmsLayers.forEach(l => map.removeLayer(l));
+  firmsLayers = [];
+  try {
+    const r = await fetch(`${API}/api/firms/hotspots?lat=${lat}&lon=${lon}&radius_km=${radius}&days=${days}`);
+    if (!r.ok) throw new Error((await r.json()).detail || 'FIRMS error');
+    const data = await r.json();
+
+    let warn = '';
+    if (data.using_demo_key) warn = '⚠ DEMO_KEY active — set FIRMS_MAP_KEY env var for full access. ';
+
+    if (!data.count) {
+      statusEl.textContent = warn + 'No hotspots found in area.';
+      return;
+    }
+
+    data.features.forEach(feat => {
+      const [flon, flat] = feat.geometry.coordinates;
+      const frp   = feat.properties.frp || 0;
+      const color = frp > 100 ? '#FF2200' : frp > 20 ? '#FF8800' : '#FFD700';
+      const rad   = frp > 100 ? 8 : frp > 20 ? 6 : 4;
+      const m = L.circleMarker([flat, flon], {
+        radius: rad, color, fillColor: color, fillOpacity: 0.8, weight: 1,
+      }).addTo(map);
+      m.bindPopup(`<div style="min-width:150px;font-size:12px">
+        <b>FIRMS Hotspot</b><br>
+        FRP: <b>${frp} MW</b><br>
+        Confidence: ${feat.properties.confidence === 'h' ? 'High' : feat.properties.confidence === 'l' ? 'Low' : 'Nominal'}<br>
+        Detected: ${feat.properties.acq_date} ${feat.properties.acq_time}Z ${feat.properties.daynight === 'N' ? '(night)' : '(day)'}<br>
+        <button style="margin-top:6px;padding:3px 10px;background:#FF6600;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;width:100%" onclick="useFIRMSSource(${flat},${flon})">🔥 Use as Fire/Smoke Source</button>
+      </div>`);
+      firmsLayers.push(m);
+    });
+
+    statusEl.textContent = warn + `${data.count} hotspot${data.count !== 1 ? 's' : ''} plotted`;
+    resultsEl.innerHTML  = `<div style="font-size:10px;color:var(--muted);margin-top:2px">
+      <span style="color:#FFD700">●</span> &lt;20 MW &nbsp;
+      <span style="color:#FF8800">●</span> 20–100 MW &nbsp;
+      <span style="color:#FF2200">●</span> &gt;100 MW</div>`;
+  } catch(e) {
+    statusEl.textContent = `Error: ${e.message}`;
+  }
+}
+
+function useFIRMSSource(lat, lon) {
+  map.closePopup();
+  placeIncident(lat, lon);
+  activateTool('fire_smoke');
+  toast('Incident placed at FIRMS hotspot — configure and run Fire/Smoke', 3000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NIFC Active Fire Perimeters
+// ─────────────────────────────────────────────────────────────────────────────
+function clearNIFCLayers() {
+  nifcLayers.forEach(l => map.removeLayer(l));
+  nifcLayers = [];
+  document.getElementById('nifc-status').textContent  = '';
+  document.getElementById('nifc-results').innerHTML   = '';
+}
+
+async function loadNIFC() {
+  const statusEl  = document.getElementById('nifc-status');
+  const resultsEl = document.getElementById('nifc-results');
+  const radius    = parseInt(document.getElementById('sel-nifc-radius').value);
+  statusEl.innerHTML  = '<span class="spin">⟳</span> Loading NIFC perimeters…';
+  resultsEl.innerHTML = '';
+  nifcLayers.forEach(l => map.removeLayer(l));
+  nifcLayers = [];
+  try {
+    let url = `${API}/api/nifc/perimeters?radius_km=${radius}`;
+    if (incidentLatLon) url += `&lat=${incidentLatLon.lat}&lon=${incidentLatLon.lon}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error((await r.json()).detail || 'NIFC error');
+    const data = await r.json();
+
+    if (!data.count) { statusEl.textContent = 'No active perimeters found.'; return; }
+
+    data.features.forEach(feat => {
+      const p = feat.properties;
+      const ac = p.acres ? p.acres.toLocaleString() + ' ac' : '';
+      const layer = L.geoJSON(feat, {
+        style: { color:'#FF4400', fillColor:'#FF6600', fillOpacity:0.2, weight:2 },
+      }).bindPopup(`<div style="min-width:160px;font-size:12px">
+        <b>${p.name}</b><br>
+        ${ac}${p.behavior ? ' · ' + p.behavior : ''}<br>
+        Updated: ${p.updated ? new Date(p.updated).toLocaleDateString() : 'Unknown'}<br>
+        <button style="margin-top:6px;padding:3px 10px;background:#FF4400;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;width:100%" onclick="useNIFCSource(${p.centroid_lat},${p.centroid_lon})">🔥 Use as Fire/Smoke Source</button>
+      </div>`).addTo(map);
+      nifcLayers.push(layer);
+    });
+
+    statusEl.textContent = `${data.count} active perimeter${data.count !== 1 ? 's' : ''}`;
+
+    const top = data.features.slice(0, 10);
+    resultsEl.innerHTML = top.map(f => {
+      const p = f.properties;
+      const ac = p.acres ? p.acres.toLocaleString() + ' ac' : '—';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer" onclick="useNIFCSource(${p.centroid_lat},${p.centroid_lon})" title="Click to use as fire source">
+        <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px">${p.name}</span>
+        <span style="font-size:10px;color:var(--muted);white-space:nowrap;margin-left:6px">${ac}</span>
+      </div>`;
+    }).join('') + (data.count > 10 ? `<div style="font-size:10px;color:var(--muted);margin-top:4px">+${data.count - 10} more on map</div>` : '');
+
+    if (!incidentLatLon && nifcLayers.length) {
+      const group = L.featureGroup(nifcLayers);
+      try { map.fitBounds(group.getBounds().pad(0.05)); } catch(_) {}
+    }
+  } catch(e) {
+    statusEl.textContent = `Error: ${e.message}`;
+  }
+}
+
+function useNIFCSource(lat, lon) {
+  map.closePopup();
+  placeIncident(lat, lon);
+  activateTool('fire_smoke');
+  toast('Incident placed at fire perimeter — configure and run Fire/Smoke', 3000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Population Impact Estimator
+// ─────────────────────────────────────────────────────────────────────────────
 async function runPopulationEstimate() {
   if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
   const zones = _getActiveZones();
