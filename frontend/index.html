@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>WMD Plotter — Hazmat &amp; Plume Modeling</title>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+<style>
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:        #0d1117;
+  --panel:     #161b22;
+  --border:    #30363d;
+  --text:      #e6edf3;
+  --muted:     #8b949e;
+  --accent:    #f78166;
+  --accent2:   #79c0ff;
+  --green:     #3fb950;
+  --yellow:    #d29922;
+  --red:       #f85149;
+  --panel-w:   340px;
+  --hdr:       48px;
+}
+html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
+
+/* ── Layout ── */
+#app        { display: flex; flex-direction: column; height: 100vh; }
+#header     { height: var(--hdr); background: var(--panel); border-bottom: 1px solid var(--border);
+               display: flex; align-items: center; gap: 12px; padding: 0 16px; flex-shrink: 0; }
+#body       { display: flex; flex: 1; overflow: hidden; }
+#sidebar    { width: var(--panel-w); background: var(--panel); border-right: 1px solid var(--border);
+               display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
+#map        { position: absolute; inset: 0; }
+#status-bar { height: 28px; background: var(--panel); border-top: 1px solid var(--border);
+               display: flex; align-items: center; padding: 0 12px; gap: 16px; font-size: 12px;
+               color: var(--muted); flex-shrink: 0; }
+
+/* ── Header ── */
+.logo       { font-size: 18px; font-weight: 700; color: var(--accent); letter-spacing: 0.04em; }
+.logo span  { color: var(--text); }
+.hdr-badge  { background: #f851491a; border: 1px solid var(--red); color: var(--red);
+               font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 700;
+               letter-spacing: 0.05em; }
+
+/* ── Sidebar sections ── */
+.section    { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.section-hdr { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--muted);
+                text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+
+/* ── Controls ── */
+label       { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; margin-top: 8px; }
+label:first-child { margin-top: 0; }
+select, input[type=text], input[type=number], input[type=range] {
+  width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 6px 8px; font-size: 13px; outline: none; }
+select:focus, input:focus { border-color: var(--accent2); }
+input[type=range] { padding: 4px 0; cursor: pointer; accent-color: var(--accent2); }
+
+.row2       { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.btn        { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+               padding: 7px 12px; border-radius: 6px; font-size: 13px; font-weight: 600;
+               cursor: pointer; border: none; transition: background 0.15s, opacity 0.15s; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary  { background: var(--accent2); color: #0d1117; }
+.btn-primary:hover:not(:disabled) { background: #a5d6ff; }
+.btn-danger   { background: #f851491a; border: 1px solid var(--red); color: var(--red); }
+.btn-danger:hover:not(:disabled) { background: #f851492a; }
+.btn-ghost    { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.btn-ghost:hover:not(:disabled) { background: #ffffff0d; }
+.btn-green    { background: var(--green); color: #0d1117; }
+.btn-green:hover:not(:disabled) { background: #56d364; }
+.btn-full { width: 100%; margin-top: 6px; }
+
+/* ── Chem info card ── */
+.chem-card  { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-top: 8px; }
+.chem-name  { font-size: 14px; font-weight: 700; }
+.chem-formula { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.threshold-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 2px 0; }
+.threshold-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+.chem-warning { background: #f851491a; border: 1px solid var(--red); border-radius: 4px;
+                 padding: 4px 8px; font-size: 11px; color: var(--red); margin-top: 6px; }
+.category-badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px;
+                   border-radius: 4px; margin-left: 6px; }
+.badge-tic  { background: #79c0ff22; border: 1px solid var(--accent2); color: var(--accent2); }
+.badge-cwa  { background: #f851491a; border: 1px solid var(--red); color: var(--red); }
+
+/* ── Weather panel ── */
+.wx-grid    { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.wx-item    { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+               padding: 6px 8px; }
+.wx-label   { font-size: 10px; color: var(--muted); }
+.wx-value   { font-size: 14px; font-weight: 700; }
+.stability-bar { display: flex; gap: 2px; margin-top: 8px; }
+.stab-cell  { flex: 1; height: 6px; border-radius: 3px; background: var(--border); }
+.stab-cell.active { background: var(--accent2); }
+
+/* ── Results ── */
+.result-row { display: flex; justify-content: space-between; align-items: center;
+               padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.result-row:last-child { border-bottom: none; }
+.result-label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.result-val   { font-weight: 700; font-family: monospace; }
+.result-unit  { color: var(--muted); font-size: 11px; margin-left: 2px; }
+
+/* ── Coord display ── */
+.coord-display { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+                  padding: 8px 10px; font-family: monospace; font-size: 12px; color: var(--accent2);
+                  text-align: center; margin-top: 8px; }
+.coord-hint { font-size: 11px; color: var(--muted); text-align: center; margin-top: 4px; }
+
+/* ── Export ── */
+.export-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+/* ── Toggle ── */
+.toggle-row { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+.toggle-label { font-size: 12px; }
+.toggle { position: relative; display: inline-block; width: 36px; height: 20px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; inset: 0; background: var(--border);
+           border-radius: 20px; transition: 0.2s; }
+.slider:before { content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px;
+                  background: var(--text); border-radius: 50%; transition: 0.2s; }
+input:checked + .slider { background: var(--accent2); }
+input:checked + .slider:before { transform: translateX(16px); }
+
+/* ── Map overlays ── */
+#map-overlay { position: absolute; top: 8px; right: 8px; z-index: 1000;
+                display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.map-pill    { background: rgba(13,17,23,0.88); border: 1px solid var(--border); border-radius: 20px;
+                padding: 4px 12px; font-size: 12px; display: flex; align-items: center; gap: 6px;
+                pointer-events: all; }
+.wind-arrow  { font-size: 18px; display: inline-block; transition: transform 0.5s; }
+
+#legend      { position: absolute; bottom: 36px; right: 8px; z-index: 1000;
+                background: rgba(13,17,23,0.88); border: 1px solid var(--border); border-radius: 8px;
+                padding: 10px 14px; font-size: 12px; min-width: 200px; }
+.legend-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase;
+                 letter-spacing: 0.06em; margin-bottom: 8px; }
+.legend-row  { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.legend-box  { width: 20px; height: 12px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.2); }
+
+/* ── Spinner ── */
+.spin { display: inline-block; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Notification ── */
+#toast { position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%) translateY(20px);
+          background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+          padding: 10px 18px; font-size: 13px; opacity: 0; transition: 0.3s; pointer-events: none;
+          z-index: 9999; max-width: 400px; text-align: center; }
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- ── Header ── -->
+  <div id="header">
+    <div class="logo">WMD <span>PLOTTER</span></div>
+    <div class="hdr-badge">⚠ FOR AUTHORIZED USE ONLY</div>
+    <div style="flex:1"></div>
+    <div id="hdr-status" style="font-size:12px;color:var(--muted)">Ready</div>
+  </div>
+
+  <!-- ── Body ── -->
+  <div id="body">
+
+    <!-- ── Sidebar ── -->
+    <div id="sidebar">
+
+      <!-- Incident Location -->
+      <div class="section">
+        <div class="section-hdr">📍 Incident Location</div>
+        <div class="coord-display" id="coord-display">— click map to place —</div>
+        <div class="coord-hint">Click map to place · drag marker to move</div>
+        <div class="row2" style="margin-top:8px">
+          <button class="btn btn-danger btn-full" id="btn-place" onclick="startPlaceMode()">Place Incident</button>
+          <button class="btn btn-ghost btn-full" id="btn-clear" onclick="clearIncident()">Clear</button>
+        </div>
+      </div>
+
+      <!-- Chemical Selector -->
+      <div class="section">
+        <div class="section-hdr">☣ Chemical Agent</div>
+        <label>Category</label>
+        <select id="sel-category" onchange="populateChemicals()">
+          <option value="ALL">All Chemicals</option>
+          <option value="TIC">Toxic Industrial Chemicals (TIC)</option>
+          <option value="CWA">Chemical Warfare Agents (CWA)</option>
+        </select>
+        <label style="margin-top:8px">Chemical</label>
+        <select id="sel-chemical" onchange="onChemicalChange()"></select>
+
+        <div class="toggle-row" style="margin-top:10px">
+          <span class="toggle-label">Use AEGL thresholds</span>
+          <label class="toggle">
+            <input type="checkbox" id="chk-aegl" checked onchange="onChemicalChange()"/>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div id="chem-card" class="chem-card" style="display:none"></div>
+      </div>
+
+      <!-- Release Parameters -->
+      <div class="section">
+        <div class="section-hdr">⚗ Release Parameters</div>
+        <label>Release Rate — <span id="lbl-rate">1.0</span> kg/min</label>
+        <input type="range" id="sl-rate" min="0.1" max="500" step="0.1" value="1"
+               oninput="document.getElementById('lbl-rate').textContent=parseFloat(this.value).toFixed(1)"/>
+        <div class="row2" style="margin-top:2px; font-size:11px; color:var(--muted)">
+          <span>0.1 kg/min</span><span style="text-align:right">500 kg/min</span>
+        </div>
+
+        <label style="margin-top:10px">Release Height — <span id="lbl-height">0</span> m</label>
+        <input type="range" id="sl-height" min="0" max="200" step="1" value="0"
+               oninput="document.getElementById('lbl-height').textContent=this.value"/>
+
+        <label style="margin-top:10px">Scenario Presets</label>
+        <select id="sel-preset" onchange="applyPreset()">
+          <option value="">— select preset —</option>
+          <option value="leak" data-rate="0.5" data-h="2">Minor valve leak (0.5 kg/min)</option>
+          <option value="pipe" data-rate="5" data-h="1">Pipe rupture (5 kg/min)</option>
+          <option value="tank" data-rate="50" data-h="0">Tank breach (50 kg/min)</option>
+          <option value="railcar" data-rate="200" data-h="1">Rail car catastrophic failure (200 kg/min)</option>
+          <option value="weapons" data-rate="10" data-h="5">Weapons dispersal (10 kg/min, 5m)</option>
+        </select>
+      </div>
+
+      <!-- Weather -->
+      <div class="section">
+        <div class="section-hdr">🌬 Meteorology</div>
+        <button class="btn btn-ghost btn-full" id="btn-wx" onclick="fetchWeather()">
+          Fetch Live Weather
+        </button>
+        <div id="wx-panel" style="display:none">
+          <div class="wx-grid" id="wx-grid"></div>
+          <div style="margin-top:8px; font-size:11px; color:var(--muted)" id="wx-stability-label"></div>
+          <div class="stability-bar" id="stability-bar"></div>
+        </div>
+
+        <div class="toggle-row" style="margin-top:10px">
+          <span class="toggle-label">Manual weather override</span>
+          <label class="toggle">
+            <input type="checkbox" id="chk-manual-wx" onchange="toggleManualWx()"/>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div id="manual-wx" style="display:none">
+          <div class="row2" style="margin-top:6px">
+            <div>
+              <label>Wind speed (m/s)</label>
+              <input type="number" id="inp-wind-ms" value="3" min="0.5" max="30" step="0.5"/>
+            </div>
+            <div>
+              <label>From direction (°)</label>
+              <input type="number" id="inp-wind-dir" value="270" min="0" max="359" step="1"/>
+            </div>
+          </div>
+          <label style="margin-top:8px">PG Stability Class</label>
+          <select id="sel-stability">
+            <option value="A">A — Extremely Unstable</option>
+            <option value="B">B — Moderately Unstable</option>
+            <option value="C">C — Slightly Unstable</option>
+            <option value="D" selected>D — Neutral</option>
+            <option value="E">E — Slightly Stable</option>
+            <option value="F">F — Moderately Stable</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Run -->
+      <div class="section">
+        <button class="btn btn-primary btn-full" id="btn-run" onclick="runPlume()" disabled>
+          ▶ Run Plume Model
+        </button>
+      </div>
+
+      <!-- Results -->
+      <div class="section" id="results-section" style="display:none">
+        <div class="section-hdr">📊 Results</div>
+        <div id="results-content"></div>
+      </div>
+
+      <!-- Export -->
+      <div class="section">
+        <div class="section-hdr">📤 Export</div>
+        <div class="export-grid">
+          <button class="btn btn-ghost" id="btn-kml-dl" onclick="downloadKML()" disabled>
+            ⬇ Download KML
+          </button>
+          <button class="btn btn-ghost" id="btn-kml-net" onclick="copyNetworkLink()" disabled>
+            🔗 Network Link
+          </button>
+        </div>
+        <div id="export-url" style="display:none; margin-top:8px">
+          <input type="text" id="inp-export-url" readonly onclick="this.select()"
+                 style="font-size:11px; cursor:pointer"/>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">
+            Open in Google Earth → Add → Network Link → paste URL
+          </div>
+        </div>
+      </div>
+
+      <!-- Disclaimer -->
+      <div class="section" style="font-size:10px; color:var(--muted); line-height:1.5; padding-bottom:16px">
+        Gaussian plume model (Pasquill-Gifford). Output is a <em>planning estimate</em> only — accuracy ±2–5×.
+        Do not use as sole basis for protective actions. Always follow official emergency management guidance.
+      </div>
+
+    </div><!-- /sidebar -->
+
+    <!-- ── Map ── -->
+    <div style="position:relative; flex:1;">
+      <div id="map"></div>
+
+      <!-- Map overlays -->
+      <div id="map-overlay">
+        <div class="map-pill" id="pill-wind" style="display:none">
+          <span class="wind-arrow" id="wind-arrow">➤</span>
+          <span id="pill-wind-txt">— mph</span>
+        </div>
+        <div class="map-pill" id="pill-stability" style="display:none">
+          <span id="pill-stab-txt">PG-D</span>
+        </div>
+      </div>
+
+      <!-- Legend -->
+      <div id="legend" style="display:none">
+        <div class="legend-title">Hazard Zones</div>
+        <div id="legend-rows"></div>
+        <div style="margin-top:8px; font-size:10px; color:var(--muted)">
+          Model: Gaussian (P-G) · Source: AEGL/ERPG
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /body -->
+
+  <!-- Status bar -->
+  <div id="status-bar">
+    <span id="sb-coords">—</span>
+    <span>|</span>
+    <span id="sb-model">No model run</span>
+    <span style="flex:1"></span>
+    <span id="sb-time">—</span>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+const API = '';          // empty = same origin
+let chemicals = [];
+let selectedChem = null;
+let incidentMarker = null;
+let incidentLatLon = null;
+let plumeLayers = [];
+let wxData = null;
+let lastPlume = null;
+let placingMode = false;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Map init
+// ─────────────────────────────────────────────────────────────────────────────
+const map = L.map('map', {
+  center: [39.5, -98.35],
+  zoom: 5,
+  zoomControl: true,
+});
+
+const tileStreet = L.tileLayer(
+  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { maxZoom: 19, attribution: '© OpenStreetMap contributors' }
+).addTo(map);
+
+const tileSat = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom: 19, attribution: '© Esri' }
+);
+
+L.control.layers(
+  { 'Street': tileStreet, 'Satellite': tileSat },
+  {},
+  { position: 'topleft' }
+).addTo(map);
+
+// Mouse coordinates in status bar
+map.on('mousemove', e => {
+  document.getElementById('sb-coords').textContent =
+    `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
+});
+
+// Map click for incident placement
+map.on('click', e => {
+  if (placingMode) {
+    placeIncident(e.latlng.lat, e.latlng.lng);
+    placingMode = false;
+    map.getContainer().style.cursor = '';
+  }
+});
+
+// Status bar clock
+setInterval(() => {
+  document.getElementById('sb-time').textContent =
+    new Date().toUTCString().replace(' GMT', 'Z');
+}, 1000);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Incident placement
+// ─────────────────────────────────────────────────────────────────────────────
+const incidentIcon = L.divIcon({
+  className: '',
+  html: `<div style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;
+                      font-size:22px;filter:drop-shadow(0 0 4px rgba(248,81,73,0.8))">☢</div>`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
+});
+
+function startPlaceMode() {
+  placingMode = true;
+  map.getContainer().style.cursor = 'crosshair';
+  toast('Click the map to place the incident location', 2500);
+}
+
+function placeIncident(lat, lon) {
+  incidentLatLon = { lat, lon };
+  if (incidentMarker) map.removeLayer(incidentMarker);
+  incidentMarker = L.marker([lat, lon], { icon: incidentIcon, draggable: true })
+    .addTo(map)
+    .bindPopup(`<b>Incident</b><br/>${lat.toFixed(5)}, ${lon.toFixed(5)}`);
+
+  incidentMarker.on('dragend', e => {
+    const p = e.target.getLatLng();
+    incidentLatLon = { lat: p.lat, lon: p.lng };
+    updateCoordDisplay();
+    if (wxData) fetchWeather();   // re-fetch wx for new location
+  });
+
+  updateCoordDisplay();
+  document.getElementById('btn-run').disabled = !selectedChem;
+  document.getElementById('btn-wx').disabled = false;
+}
+
+function clearIncident() {
+  if (incidentMarker) { map.removeLayer(incidentMarker); incidentMarker = null; }
+  incidentLatLon = null;
+  clearPlumeLayers();
+  updateCoordDisplay();
+  document.getElementById('btn-run').disabled = true;
+  document.getElementById('results-section').style.display = 'none';
+  document.getElementById('legend').style.display = 'none';
+  document.getElementById('btn-kml-dl').disabled = true;
+  document.getElementById('btn-kml-net').disabled = true;
+}
+
+function updateCoordDisplay() {
+  const el = document.getElementById('coord-display');
+  if (incidentLatLon) {
+    el.textContent = `${incidentLatLon.lat.toFixed(5)}, ${incidentLatLon.lon.toFixed(5)}`;
+  } else {
+    el.textContent = '— click map to place —';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chemical database
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadChemicals() {
+  try {
+    const r = await fetch(`${API}/api/chemicals`);
+    const d = await r.json();
+    chemicals = d.chemicals;
+    populateChemicals();
+  } catch (e) {
+    toast('⚠ Failed to load chemical database', 3000);
+  }
+}
+
+function populateChemicals() {
+  const cat = document.getElementById('sel-category').value;
+  const sel = document.getElementById('sel-chemical');
+  const filtered = cat === 'ALL' ? chemicals : chemicals.filter(c => c.category === cat);
+
+  sel.innerHTML = '<option value="">— select chemical —</option>';
+  const groups = {};
+  for (const c of filtered) {
+    const sub = c.subcategory || c.category;
+    if (!groups[sub]) groups[sub] = [];
+    groups[sub].push(c);
+  }
+  for (const [grp, chems] of Object.entries(groups)) {
+    const og = document.createElement('optgroup');
+    og.label = grp;
+    for (const c of chems) {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = `${c.name} (${c.formula})`;
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
+  }
+  selectedChem = null;
+  document.getElementById('chem-card').style.display = 'none';
+  document.getElementById('btn-run').disabled = true;
+}
+
+function onChemicalChange() {
+  const id = document.getElementById('sel-chemical').value;
+  selectedChem = chemicals.find(c => c.id === id) || null;
+  renderChemCard();
+  if (selectedChem && incidentLatLon) {
+    document.getElementById('btn-run').disabled = false;
+  }
+}
+
+function renderChemCard() {
+  const card = document.getElementById('chem-card');
+  if (!selectedChem) { card.style.display = 'none'; return; }
+
+  const useAEGL = document.getElementById('chk-aegl').checked;
+  const c = selectedChem;
+
+  let thresholds = [];
+  if (useAEGL && c.aegl1_60_ppm != null) {
+    thresholds = [
+      { label: 'AEGL-1 (60min)', val: c.aegl1_60_ppm, color: '#FFFF00' },
+      { label: 'AEGL-2 (60min)', val: c.aegl2_60_ppm, color: '#FF8C00' },
+      { label: 'AEGL-3 (60min)', val: c.aegl3_60_ppm, color: '#FF0000' },
+    ];
+  } else if (c.erpg1_ppm != null) {
+    thresholds = [
+      { label: 'ERPG-1', val: c.erpg1_ppm, color: '#FFFF00' },
+      { label: 'ERPG-2', val: c.erpg2_ppm, color: '#FF8C00' },
+      { label: 'ERPG-3', val: c.erpg3_ppm, color: '#FF0000' },
+    ];
+  }
+
+  const catBadge = c.category === 'CWA'
+    ? '<span class="category-badge badge-cwa">CWA</span>'
+    : '<span class="category-badge badge-tic">TIC</span>';
+
+  const thresholdRows = thresholds.map(t => `
+    <div class="threshold-row">
+      <span><span class="threshold-dot" style="background:${t.color}"></span>${t.label}</span>
+      <span>${t.val != null ? fmtPpm(t.val) : 'N/A'}</span>
+    </div>`).join('');
+
+  const warning = c.warning
+    ? `<div class="chem-warning">⚠ ${c.warning}</div>` : '';
+
+  card.style.display = 'block';
+  card.innerHTML = `
+    <div class="chem-name">${c.name} ${catBadge}</div>
+    <div class="chem-formula">${c.formula} · MW ${c.mw} g/mol · VD ${c.vapor_density ?? '?'}</div>
+    ${c.idlh_ppm ? `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">IDLH: ${c.idlh_ppm} ppm</div>` : ''}
+    ${thresholdRows}
+    ${c.description ? `<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">${c.description}</div>` : ''}
+    ${warning}`;
+}
+
+function fmtPpm(v) {
+  if (v === null || v === undefined) return 'N/A';
+  if (v < 0.0001) return v.toExponential(2) + ' ppm';
+  if (v < 0.01)   return v.toFixed(5) + ' ppm';
+  if (v < 0.1)    return v.toFixed(4) + ' ppm';
+  if (v < 1)      return v.toFixed(3) + ' ppm';
+  if (v < 100)    return v.toFixed(1) + ' ppm';
+  return Math.round(v) + ' ppm';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Presets
+// ─────────────────────────────────────────────────────────────────────────────
+function applyPreset() {
+  const sel = document.getElementById('sel-preset');
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt.dataset.rate) return;
+  const rate = parseFloat(opt.dataset.rate);
+  const h = parseFloat(opt.dataset.h);
+  const slRate = document.getElementById('sl-rate');
+  slRate.value = Math.min(rate, slRate.max);
+  document.getElementById('lbl-rate').textContent = parseFloat(slRate.value).toFixed(1);
+  document.getElementById('sl-height').value = h;
+  document.getElementById('lbl-height').textContent = h;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Weather
+// ─────────────────────────────────────────────────────────────────────────────
+async function fetchWeather() {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  const btn = document.getElementById('btn-wx');
+  btn.innerHTML = '<span class="spin">⟳</span> Fetching…';
+  btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/api/weather?lat=${incidentLatLon.lat}&lon=${incidentLatLon.lon}`);
+    if (!r.ok) throw new Error(await r.text());
+    wxData = await r.json();
+    renderWeather();
+    toast(`Weather loaded — ${wxData.wind_dir_label} ${wxData.wind_speed_mph} mph, PG-${wxData.stability_class}`, 3000);
+  } catch (e) {
+    toast(`Weather error: ${e.message}`, 4000);
+  } finally {
+    btn.innerHTML = '⟳ Refresh Weather';
+    btn.disabled = false;
+  }
+}
+
+function renderWeather() {
+  if (!wxData) return;
+  const panel = document.getElementById('wx-panel');
+  panel.style.display = 'block';
+
+  document.getElementById('wx-grid').innerHTML = `
+    <div class="wx-item">
+      <div class="wx-label">Wind Speed</div>
+      <div class="wx-value">${wxData.wind_speed_mph} <span style="font-size:11px">mph</span></div>
+    </div>
+    <div class="wx-item">
+      <div class="wx-label">From Direction</div>
+      <div class="wx-value">${wxData.wind_dir_label} <span style="font-size:11px">${wxData.wind_dir_from_deg}°</span></div>
+    </div>
+    <div class="wx-item">
+      <div class="wx-label">Temperature</div>
+      <div class="wx-value">${wxData.temp_f}°F</div>
+    </div>
+    <div class="wx-item">
+      <div class="wx-label">Cloud Cover</div>
+      <div class="wx-value">${wxData.cloud_cover_pct}%</div>
+    </div>
+  `;
+
+  const cls = wxData.stability_class;
+  document.getElementById('wx-stability-label').textContent = wxData.stability_desc;
+  const classes = ['A','B','C','D','E','F'];
+  document.getElementById('stability-bar').innerHTML = classes.map(c =>
+    `<div class="stab-cell ${c===cls?'active':''}" title="${c}"></div>`
+  ).join('');
+
+  // Map overlay pills
+  const pill = document.getElementById('pill-wind');
+  pill.style.display = 'flex';
+  document.getElementById('pill-wind-txt').textContent =
+    `${wxData.wind_dir_label} ${wxData.wind_speed_mph} mph`;
+
+  // Wind arrow rotates to show plume direction (opposite of FROM)
+  const plumeDir = (wxData.wind_dir_from_deg + 180) % 360;
+  document.getElementById('wind-arrow').style.transform = `rotate(${plumeDir - 90}deg)`;
+
+  const pillS = document.getElementById('pill-stability');
+  pillS.style.display = 'flex';
+  document.getElementById('pill-stab-txt').textContent = `PG-${cls}`;
+}
+
+function toggleManualWx() {
+  const show = document.getElementById('chk-manual-wx').checked;
+  document.getElementById('manual-wx').style.display = show ? 'block' : 'none';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Run plume model
+// ─────────────────────────────────────────────────────────────────────────────
+async function runPlume() {
+  if (!incidentLatLon || !selectedChem) {
+    toast('Place an incident and select a chemical first', 2500);
+    return;
+  }
+
+  const btn = document.getElementById('btn-run');
+  btn.innerHTML = '<span class="spin">⟳</span> Computing…';
+  btn.disabled = true;
+
+  const useManual = document.getElementById('chk-manual-wx').checked;
+  const body = {
+    lat: incidentLatLon.lat,
+    lon: incidentLatLon.lon,
+    chemical_id: selectedChem.id,
+    use_aegl: document.getElementById('chk-aegl').checked,
+    release_rate_kg_min: parseFloat(document.getElementById('sl-rate').value),
+    release_height_m: parseFloat(document.getElementById('sl-height').value),
+    manual_weather: useManual,
+  };
+
+  if (useManual) {
+    body.wind_speed_ms     = parseFloat(document.getElementById('inp-wind-ms').value);
+    body.wind_dir_from_deg = parseFloat(document.getElementById('inp-wind-dir').value);
+    body.stability_class   = document.getElementById('sel-stability').value;
+  }
+
+  try {
+    const r = await fetch(`${API}/api/plume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      throw new Error(err.detail || r.statusText);
+    }
+    const data = await r.json();
+    lastPlume = data;
+
+    // Update weather panel with returned wx
+    if (data.weather && !useManual) {
+      wxData = data.weather;
+      renderWeather();
+    }
+
+    renderPlumeOnMap(data);
+    renderResults(data);
+    enableExport(data);
+
+    const model = data.model;
+    document.getElementById('sb-model').textContent =
+      `PG-${model.stability_class} · ${model.wind_speed_ms.toFixed(1)} m/s from ${model.wind_dir_from_deg.toFixed(0)}° · Q=${model.Q_gs.toFixed(1)} g/s`;
+
+    toast(`✓ Plume computed — ${selectedChem.name}`, 2500);
+  } catch(e) {
+    toast(`Error: ${e.message}`, 5000);
+  } finally {
+    btn.innerHTML = '▶ Run Plume Model';
+    btn.disabled = false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Render plume on map
+// ─────────────────────────────────────────────────────────────────────────────
+function clearPlumeLayers() {
+  for (const l of plumeLayers) map.removeLayer(l);
+  plumeLayers = [];
+}
+
+function renderPlumeOnMap(data) {
+  clearPlumeLayers();
+  const features = data.geojson.features;
+  const contourFeatures = features.filter(f => f.properties.type === 'plume_contour');
+
+  // Render outermost first (low = biggest), innermost last
+  const levelOrder = ['low', 'medium', 'high'];
+  const sorted = levelOrder
+    .map(lvl => contourFeatures.find(f => f.properties.level === lvl))
+    .filter(Boolean);
+
+  const legendRows = [];
+
+  for (const feat of sorted) {
+    const p = feat.properties;
+    const layer = L.geoJSON(feat, {
+      style: {
+        color: p.color,
+        weight: 2,
+        fillColor: p.color,
+        fillOpacity: 0.22,
+        opacity: 0.85,
+      },
+    }).addTo(map);
+
+    layer.bindPopup(`
+      <b>${p.label}</b><br/>
+      Threshold: ${fmtPpm(p.threshold_ppm)}<br/>
+      Downwind: ${p.max_downwind_km.toFixed(2)} km<br/>
+      Width: ${p.max_width_km.toFixed(2)} km
+    `);
+
+    plumeLayers.push(layer);
+    legendRows.push({ label: p.label, color: p.color, km: p.max_downwind_km });
+  }
+
+  // Fit map to plume bounds (use outermost)
+  if (sorted.length > 0) {
+    const outer = sorted[0];
+    const bounds = L.geoJSON(outer).getBounds();
+    if (bounds.isValid()) {
+      map.fitBounds(bounds.pad(0.15));
+    }
+  }
+
+  // Legend
+  const legend = document.getElementById('legend');
+  const legendEl = document.getElementById('legend-rows');
+  if (legendRows.length > 0) {
+    legend.style.display = 'block';
+    legendEl.innerHTML = legendRows.map(r =>
+      `<div class="legend-row">
+        <div class="legend-box" style="background:${r.color}88; border-color:${r.color}"></div>
+        <span>${r.label}</span>
+        <span style="margin-left:auto; font-family:monospace; font-size:11px">${r.km.toFixed(2)} km ↓</span>
+      </div>`
+    ).join('');
+  } else {
+    legend.style.display = 'none';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Render results panel
+// ─────────────────────────────────────────────────────────────────────────────
+function renderResults(data) {
+  const section = document.getElementById('results-section');
+  const content = document.getElementById('results-content');
+  section.style.display = 'block';
+
+  const stats = data.stats;
+  const rows = Object.entries(stats).map(([level, s]) => {
+    const color = level === 'high' ? 'var(--red)' : level === 'medium' ? '#FF8C00' : '#FFD700';
+    const icon = s.has_contour ? '' : '🚫 ';
+    return `
+      <div class="result-row">
+        <span class="result-label">
+          <span class="threshold-dot" style="background:${color}"></span>
+          ${s.label}
+        </span>
+        <span>
+          ${s.has_contour
+            ? `<span class="result-val">${s.max_downwind_km.toFixed(2)}</span><span class="result-unit">km</span>`
+            : '<span style="color:var(--muted);font-size:11px">below release</span>'}
+        </span>
+      </div>`;
+  });
+
+  const wx = data.weather;
+  const model = data.model;
+  content.innerHTML = rows.join('') + `
+    <div style="margin-top:8px;font-size:11px;color:var(--muted)">
+      ${wx && wx.wind_dir_label
+        ? `Wind: ${wx.wind_dir_label} at ${wx.wind_speed_mph} mph · ${wx.weather_desc || ''}`
+        : `Wind: ${model.wind_speed_ms.toFixed(1)} m/s from ${model.wind_dir_from_deg}°`}
+      <br/>Stability: PG-${model.stability_class} · Q = ${model.Q_gs.toFixed(1)} g/s
+    </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KML export
+// ─────────────────────────────────────────────────────────────────────────────
+function enableExport(data) {
+  document.getElementById('btn-kml-dl').disabled = false;
+  document.getElementById('btn-kml-net').disabled = false;
+  if (data.kml_links) {
+    document.getElementById('inp-export-url').value = data.kml_links.network_link;
+  }
+}
+
+async function downloadKML() {
+  const url = `${API}/kml/download`;
+  const r = await fetch(url);
+  if (!r.ok) { toast('No plume to download yet', 2000); return; }
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `plume_${selectedChem?.id || 'unknown'}_${Date.now()}.kml`;
+  a.click();
+  toast('KML downloaded', 1500);
+}
+
+function copyNetworkLink() {
+  const url = `${location.origin}/kml/network.kml`;
+  navigator.clipboard.writeText(url).then(() => {
+    toast('Network link copied — paste into Google Earth', 3000);
+    const exportDiv = document.getElementById('export-url');
+    exportDiv.style.display = 'block';
+    document.getElementById('inp-export-url').value = url;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+function toast(msg, duration = 2500) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), duration);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────────────────────────────────────
+loadChemicals();
+</script>
+</body>
+</html>
