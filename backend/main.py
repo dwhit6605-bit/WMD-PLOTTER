@@ -38,8 +38,11 @@ from population import estimate_population_impact
 from tak_dp import build_tak_data_package, build_cot_xml
 from erg import search_erg, get_erg_entry, compute_erg_zones
 
+APP_VERSION = "2.0.0"
+BUILD_DATE  = "2026-05-25"
+
 # ─────────────────────────────────────────────────────────────────────────────
-app = FastAPI(title="WMD Plotter API", version="1.0.0")
+app = FastAPI(title="WMD Plotter API", version=APP_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
@@ -133,6 +136,15 @@ async def serve_frontend():
     if index_path.exists():
         return HTMLResponse(content=index_path.read_text(), status_code=200)
     return HTMLResponse(content="<h1>WMD Plotter</h1><p>Frontend not found.</p>")
+
+
+@app.get("/api/version")
+async def get_version():
+    return JSONResponse(content={
+        "version": APP_VERSION,
+        "build_date": BUILD_DATE,
+        "name": "WHITWERX Model Display (WMD)",
+    })
 
 
 @app.get("/api/chemicals")
