@@ -389,7 +389,10 @@ input:checked + .slider:before { transform: translateX(16px); }
 
       <!-- Export -->
       <div class="section">
-        <div class="section-hdr">📤 Export</div>
+        <div class="section-hdr">📤 Export Active Overlays</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px" id="export-summary">
+          No overlays computed yet.
+        </div>
         <div class="export-grid">
           <button class="btn btn-ghost" id="btn-kml-dl" onclick="downloadKML()" disabled>
             ⬇ Download KML
@@ -616,8 +619,7 @@ function clearIncident() {
   document.getElementById('btn-run').disabled = true;
   document.getElementById('results-section').style.display = 'none';
   document.getElementById('legend').style.display = 'none';
-  document.getElementById('btn-kml-dl').disabled = true;
-  document.getElementById('btn-kml-net').disabled = true;
+  disableExport('plume');
 }
 
 function updateCoordDisplay() {
@@ -875,7 +877,7 @@ async function runPlume() {
 
     renderPlumeOnMap(data);
     renderResults(data);
-    enableExport(data);
+    enableExport('plume');
 
     const model = data.model;
     document.getElementById('sb-model').textContent =
@@ -999,24 +1001,40 @@ function renderResults(data) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// KML export
+// Unified KML export (works for any combination of active overlays)
 // ─────────────────────────────────────────────────────────────────────────────
-function enableExport(data) {
-  document.getElementById('btn-kml-dl').disabled = false;
-  document.getElementById('btn-kml-net').disabled = false;
-  if (data.kml_links) {
-    document.getElementById('inp-export-url').value = data.kml_links.network_link;
-  }
+const _activeOverlays = { plume: false, blast: false };
+
+function _refreshExportUI() {
+  const active = Object.entries(_activeOverlays)
+    .filter(([, v]) => v)
+    .map(([k]) => k.charAt(0).toUpperCase() + k.slice(1));
+  const hasAny = active.length > 0;
+
+  document.getElementById('btn-kml-dl').disabled  = !hasAny;
+  document.getElementById('btn-kml-net').disabled = !hasAny;
+  document.getElementById('export-summary').textContent = hasAny
+    ? `Exporting: ${active.join(' + ')}`
+    : 'No overlays computed yet.';
+}
+
+function enableExport(tool) {
+  _activeOverlays[tool] = true;
+  _refreshExportUI();
+}
+
+function disableExport(tool) {
+  _activeOverlays[tool] = false;
+  _refreshExportUI();
 }
 
 async function downloadKML() {
-  const url = `${API}/kml/download`;
-  const r = await fetch(url);
-  if (!r.ok) { toast('No plume to download yet', 2000); return; }
+  const r = await fetch(`${API}/kml/download`);
+  if (!r.ok) { toast('No overlays to export yet', 2000); return; }
   const blob = await r.blob();
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `plume_${selectedChem?.id || 'unknown'}_${Date.now()}.kml`;
+  a.download = `wmd_export_${Date.now()}.kml`;
   a.click();
   toast('KML downloaded', 1500);
 }
@@ -1025,8 +1043,7 @@ function copyNetworkLink() {
   const url = `${location.origin}/kml/network.kml`;
   navigator.clipboard.writeText(url).then(() => {
     toast('Network link copied — paste into Google Earth', 3000);
-    const exportDiv = document.getElementById('export-url');
-    exportDiv.style.display = 'block';
+    document.getElementById('export-url').style.display = 'block';
     document.getElementById('inp-export-url').value = url;
   });
 }
@@ -1100,6 +1117,7 @@ function clearBlast() {
   updateBlastCoordDisplay();
   document.getElementById('btn-blast-run').disabled = true;
   document.getElementById('blast-results-section').style.display = 'none';
+  disableExport('blast');
 }
 
 function clearBlastLayers() {
@@ -1167,6 +1185,7 @@ async function runBlast() {
     const data = await r.json();
     renderBlastOnMap(data);
     renderBlastResults(data);
+    enableExport('blast');
     toast(`💥 Blast zones computed — ${data.W_tnt_kg} kg TNT equiv`, 2500);
     if (isMobile()) closeMobileSidebar();
   } catch(e) {

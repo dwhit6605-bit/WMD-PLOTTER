@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from chemicals import CHEMICALS, get_chemical, get_thresholds
 from dispersion import compute_all_contours, determine_stability_class
 from weather import fetch_weather
-from kml_gen import build_plume_kml, build_network_link_kml
+from kml_gen import build_combined_kml, build_network_link_kml
 from blast import EXPLOSIVES, compute_blast_zones
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,8 +48,13 @@ FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
-# ── In-memory state for live KML ────────────────────────────────────────────
-_last_plume: dict = {}
+# ── Shared overlay state (all tools write here; KML endpoints read it) ───────
+# Adding a new tool: store its result under a new key and add a folder
+# builder to kml_gen._FOLDER_BUILDERS. Nothing else needs to change.
+_overlay_state: dict = {
+    "plume": {},
+    "blast": {},
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -235,8 +240,8 @@ async def compute_plume(req: PlumeRequest, request: Request):
 
     # ── Cache for KML endpoint ────────────────────────────────────────────────
     base_url = str(request.base_url).rstrip("/")
-    global _last_plume
-    _last_plume = {
+    global _overlay_state
+    _overlay_state["plume"] = {
         "source_lat": req.lat,
         "source_lon": req.lon,
         "chemical_name": chem["name"],
@@ -272,26 +277,11 @@ async def compute_plume(req: PlumeRequest, request: Request):
 
 @app.get("/kml/live.kml")
 async def live_kml():
-    """
-    Serve the most recently computed plume as KML.
-    Google Earth NetworkLink polls this endpoint.
-    """
-    if not _last_plume:
-        raise HTTPException(status_code=404, detail="No plume computed yet. Run a scenario first.")
-    kml_content = build_plume_kml(
-        source_lat=_last_plume["source_lat"],
-        source_lon=_last_plume["source_lon"],
-        chemical_name=_last_plume["chemical_name"],
-        contours=_last_plume["contours"],
-        wind_speed_ms=_last_plume["wind_speed_ms"],
-        wind_dir_from_deg=_last_plume["wind_dir_from_deg"],
-        stability_class=_last_plume["stability_class"],
-        release_rate_gs=_last_plume["release_rate_gs"],
-        release_height_m=_last_plume["release_height_m"],
-        weather_desc=_last_plume.get("weather_desc", ""),
-    )
+    """Combined live KML of all active overlays. Polled by Google Earth NetworkLink."""
+    if not any(_overlay_state.values()):
+        raise HTTPException(status_code=404, detail="No overlays computed yet. Run a scenario first.")
     return Response(
-        content=kml_content,
+        content=build_combined_kml(_overlay_state),
         media_type="application/vnd.google-earth.kml+xml",
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
@@ -315,26 +305,14 @@ async def network_link_kml(request: Request, interval: int = Query(default=30, g
 
 @app.get("/kml/download")
 async def download_kml():
-    """Download a static snapshot of the current plume as KML."""
-    if not _last_plume:
-        raise HTTPException(status_code=404, detail="No plume computed yet.")
-    kml_content = build_plume_kml(
-        source_lat=_last_plume["source_lat"],
-        source_lon=_last_plume["source_lon"],
-        chemical_name=_last_plume["chemical_name"],
-        contours=_last_plume["contours"],
-        wind_speed_ms=_last_plume["wind_speed_ms"],
-        wind_dir_from_deg=_last_plume["wind_dir_from_deg"],
-        stability_class=_last_plume["stability_class"],
-        release_rate_gs=_last_plume["release_rate_gs"],
-        release_height_m=_last_plume["release_height_m"],
-        weather_desc=_last_plume.get("weather_desc", ""),
-    )
-    chem = _last_plume["chemical_name"].replace(" ", "_")
+    """Download a static KML snapshot of all active overlays."""
+    if not any(_overlay_state.values()):
+        raise HTTPException(status_code=404, detail="No overlays computed yet.")
+    active = [k for k, v in _overlay_state.items() if v]
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    filename = f"plume_{chem}_{ts}.kml"
+    filename = f"wmd_{'_'.join(active)}_{ts}.kml"
     return Response(
-        content=kml_content,
+        content=build_combined_kml(_overlay_state),
         media_type="application/vnd.google-earth.kml+xml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -349,18 +327,42 @@ async def list_explosives():
 @app.post("/api/blast")
 async def compute_blast(req: BlastRequest):
     """Compute blast overpressure damage zones (Brode/Hopkinson-Cranz model)."""
+    from blast import EXPLOSIVES as _EXPLOSIVES
     result = compute_blast_zones(
         lat=req.lat,
         lon=req.lon,
         weight_kg=req.weight_kg,
         explosive_id=req.explosive_id,
     )
+
+    # Cache for unified KML export
+    exp = next((e for e in _EXPLOSIVES if e["id"] == req.explosive_id), {})
+    global _overlay_state
+    _overlay_state["blast"] = {
+        "source_lat":    req.lat,
+        "source_lon":    req.lon,
+        "explosive_id":  req.explosive_id,
+        "explosive_name": exp.get("name", req.explosive_id),
+        "weight_kg":     req.weight_kg,
+        "W_tnt_kg":      result["W_tnt_kg"],
+        "zones": [
+            {
+                **feat["properties"],
+                # KML builder needs [lon, lat] ring stored as "lonlat"
+                "lonlat": feat["geometry"]["coordinates"][0],
+            }
+            for feat in result["geojson"]["features"]
+            if feat["properties"]["type"] == "blast_zone"
+        ],
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
     return JSONResponse(content=result)
 
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "has_plume": bool(_last_plume)}
+    return {"status": "ok", "active_overlays": {k: bool(v) for k, v in _overlay_state.items()}}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
