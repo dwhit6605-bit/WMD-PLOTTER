@@ -493,20 +493,6 @@ async def compute_population(req: PopulationRequest):
         raise HTTPException(status_code=502, detail=f"Population estimate failed: {e}")
 
 
-@app.post("/api/infra/cache")
-async def cache_infra(req: InfraCacheRequest):
-    """Cache infrastructure search results (from frontend Overpass query) for KML export."""
-    global _overlay_state
-    _overlay_state["infra"] = {
-        "source_lat": req.lat,
-        "source_lon": req.lon,
-        "radius":     req.radius,
-        "items":      req.items,
-        "computed_at": datetime.now(timezone.utc).isoformat(),
-    }
-    return JSONResponse(content={"cached": len(req.items)})
-
-
 @app.get("/api/radionuclides")
 async def list_radionuclides():
     """Return radionuclide database with cloudshine DCF values."""
@@ -708,6 +694,20 @@ class InfraCacheRequest(BaseModel):
     lon: float = Field(..., ge=-180, le=180)
     radius: int = Field(..., gt=0, le=50_000)
     items: list[dict]  # [{type, name, lat, lon, distKm}, ...]
+
+
+@app.post("/api/infra/cache")
+async def cache_infra(req: InfraCacheRequest):
+    """Cache infrastructure search results (from frontend Overpass query) for KML export."""
+    global _overlay_state
+    _overlay_state["infra"] = {
+        "source_lat": req.lat,
+        "source_lon": req.lon,
+        "radius":     req.radius,
+        "items":      req.items,
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return JSONResponse(content={"cached": len(req.items)})
 
 
 @app.get("/api/erg/search")
