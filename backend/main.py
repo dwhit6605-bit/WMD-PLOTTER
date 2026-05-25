@@ -31,6 +31,7 @@ from chemicals import CHEMICALS, get_chemical, get_thresholds
 from dispersion import compute_all_contours, determine_stability_class
 from weather import fetch_weather
 from kml_gen import build_plume_kml, build_network_link_kml
+from blast import EXPLOSIVES, compute_blast_zones
 
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="WMD Plotter API", version="1.0.0")
@@ -54,6 +55,13 @@ _last_plume: dict = {}
 # ─────────────────────────────────────────────────────────────────────────────
 # Request/Response models
 # ─────────────────────────────────────────────────────────────────────────────
+
+class BlastRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    explosive_id: str = "tnt"
+    weight_kg: float = Field(..., gt=0, le=500_000)
+
 
 class PlumeRequest(BaseModel):
     # Incident location
@@ -330,6 +338,24 @@ async def download_kml():
         media_type="application/vnd.google-earth.kml+xml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/api/explosives")
+async def list_explosives():
+    """Return explosive types with TNT equivalency factors."""
+    return JSONResponse(content={"explosives": EXPLOSIVES})
+
+
+@app.post("/api/blast")
+async def compute_blast(req: BlastRequest):
+    """Compute blast overpressure damage zones (Brode/Hopkinson-Cranz model)."""
+    result = compute_blast_zones(
+        lat=req.lat,
+        lon=req.lon,
+        weight_kg=req.weight_kg,
+        explosive_id=req.explosive_id,
+    )
+    return JSONResponse(content=result)
 
 
 @app.get("/api/health")

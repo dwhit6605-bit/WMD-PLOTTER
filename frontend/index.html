@@ -407,9 +407,50 @@ input:checked + .slider:before { transform: translateX(16px); }
         </div>
       </div>
 
+      <!-- ── Blast Analysis ── -->
+      <div class="section" style="border-top: 2px solid var(--border); padding-top:14px">
+        <div class="section-hdr">💥 Blast Analysis</div>
+
+        <div class="coord-display" id="blast-coord-display">— place detonation point —</div>
+        <div class="coord-hint">Independent marker from incident location</div>
+        <div class="row2" style="margin-top:8px">
+          <button class="btn btn-danger btn-full" id="btn-blast-place" onclick="startBlastPlaceMode()">Place Detonation</button>
+          <button class="btn btn-ghost btn-full" id="btn-blast-clear" onclick="clearBlast()">Clear</button>
+        </div>
+
+        <label style="margin-top:10px">Explosive Type</label>
+        <select id="sel-explosive"></select>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px" id="tnt-factor-note"></div>
+
+        <label style="margin-top:10px">
+          Yield —
+          <span id="lbl-unit-toggle" style="cursor:pointer;color:var(--accent2);font-size:11px;text-decoration:underline"
+                onclick="toggleBlastUnit()">switch to lbs</span>
+        </label>
+        <div class="row2">
+          <input type="number" id="inp-blast-weight" value="10" min="0.1" step="0.1"
+                 oninput="updateTNTEquiv()" style="font-size:16px"/>
+          <div style="display:flex;align-items:center;padding:0 4px;font-size:13px;color:var(--muted)"
+               id="lbl-blast-unit">kg</div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px" id="tnt-equiv-note">TNT equiv: —</div>
+
+        <button class="btn btn-primary btn-full" id="btn-blast-run" onclick="runBlast()" disabled
+                style="background:#CC0000;color:#fff;margin-top:10px">
+          💥 Compute Blast Zones
+        </button>
+      </div>
+
+      <!-- Blast Results -->
+      <div class="section" id="blast-results-section" style="display:none">
+        <div class="section-hdr">📊 Blast Results</div>
+        <div id="blast-results-content"></div>
+      </div>
+
       <!-- Disclaimer -->
       <div class="section" style="font-size:10px; color:var(--muted); line-height:1.5; padding-bottom:16px">
-        Gaussian plume model (Pasquill-Gifford). Output is a <em>planning estimate</em> only — accuracy ±2–5×.
+        Gaussian plume model (Pasquill-Gifford). Output is a <em>planning estimate</em> only — accuracy ±2–5×.<br/>
+        Blast zones use Brode (1955) Hopkinson-Cranz scaling — planning estimates only.<br/>
         Do not use as sole basis for protective actions. Always follow official emergency management guidance.
       </div>
 
@@ -473,6 +514,14 @@ let wxData = null;
 let lastPlume = null;
 let placingMode = false;
 
+// Blast state
+let explosives = [];
+let blastMarker = null;
+let blastLatLon = null;
+let blastLayers = [];
+let blastPlacingMode = false;
+let blastUnitKg = true;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Map init
 // ─────────────────────────────────────────────────────────────────────────────
@@ -504,11 +553,15 @@ map.on('mousemove', e => {
     `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
 });
 
-// Map click for incident placement
+// Map click for incident / blast placement
 map.on('click', e => {
   if (placingMode) {
     placeIncident(e.latlng.lat, e.latlng.lng);
     placingMode = false;
+    map.getContainer().style.cursor = '';
+  } else if (blastPlacingMode) {
+    placeBlast(e.latlng.lat, e.latlng.lng);
+    blastPlacingMode = false;
     map.getContainer().style.cursor = '';
   }
 });
@@ -989,6 +1042,199 @@ function toast(msg, duration = 2500) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Blast analysis
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadExplosives() {
+  try {
+    const r = await fetch(`${API}/api/explosives`);
+    const d = await r.json();
+    explosives = d.explosives;
+    const sel = document.getElementById('sel-explosive');
+    sel.innerHTML = '';
+    for (const e of explosives) {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = `${e.name} (×${e.factor.toFixed(2)} TNT)`;
+      sel.appendChild(opt);
+    }
+    updateTNTEquiv();
+  } catch(e) {
+    toast('⚠ Failed to load explosives database', 3000);
+  }
+}
+
+const blastIcon = L.divIcon({
+  className: '',
+  html: `<div style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;
+                      font-size:22px;filter:drop-shadow(0 0 4px rgba(255,100,0,0.9))">💥</div>`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
+});
+
+function startBlastPlaceMode() {
+  blastPlacingMode = true;
+  map.getContainer().style.cursor = 'crosshair';
+  toast('Click the map to place the detonation point', 2500);
+  if (isMobile()) closeMobileSidebar();
+}
+
+function placeBlast(lat, lon) {
+  blastLatLon = { lat, lon };
+  if (blastMarker) map.removeLayer(blastMarker);
+  blastMarker = L.marker([lat, lon], { icon: blastIcon, draggable: true })
+    .addTo(map)
+    .bindPopup(`<b>Detonation Point</b><br/>${lat.toFixed(5)}, ${lon.toFixed(5)}`);
+  blastMarker.on('dragend', e => {
+    const p = e.target.getLatLng();
+    blastLatLon = { lat: p.lat, lon: p.lng };
+    updateBlastCoordDisplay();
+  });
+  updateBlastCoordDisplay();
+  document.getElementById('btn-blast-run').disabled = false;
+}
+
+function clearBlast() {
+  if (blastMarker) { map.removeLayer(blastMarker); blastMarker = null; }
+  blastLatLon = null;
+  clearBlastLayers();
+  updateBlastCoordDisplay();
+  document.getElementById('btn-blast-run').disabled = true;
+  document.getElementById('blast-results-section').style.display = 'none';
+}
+
+function clearBlastLayers() {
+  for (const l of blastLayers) map.removeLayer(l);
+  blastLayers = [];
+}
+
+function updateBlastCoordDisplay() {
+  const el = document.getElementById('blast-coord-display');
+  el.textContent = blastLatLon
+    ? `${blastLatLon.lat.toFixed(5)}, ${blastLatLon.lon.toFixed(5)}`
+    : '— place detonation point —';
+}
+
+function toggleBlastUnit() {
+  blastUnitKg = !blastUnitKg;
+  const inp = document.getElementById('inp-blast-weight');
+  const val = parseFloat(inp.value) || 0;
+  document.getElementById('lbl-blast-unit').textContent = blastUnitKg ? 'kg' : 'lbs';
+  document.getElementById('lbl-unit-toggle').textContent = blastUnitKg ? 'switch to lbs' : 'switch to kg';
+  inp.value = blastUnitKg
+    ? (val / 2.20462).toFixed(2)
+    : (val * 2.20462).toFixed(2);
+  updateTNTEquiv();
+}
+
+function getBlastWeightKg() {
+  const val = parseFloat(document.getElementById('inp-blast-weight').value) || 0;
+  return blastUnitKg ? val : val / 2.20462;
+}
+
+function updateTNTEquiv() {
+  const id  = document.getElementById('sel-explosive').value;
+  const exp = explosives.find(e => e.id === id);
+  if (!exp) return;
+  const wKg  = getBlastWeightKg();
+  const tnt  = wKg * exp.factor;
+  document.getElementById('tnt-equiv-note').textContent =
+    `TNT equiv: ${tnt < 1 ? tnt.toFixed(3) : tnt.toFixed(1)} kg`;
+  document.getElementById('tnt-factor-note').textContent =
+    `TNT factor: ×${exp.factor.toFixed(2)}`;
+}
+
+async function runBlast() {
+  if (!blastLatLon) { toast('Place a detonation point first', 2000); return; }
+  const wKg = getBlastWeightKg();
+  if (wKg <= 0) { toast('Enter a valid yield', 2000); return; }
+
+  const btn = document.getElementById('btn-blast-run');
+  btn.innerHTML = '<span class="spin">⟳</span> Computing…';
+  btn.disabled = true;
+
+  try {
+    const r = await fetch(`${API}/api/blast`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lat: blastLatLon.lat,
+        lon: blastLatLon.lon,
+        explosive_id: document.getElementById('sel-explosive').value,
+        weight_kg: wKg,
+      }),
+    });
+    if (!r.ok) { const e = await r.json(); throw new Error(e.detail || r.statusText); }
+    const data = await r.json();
+    renderBlastOnMap(data);
+    renderBlastResults(data);
+    toast(`💥 Blast zones computed — ${data.W_tnt_kg} kg TNT equiv`, 2500);
+    if (isMobile()) closeMobileSidebar();
+  } catch(e) {
+    toast(`Blast error: ${e.message}`, 4000);
+  } finally {
+    btn.innerHTML = '💥 Compute Blast Zones';
+    btn.disabled = false;
+  }
+}
+
+function renderBlastOnMap(data) {
+  clearBlastLayers();
+  const zones = data.geojson.features.filter(f => f.properties.type === 'blast_zone');
+
+  for (const feat of zones) {
+    const p = feat.properties;
+    const layer = L.geoJSON(feat, {
+      style: {
+        color:       p.color,
+        weight:      2,
+        fillColor:   p.color,
+        fillOpacity: 0.20,
+        opacity:     0.85,
+        dashArray:   '4 3',
+      },
+    }).addTo(map);
+    layer.bindPopup(`
+      <b>${p.label}</b><br/>
+      ${p.psi} psi / ${p.kPa} kPa<br/>
+      Radius: ${p.radius_km.toFixed(3)} km (${p.radius_m.toFixed(0)} m)<br/>
+      <em>${p.desc}</em>
+    `);
+    blastLayers.push(layer);
+  }
+
+  // Fit to outermost zone
+  if (blastLayers.length > 0) {
+    const bounds = L.featureGroup(blastLayers).getBounds();
+    if (bounds.isValid()) map.fitBounds(bounds.pad(0.15));
+  }
+}
+
+function renderBlastResults(data) {
+  const section = document.getElementById('blast-results-section');
+  const content = document.getElementById('blast-results-content');
+  section.style.display = 'block';
+
+  const rows = Object.values(data.stats).reverse().map(s => `
+    <div class="result-row">
+      <span class="result-label">
+        <span class="threshold-dot" style="background:${s.color}; border:1px solid #fff4"></span>
+        ${s.full_label}
+      </span>
+      <span>
+        <span class="result-val">${s.radius_km.toFixed(3)}</span>
+        <span class="result-unit">km</span>
+      </span>
+    </div>`).join('');
+
+  const expName = explosives.find(e => e.id === data.explosive_id)?.name || data.explosive_id;
+  content.innerHTML = rows + `
+    <div style="margin-top:8px;font-size:11px;color:var(--muted)">
+      ${expName} · ${data.weight_kg.toFixed(1)} kg → ${data.W_tnt_kg} kg TNT equiv
+      <br/>Model: Brode (1955) / Hopkinson-Cranz scaling
+    </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Mobile sidebar sheet
 // ─────────────────────────────────────────────────────────────────────────────
 function isMobile() { return window.innerWidth <= 768; }
@@ -1015,6 +1261,7 @@ function toggleMobileSidebar() {
 // Init
 // ─────────────────────────────────────────────────────────────────────────────
 loadChemicals();
+loadExplosives();
 </script>
 </body>
 </html>
