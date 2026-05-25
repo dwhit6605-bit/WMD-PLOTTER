@@ -380,6 +380,7 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div class="export-grid">
           <button class="btn btn-ghost" id="btn-kml-dl" onclick="downloadKML()" disabled>⬇ Download KML</button>
           <button class="btn btn-ghost" id="btn-kml-net" onclick="copyNetworkLink()" disabled>🔗 Network Link</button>
+          <button class="btn btn-ghost" id="btn-tak-dp" onclick="downloadTAKDP()" disabled style="grid-column:1/-1;background:rgba(0,120,200,0.12);border-color:rgba(0,120,200,0.4);color:#5bb8ff">📦 TAK Data Package (.zip)</button>
         </div>
         <div id="export-url" style="display:none;margin-top:8px">
           <input type="text" id="inp-export-url" readonly onclick="this.select()" style="font-size:11px;cursor:pointer"/>
@@ -1573,6 +1574,7 @@ function _refreshExportUI() {
   const hasAny = active.length>0;
   document.getElementById('btn-kml-dl').disabled  = !hasAny;
   document.getElementById('btn-kml-net').disabled = !hasAny;
+  document.getElementById('btn-tak-dp').disabled  = !hasAny;
   document.getElementById('export-summary').textContent = hasAny ? `Exporting: ${active.join(' + ')}` : 'No overlays computed yet.';
 }
 
@@ -1588,6 +1590,20 @@ async function downloadKML() {
   a.download = `wmd_export_${Date.now()}.kml`;
   a.click();
   toast('KML downloaded', 1500);
+}
+
+async function downloadTAKDP() {
+  const r = await fetch(`${API}/export/tak-dp`);
+  if (!r.ok) { toast('No overlays to export yet', 2000); return; }
+  const blob = await r.blob();
+  const cd = r.headers.get('Content-Disposition') || '';
+  const match = cd.match(/filename="([^"]+)"/);
+  const filename = match ? match[1] : `wmd_tak_${Date.now()}.zip`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  toast('TAK Data Package downloaded — import via ATAK Files menu', 2500);
 }
 
 function copyNetworkLink() {

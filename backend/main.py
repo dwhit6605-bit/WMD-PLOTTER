@@ -35,6 +35,7 @@ from blast import EXPLOSIVES, compute_blast_zones
 from radiation import RADIONUCLIDES, get_radionuclide, compute_radiation_contours
 from bleve import FUELS, compute_bleve_zones
 from population import estimate_population_impact
+from tak_dp import build_tak_data_package
 
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="WMD Plotter API", version="1.0.0")
@@ -344,6 +345,21 @@ async def download_kml():
     return Response(
         content=build_combined_kml(_overlay_state),
         media_type="application/vnd.google-earth.kml+xml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/export/tak-dp")
+async def export_tak_data_package():
+    """Download a TAK Data Package (.zip) for import into ATAK/WinTAK/iTAK."""
+    if not any(_overlay_state.values()):
+        raise HTTPException(status_code=404, detail="No overlays computed yet.")
+    active = [k for k, v in _overlay_state.items() if v]
+    kml_bytes = build_combined_kml(_overlay_state).encode("utf-8")
+    zip_bytes, filename = build_tak_data_package(kml_bytes, active)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
