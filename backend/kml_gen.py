@@ -201,11 +201,122 @@ def _blast_folder(state: dict) -> tuple[str, str]:
     return styles, folder
 
 
+def _bleve_folder(state: dict) -> tuple[str, str]:
+    """Return (styles_xml, folder_xml) for a BLEVE overlay state."""
+    fuel_name = state.get("fuel_name", state.get("fuel_id", "Unknown"))
+    mass_kg   = state["mass_kg"]
+    fb        = state.get("fireball", {})
+    now       = state.get("computed_at", "")
+
+    styles = ""
+    for zone in state.get("zones", []):
+        styles += _kml_style(f"bleve_{zone['level']}", zone["color"], 20)
+
+    source_desc = (
+        f"<b>Fuel:</b> {fuel_name}<br/>"
+        f"<b>Mass:</b> {mass_kg:.1f} kg<br/>"
+        f"<b>Fireball radius:</b> {fb.get('radius_m',0):.0f} m<br/>"
+        f"<b>Fireball duration:</b> {fb.get('duration_s',0):.1f} s<br/>"
+        f"<b>SEP:</b> {fb.get('sep_kwm2',0)} kW/m²<br/>"
+        f"<b>Model:</b> Roberts (1982) BLEVE fireball<br/>"
+        f"<b>Computed:</b> {now}"
+    )
+    placemarks = _point_placemark(
+        name="🔥 BLEVE SOURCE",
+        desc=source_desc,
+        lat=state["source_lat"],
+        lon=state["source_lon"],
+        icon_color="ff0066cc",
+    )
+
+    for zone in reversed(state.get("zones", [])):
+        coords = _lonlat_ring_to_kml(zone["lonlat"])
+        desc = (
+            f"<b>{zone['label']}</b><br/>"
+            f"{('q = '+str(zone['q_kwm2'])+' kW/m²') if zone.get('q_kwm2') else 'Fireball zone'}<br/>"
+            f"Radius: {zone['radius_km']:.3f} km ({zone['radius_m']:.0f} m)<br/>"
+            f"{zone.get('desc', '')}"
+        )
+        placemarks += _polygon_placemark(zone["label"], desc, f"bleve_{zone['level']}", coords)
+
+    folder = f"""
+  <Folder>
+    <name>BLEVE Thermal Zones — {fuel_name} ({mass_kg:.0f} kg)</name>
+    <description><![CDATA[Roberts (1982) fireball · r={fb.get('radius_m',0):.0f} m · {fb.get('duration_s',0):.1f} s]]></description>
+    <open>1</open>
+    {placemarks}
+  </Folder>"""
+    return styles, folder
+
+
+def _radiation_folder(state: dict) -> tuple[str, str]:
+    """Return (styles_xml, folder_xml) for a radiation overlay state."""
+    nuclide   = state["radionuclide_name"]
+    symbol    = state.get("radionuclide_symbol", nuclide)
+    Q_ci_s    = state["release_rate_ci_s"]
+    wind_ms   = state["wind_speed_ms"]
+    wind_from = state["wind_dir_from_deg"]
+    stab      = state["stability_class"]
+    H_m       = state["release_height_m"]
+    dcf       = state["dcf_cloud"]
+    now       = state.get("computed_at", "")
+    wind_mph  = wind_ms * 2.237
+    contours  = state["contours"]
+
+    styles = ""
+    for level, info in contours.items():
+        if info.get("latlon"):
+            styles += _kml_style(f"rad_{level}", info["color"], 30)
+
+    source_desc = (
+        f"<b>Radionuclide:</b> {nuclide} ({symbol})<br/>"
+        f"<b>Release rate:</b> {Q_ci_s*60:.4g} Ci/min ({Q_ci_s:.4g} Ci/s)<br/>"
+        f"<b>Height:</b> {H_m:.0f} m<br/>"
+        f"<b>DCF (cloudshine):</b> {dcf:,} mSv/hr per Ci/m³<br/>"
+        f"<b>Wind:</b> {wind_mph:.1f} mph from {wind_from:.0f}°<br/>"
+        f"<b>Stability:</b> PG-{stab}<br/>"
+        f"<b>Computed:</b> {now}"
+    )
+    placemarks = _point_placemark(
+        name=f"☢ RAD SOURCE: {symbol}",
+        desc=source_desc,
+        lat=state["source_lat"],
+        lon=state["source_lon"],
+        icon_color="ff2800c8",
+    )
+
+    zone_order = ["extreme", "high", "worker", "pag"]
+    for level in zone_order:
+        info = contours.get(level, {})
+        if not info.get("latlon"):
+            continue
+        desc = (
+            f"<b>{info['label']}</b><br/>"
+            f"Dose rate: {info['dose_msvhr']} mSv/hr<br/>"
+            f"Max downwind: {info['max_downwind_m']/1000:.2f} km<br/>"
+            f"Max width: {info['max_width_m']/1000:.2f} km<br/>"
+            f"{info.get('desc','')}"
+        )
+        coords = _latlon_ring_to_kml(info["latlon"])
+        placemarks += _polygon_placemark(info["label"], desc, f"rad_{level}", coords)
+
+    folder = f"""
+  <Folder>
+    <name>Radiation Zones — {symbol}</name>
+    <description><![CDATA[Cloudshine dose rates (EPA FGR-12) · PG-{stab} · {wind_mph:.1f} mph from {wind_from:.0f}°]]></description>
+    <open>1</open>
+    {placemarks}
+  </Folder>"""
+    return styles, folder
+
+
 # Registry: map overlay_state key → folder builder function.
 # To add a new tool: implement _<tool>_folder(state) and add it here.
 _FOLDER_BUILDERS: dict = {
-    "plume": _plume_folder,
-    "blast": _blast_folder,
+    "plume":     _plume_folder,
+    "blast":     _blast_folder,
+    "radiation": _radiation_folder,
+    "bleve":     _bleve_folder,
 }
 
 

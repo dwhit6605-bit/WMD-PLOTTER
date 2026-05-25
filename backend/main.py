@@ -32,6 +32,9 @@ from dispersion import compute_all_contours, determine_stability_class
 from weather import fetch_weather
 from kml_gen import build_combined_kml, build_network_link_kml
 from blast import EXPLOSIVES, compute_blast_zones
+from radiation import RADIONUCLIDES, get_radionuclide, compute_radiation_contours
+from bleve import FUELS, compute_bleve_zones
+from population import estimate_population_impact
 
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="WMD Plotter API", version="1.0.0")
@@ -54,12 +57,39 @@ if FRONTEND_DIR.exists():
 _overlay_state: dict = {
     "plume": {},
     "blast": {},
+    "radiation": {},
+    "bleve": {},
 }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Request/Response models
 # ─────────────────────────────────────────────────────────────────────────────
+
+class BleveRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    fuel_id: str = "propane"
+    mass_kg: float = Field(..., gt=0, le=500_000)
+
+
+class PopulationRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    zones: list[dict]   # [{"level": str, "label": str, "color": str, "latlon": [[lat,lon],...]}]
+
+
+class RadiationRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    radionuclide_id: str
+    release_rate_ci_min: float = Field(..., gt=0, le=1_000_000)
+    release_height_m: float = Field(default=0.0, ge=0, le=500)
+    wind_speed_ms: Optional[float] = Field(default=None, ge=0)
+    wind_dir_from_deg: Optional[float] = Field(default=None, ge=0, lt=360)
+    stability_class: Optional[str] = Field(default=None, pattern="^[A-Fa-f]$")
+    manual_weather: bool = False
+
 
 class BlastRequest(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
@@ -358,6 +388,208 @@ async def compute_blast(req: BlastRequest):
     }
 
     return JSONResponse(content=result)
+
+
+@app.get("/api/fuels")
+async def list_fuels():
+    """Return BLEVE fuel database."""
+    return JSONResponse(content={"fuels": FUELS})
+
+
+@app.post("/api/bleve")
+async def compute_bleve(req: BleveRequest):
+    """Compute BLEVE fireball thermal damage zones (Roberts 1982 model)."""
+    result = compute_bleve_zones(
+        lat=req.lat, lon=req.lon, mass_kg=req.mass_kg, fuel_id=req.fuel_id
+    )
+
+    fuel = next((f for f in FUELS if f["id"] == req.fuel_id), {})
+    global _overlay_state
+    _overlay_state["bleve"] = {
+        "source_lat":  req.lat,
+        "source_lon":  req.lon,
+        "fuel_id":     req.fuel_id,
+        "fuel_name":   fuel.get("name", req.fuel_id),
+        "mass_kg":     req.mass_kg,
+        "fireball":    result["fireball"],
+        "zones": [
+            {
+                **feat["properties"],
+                "lonlat": feat["geometry"]["coordinates"][0],
+            }
+            for feat in result["geojson"]["features"]
+            if feat["properties"]["type"] == "bleve_zone"
+        ],
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return JSONResponse(content=result)
+
+
+@app.post("/api/population")
+async def compute_population(req: PopulationRequest):
+    """
+    Estimate population exposure within each hazard zone.
+    Uses US Census ACS 5-year county density (uniform distribution assumption).
+    """
+    try:
+        result = await estimate_population_impact(req.lat, req.lon, req.zones)
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Population estimate failed: {e}")
+
+
+@app.get("/api/radionuclides")
+async def list_radionuclides():
+    """Return radionuclide database with cloudshine DCF values."""
+    return JSONResponse(content={"radionuclides": RADIONUCLIDES})
+
+
+@app.post("/api/radiation")
+async def compute_radiation(req: RadiationRequest, request: Request):
+    """
+    Compute radiological dose rate contours (Gaussian plume, cloudshine pathway).
+    Returns GeoJSON FeatureCollection + stats for each dose zone.
+    """
+    nuclide = get_radionuclide(req.radionuclide_id)
+    if not nuclide:
+        raise HTTPException(status_code=404, detail=f"Radionuclide '{req.radionuclide_id}' not found.")
+
+    # ── Weather ──────────────────────────────────────────────────────────────
+    if req.manual_weather and req.wind_speed_ms is not None and req.wind_dir_from_deg is not None:
+        wind_ms   = req.wind_speed_ms
+        wind_from = req.wind_dir_from_deg
+        stability = (req.stability_class or "D").upper()
+        wx_data   = {
+            "wind_speed_ms": wind_ms,
+            "wind_speed_mph": round(wind_ms * 2.237, 1),
+            "wind_dir_from_deg": wind_from,
+            "wind_dir_label": "Manual",
+            "stability_class": stability,
+            "stability_desc": f"{stability} — Manual override",
+            "source": "Manual",
+        }
+    else:
+        try:
+            wx_data = await fetch_weather(req.lat, req.lon)
+        except Exception as e:
+            wx_data = {
+                "wind_speed_ms": 3.0,
+                "wind_speed_mph": 6.7,
+                "wind_dir_from_deg": 270.0,
+                "wind_dir_label": "W",
+                "stability_class": "D",
+                "stability_desc": "D — Neutral (fallback)",
+                "source": "Fallback",
+                "error": str(e),
+            }
+        wind_ms   = wx_data["wind_speed_ms"]
+        wind_from = wx_data["wind_dir_from_deg"]
+        stability = wx_data["stability_class"]
+
+        if req.wind_speed_ms is not None:
+            wind_ms = req.wind_speed_ms
+        if req.wind_dir_from_deg is not None:
+            wind_from = req.wind_dir_from_deg
+        if req.stability_class:
+            stability = req.stability_class.upper()
+
+    # ── Compute ───────────────────────────────────────────────────────────────
+    Q_ci_s = req.release_rate_ci_min / 60.0   # Ci/min → Ci/s
+
+    contours = compute_radiation_contours(
+        Q_ci_s=Q_ci_s,
+        u_ms=wind_ms,
+        stability=stability,
+        dcf_cloud=nuclide["dcf_cloud"],
+        source_lat=req.lat,
+        source_lon=req.lon,
+        wind_from_deg=wind_from,
+        H_m=req.release_height_m,
+    )
+
+    # ── GeoJSON response ──────────────────────────────────────────────────────
+    features = [{
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [req.lon, req.lat]},
+        "properties": {
+            "type": "rad_source",
+            "radionuclide": nuclide["name"],
+            "symbol": nuclide["symbol"],
+            "release_rate_ci_s": Q_ci_s,
+            "release_height_m": req.release_height_m,
+        },
+    }]
+
+    stats = {}
+    for level, info in contours.items():
+        latlon = info.get("latlon", [])
+        if latlon:
+            coords = [[lon, lat] for lat, lon in latlon]
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [coords]},
+                "properties": {
+                    "type": "rad_contour",
+                    "level": level,
+                    "label": info["label"],
+                    "color": info["color"],
+                    "dose_msvhr": info["dose_msvhr"],
+                    "desc": info["desc"],
+                    "max_downwind_m": round(info["max_downwind_m"], 1),
+                    "max_downwind_km": round(info["max_downwind_m"] / 1000, 3),
+                    "max_width_m": round(info["max_width_m"], 1),
+                    "max_width_km": round(info["max_width_m"] / 1000, 3),
+                },
+            })
+        stats[level] = {
+            "label": info["label"],
+            "dose_msvhr": info["dose_msvhr"],
+            "color": info["color"],
+            "desc": info["desc"],
+            "max_downwind_km": round(info.get("max_downwind_m", 0) / 1000, 3),
+            "max_width_km": round(info.get("max_width_m", 0) / 1000, 3),
+            "has_contour": bool(latlon),
+        }
+
+    geojson = {"type": "FeatureCollection", "features": features}
+
+    # ── Cache for KML ─────────────────────────────────────────────────────────
+    global _overlay_state
+    _overlay_state["radiation"] = {
+        "source_lat": req.lat,
+        "source_lon": req.lon,
+        "radionuclide_name": nuclide["name"],
+        "radionuclide_symbol": nuclide["symbol"],
+        "dcf_cloud": nuclide["dcf_cloud"],
+        "release_rate_ci_s": Q_ci_s,
+        "release_height_m": req.release_height_m,
+        "wind_speed_ms": wind_ms,
+        "wind_dir_from_deg": wind_from,
+        "stability_class": stability,
+        "contours": contours,
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    base_url = str(request.base_url).rstrip("/")
+    return JSONResponse(content={
+        "geojson": geojson,
+        "stats": stats,
+        "weather": wx_data,
+        "model": {
+            "type": "Gaussian (Pasquill-Gifford) — Cloudshine",
+            "stability_class": stability,
+            "wind_speed_ms": wind_ms,
+            "wind_dir_from_deg": wind_from,
+            "Q_ci_s": Q_ci_s,
+            "H_m": req.release_height_m,
+            "dcf_cloud": nuclide["dcf_cloud"],
+        },
+        "kml_links": {
+            "network_link": f"{base_url}/kml/network.kml",
+            "live_kml": f"{base_url}/kml/live.kml",
+            "download": f"{base_url}/kml/download",
+        },
+    })
 
 
 @app.get("/api/health")
