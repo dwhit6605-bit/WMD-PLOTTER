@@ -315,6 +315,8 @@ input:checked+.slider:before{transform:translateX(16px)}
           <button class="btn btn-danger btn-full" onclick="startPlaceMode()">📍 Place Incident</button>
           <button class="btn btn-ghost btn-full" onclick="clearIncident()">Clear All</button>
         </div>
+        <button class="btn btn-ghost btn-full" id="btn-use-location" style="margin-top:6px" onclick="useMyLocation()">📡 Use My Location</button>
+        <div id="geo-status" style="font-size:10px;color:var(--muted);margin-top:4px;min-height:12px;text-align:center"></div>
       </div>
 
       <!-- STEP 2: TOOL PICKER -->
@@ -918,6 +920,71 @@ function updateCoordDisplay() {
     ? `${incidentLatLon.lat.toFixed(5)}, ${incidentLatLon.lon.toFixed(5)}`
     : '— click map to place —';
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Browser geolocation
+// ─────────────────────────────────────────────────────────────────────────────
+function _geoStatusMsg(msg) {
+  const el = document.getElementById('geo-status');
+  if (el) el.textContent = msg;
+}
+
+/** On page load: silently center the map on the user's position if allowed. */
+function _initGeolocation() {
+  if (!('geolocation' in navigator)) return;
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const { latitude: lat, longitude: lon } = pos.coords;
+      map.flyTo([lat, lon], 11, { duration: 1.5 });
+      _geoStatusMsg('📡 Map centered on your location');
+      setTimeout(() => _geoStatusMsg(''), 4000);
+    },
+    _err => { /* silently ignored — user declined or unavailable */ },
+    { timeout: 8000, maximumAge: 60000 }
+  );
+}
+
+/**
+ * "Use My Location" button handler.
+ * Centers the map AND places the incident marker at the user's position.
+ */
+function useMyLocation() {
+  if (!('geolocation' in navigator)) {
+    _geoStatusMsg('⚠ Geolocation not supported by this browser');
+    return;
+  }
+  const btn = document.getElementById('btn-use-location');
+  btn.disabled = true;
+  btn.textContent = '⟳ Locating…';
+  _geoStatusMsg('Requesting location…');
+
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+      placeIncident(lat, lon);
+      map.flyTo([lat, lon], 13, { duration: 1.2 });
+      _geoStatusMsg(`± ${Math.round(accuracy)} m accuracy`);
+      toast(`Incident placed at your location (±${Math.round(accuracy)} m)`, 3000);
+      btn.disabled = false;
+      btn.textContent = '📡 Use My Location';
+    },
+    err => {
+      btn.disabled = false;
+      btn.textContent = '📡 Use My Location';
+      const msgs = {
+        1: '⚠ Location access denied — enable in browser settings',
+        2: '⚠ Location unavailable — check device GPS',
+        3: '⚠ Location request timed out — try again',
+      };
+      _geoStatusMsg(msgs[err.code] || '⚠ Location error');
+      toast(msgs[err.code] || 'Location error', 4000);
+    },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
+  );
+}
+
+// Center map on user location when page loads (silent — no incident placed)
+_initGeolocation();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool picker
