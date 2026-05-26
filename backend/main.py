@@ -173,12 +173,49 @@ async def get_weather(
     lat: float = Query(..., ge=-90, le=90),
     lon: float = Query(..., ge=-180, le=180),
 ):
-    """Fetch current weather + stability class for a location."""
+    """Fetch current weather + stability class for a location.
+    Tries Open-Meteo first; falls back to NWS hourly forecast if Open-Meteo fails.
+    """
+    # Primary: Open-Meteo (global, no key needed)
     try:
         wx = await fetch_weather(lat, lon)
         return JSONResponse(content=wx)
+    except Exception:
+        pass
+
+    # Fallback: NWS hourly forecast (US only) — return the current hour
+    try:
+        periods = await fetch_nws_forecast(lat, lon)
+        if not periods:
+            raise ValueError("NWS returned no periods")
+        p = periods[0]
+        from dispersion import determine_stability_class
+        import math
+        from weather import _estimate_solar_elevation
+        solar_el = _estimate_solar_elevation(lat, lon)
+        wx_nws = {
+            "wind_speed_ms":    p["wind_speed_ms"],
+            "wind_speed_mph":   p["wind_speed_mph"],
+            "wind_dir_from_deg": p["wind_dir_from_deg"],
+            "wind_dir_label":   p["wind_dir_label"],
+            "wind_gusts_ms":    p["wind_speed_ms"],
+            "wind_gusts_mph":   p["wind_speed_mph"],
+            "cloud_cover_pct":  p.get("cloud_cover_pct", 50),
+            "temp_f":           p.get("temp_f", 70),
+            "temp_c":           round((p.get("temp_f", 70) - 32) * 5 / 9, 1),
+            "humidity_pct":     50,
+            "is_day":           p.get("is_daytime", True),
+            "weather_code":     0,
+            "weather_desc":     p.get("short_forecast", ""),
+            "solar_elevation_deg": round(solar_el, 1),
+            "stability_class":  p["stability_class"],
+            "stability_desc":   p["stability_desc"],
+            "source":           "NWS Forecast (Open-Meteo unavailable)",
+            "fetched_at_utc":   p["startTime"],
+        }
+        return JSONResponse(content=wx_nws)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Weather fetch failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Weather fetch failed (both Open-Meteo and NWS): {e}")
 
 
 @app.post("/api/plume")
