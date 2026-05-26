@@ -1,62 +1,72 @@
 """
-HIFLD Open Data — DHS Homeland Infrastructure Foundation-Level Data.
+Critical Infrastructure — public ArcGIS REST sources.
 
-Queries ArcGIS REST FeatureServices for US critical infrastructure within
-a bounding box derived from (lat, lon, radius_km). No API key required.
+Queries public ArcGIS FeatureServer / MapServer services for US critical
+infrastructure within a bounding box derived from (lat, lon, radius_km).
+No API key required.
+
+Sources:
+  Hospitals      — ArcGIS Online public (HIFLD Hospitals2)
+  Fire Stations  — USGS National Structures MapServer layer 16
+  EMS Stations   — USGS National Structures MapServer layer 15
+  Public Schools — ArcGIS Online public (HIFLD Public Schools)
+  Urgent Care    — ArcGIS Online public (HIFLD Urgent Care Facilities)
 
 Failed individual layers are silently skipped; partial results are returned.
 
 Reference: https://hifld-geoplatform.opendata.arcgis.com/
+           https://carto.nationalmap.gov/arcgis/rest/services/structures/MapServer
 """
 
 import math
 
 import httpx
 
-_BASE = "https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services"
-
 _LAYERS: list[dict] = [
     {
-        "service":    "Hospitals/FeatureServer/0",
+        "url":        (
+            "https://services1.arcgis.com/0MSEUqKaxRlEPj5g"
+            "/arcgis/rest/services/Hospitals2/FeatureServer/0/query"
+        ),
         "type":       "hospital",
         "name_field": "NAME",
         "extra":      ["BEDS", "TRAUMA", "TYPE"],
     },
     {
-        "service":    "Fire_Stations/FeatureServer/0",
+        "url":        (
+            "https://carto.nationalmap.gov/arcgis/rest/services"
+            "/structures/MapServer/16/query"
+        ),
         "type":       "fire_station",
-        "name_field": "NAME",
+        "name_field": "name",
         "extra":      [],
     },
     {
-        "service":    "EMS_Stations/FeatureServer/0",
+        "url":        (
+            "https://carto.nationalmap.gov/arcgis/rest/services"
+            "/structures/MapServer/15/query"
+        ),
         "type":       "ems",
-        "name_field": "NAME",
+        "name_field": "name",
         "extra":      [],
     },
     {
-        "service":    "Public_Schools/FeatureServer/0",
+        "url":        (
+            "https://services1.arcgis.com/cRvLdSPAsRupRo7I"
+            "/arcgis/rest/services/Public_Schools_/FeatureServer/0/query"
+        ),
         "type":       "school",
         "name_field": "NAME",
         "extra":      ["ENROLLMENT"],
     },
     {
-        "service":    "Power_Plants/FeatureServer/0",
-        "type":       "power_plant",
-        "name_field": "NAME",
-        "extra":      ["PRIMFUEL", "INSTCAP"],
-    },
-    {
-        "service":    "Urgent_Care_Facilities/FeatureServer/0",
+        "url":        (
+            "https://services1.arcgis.com/wQnFk5ouCfPzTlPw"
+            "/arcgis/rest/services/Urgent_Care_Facilities/FeatureServer/0/query"
+        ),
         "type":       "urgent_care",
         "name_field": "NAME",
         "extra":      [],
-    },
-    {
-        "service":    "Nursing_Homes/FeatureServer/0",
-        "type":       "nursing_home",
-        "name_field": "NAME",
-        "extra":      ["BEDS"],
     },
 ]
 
@@ -85,8 +95,13 @@ async def _query_layer(
     radius_km: float,
 ) -> list[dict]:
     w, s, e, n = _bbox(lat, lon, radius_km)
-    url = f"{_BASE}/{layer['service']}/query"
-    out_fields = list({layer["name_field"], "NAME"} | set(layer.get("extra", [])))
+
+    name_field = layer["name_field"]
+    extra      = layer.get("extra", [])
+    # Build deduplicated field list; always include the name field + NAME fallback
+    field_set  = {name_field, "NAME"} | set(extra)
+    out_fields = ",".join(sorted(field_set))
+
     params = {
         "where":             "1=1",
         "geometry":          f"{w:.6f},{s:.6f},{e:.6f},{n:.6f}",
@@ -94,12 +109,13 @@ async def _query_layer(
         "spatialRel":        "esriSpatialRelIntersects",
         "inSR":              "4326",
         "outSR":             "4326",
-        "outFields":         ",".join(out_fields),
+        "outFields":         out_fields,
         "resultRecordCount": "500",
         "returnGeometry":    "true",
         "f":                 "json",
     }
-    resp = await client.get(url, params=params, timeout=15)
+
+    resp = await client.get(layer["url"], params=params, timeout=15)
     resp.raise_for_status()
     data = resp.json()
 
@@ -111,8 +127,14 @@ async def _query_layer(
         feat_lat = geom.get("y")
         if feat_lat is None or feat_lon is None:
             continue
-        name  = str(attrs.get(layer["name_field"]) or attrs.get("NAME") or "Unknown")
-        extra = {k: attrs[k] for k in layer.get("extra", []) if attrs.get(k) is not None}
+
+        # Name: try layer-specific field first, then "NAME" uppercase fallback
+        name = (
+            str(attrs.get(name_field) or attrs.get("NAME") or "Unknown").strip()
+            or "Unknown"
+        )
+
+        extra_data = {k: attrs[k] for k in extra if attrs.get(k) is not None}
         items.append({
             "type":   layer["type"],
             "name":   name,
@@ -120,14 +142,14 @@ async def _query_layer(
             "lon":    round(feat_lon, 6),
             "distKm": round(_haversine_km(lat, lon, feat_lat, feat_lon), 3),
             "source": "HIFLD",
-            **extra,
+            **extra_data,
         })
     return items
 
 
 async def fetch_hifld_infra(lat: float, lon: float, radius_km: float = 5.0) -> list[dict]:
     """
-    Return critical infrastructure from all HIFLD layers within radius_km.
+    Return critical infrastructure from all layers within radius_km.
     Results sorted by distance. Failed layers are skipped silently.
     """
     all_items: list[dict] = []
