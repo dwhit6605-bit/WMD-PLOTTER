@@ -6,6 +6,7 @@
 <title>WHITWERX Model Display (WMD) — CBRN Planning</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -1030,9 +1031,9 @@ const INFRA_TYPES = {
 // ─────────────────────────────────────────────────────────────────────────────
 const map = L.map('map', { center:[39.5,-98.35], zoom:5, zoomControl:true });
 const tileStreet = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-  { maxZoom:19, attribution:'© OpenStreetMap contributors' }).addTo(map);
+  { maxZoom:19, attribution:'© OpenStreetMap contributors', crossOrigin: 'anonymous' }).addTo(map);
 const tileSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-  { maxZoom:19, attribution:'© Esri' });
+  { maxZoom:19, attribution:'© Esri', crossOrigin: 'anonymous' });
 L.control.layers({'Street':tileStreet,'Satellite':tileSat},{},{position:'topleft'}).addTo(map);
 
 map.on('mousemove', e => {
@@ -1650,14 +1651,16 @@ function stopAnimation() { _animStop(); if(_animFrames) _renderAnimFrame(0); }
 // ─────────────────────────────────────────────────────────────────────────────
 // Print / PDF incident report
 // ─────────────────────────────────────────────────────────────────────────────
-function printReport() {
+async function printReport() {
   if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
   const now = new Date();
   const ts = now.toLocaleString('en-US',{dateStyle:'full',timeStyle:'short'});
   const slotLbl = String.fromCharCode(65 + _activeSlot);
   const hdr = document.getElementById('print-header');
-  hdr.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+
+  // Build header text content first
+  const headerMeta = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
       <div>
         <div style="font-size:18px;font-weight:900;letter-spacing:.06em">WHITWERX WMD PLOTTER</div>
         <div style="font-size:11px;margin-top:2px">Incident Brief — ${ts} · Incident ${slotLbl}</div>
@@ -1669,6 +1672,25 @@ function printReport() {
         <div style="color:#c00;font-weight:700;margin-top:4px">PLANNING ESTIMATE ONLY — NOT FOR LIFE-SAFETY DECISIONS</div>
       </div>
     </div>`;
+
+  // Attempt map capture with html2canvas
+  let mapImgHtml = '';
+  try {
+    const mapEl = document.getElementById('map');
+    const canvas = await html2canvas(mapEl, {
+      useCORS: true,
+      allowTaint: false,
+      logging: false,
+      scale: 1,
+    });
+    const dataUrl = canvas.toDataURL('image/png');
+    mapImgHtml = `<img src="${dataUrl}" style="width:100%;max-height:380px;object-fit:cover;border:1px solid #ccc;border-radius:4px;display:block;margin-bottom:8px" alt="Incident Map"/>`;
+  } catch(e) {
+    console.warn('Map capture failed:', e);
+    mapImgHtml = `<div style="width:100%;height:60px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;border:1px solid #ccc;border-radius:4px;font-size:11px;color:#888;margin-bottom:8px">Map capture unavailable</div>`;
+  }
+
+  hdr.innerHTML = headerMeta + mapImgHtml;
   window.print();
 }
 
