@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from chemicals import CHEMICALS, get_chemical, get_thresholds
 from dispersion import compute_all_contours, determine_stability_class
-from weather import fetch_weather
+from weather import fetch_weather, fetch_asos_weather
 from kml_gen import build_combined_kml, build_network_link_kml
 from blast import EXPLOSIVES, compute_blast_zones
 from radiation import RADIONUCLIDES, get_radionuclide, compute_radiation_contours
@@ -217,6 +217,24 @@ async def get_weather(
         return JSONResponse(content=wx_nws)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Weather fetch failed (both Open-Meteo and NWS): {e}")
+
+
+@app.get("/api/weather/asos")
+async def get_asos_weather(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+):
+    """
+    Fetch the latest ASOS/AWOS surface observation from the nearest NWS
+    observation station (US only — uses api.weather.gov, no key required).
+    Returns wind speed/direction, temperature, cloud cover, stability class,
+    station ID/name/distance, observation age, and raw METAR string.
+    """
+    try:
+        data = await fetch_asos_weather(lat, lon)
+        return JSONResponse(content=data)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ASOS fetch failed: {e}")
 
 
 @app.post("/api/plume")

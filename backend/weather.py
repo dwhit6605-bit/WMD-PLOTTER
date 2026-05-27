@@ -124,6 +124,125 @@ def _estimate_solar_elevation(lat: float, lon: float) -> float:
     return math.degrees(math.asin(max(-1.0, min(1.0, sin_el))))
 
 
+async def fetch_asos_weather(lat: float, lon: float) -> dict:
+    """
+    Fetch the latest ASOS/AWOS surface observation from the nearest NWS
+    observation station.  Uses api.weather.gov (US only, no key required).
+
+    Returns a dict compatible with the wx-data schema used by the frontend.
+    Raises ValueError if no station with valid wind data is found.
+    Raises httpx.HTTPError / Exception on network errors.
+    """
+    import math as _math
+
+    def _haversine_km(la1, lo1, la2, lo2):
+        R = 6371.0
+        dlat = _math.radians(la2 - la1)
+        dlon = _math.radians(lo2 - lo1)
+        a = _math.sin(dlat/2)**2 + _math.cos(_math.radians(la1)) * \
+            _math.cos(_math.radians(la2)) * _math.sin(dlon/2)**2
+        return R * 2 * _math.asin(_math.sqrt(max(0, min(1, a))))
+
+    def _metar_cloud_fraction(layers: list) -> float:
+        """METAR cloud layers → 0-1 cover fraction."""
+        cover_map = {"FEW": 0.18, "SCT": 0.44, "BKN": 0.75, "OVC": 1.0}
+        return max((cover_map.get(lyr.get("amount", ""), 0.0) for lyr in layers), default=0.0)
+
+    NWS_HDR = {"User-Agent": "WMD-Plotter/2.4 (emergency-planning; noreply@whitwerx.com)"}
+
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        # Step 1 — grid-point lookup gives us the nearest observation stations URL
+        r = await client.get(f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}", headers=NWS_HDR)
+        r.raise_for_status()
+        stations_url = r.json()["properties"]["observationStations"]
+
+        # Step 2 — list nearby stations (up to 10, sorted by distance by NWS)
+        r2 = await client.get(stations_url + "?limit=10", headers=NWS_HDR)
+        r2.raise_for_status()
+        stations = r2.json().get("features", [])
+
+        # Step 3 — walk stations until one has a valid wind observation
+        for feat in stations[:6]:
+            sp = feat["properties"]
+            sid  = sp.get("stationIdentifier", "")
+            name = sp.get("name", sid)
+            coords = feat.get("geometry", {}).get("coordinates", [None, None])
+            slon, slat = coords[0], coords[1]
+            dist_km = _haversine_km(lat, lon, slat, slon) if (slat and slon) else 0.0
+
+            try:
+                r3 = await client.get(
+                    f"https://api.weather.gov/stations/{sid}/observations/latest",
+                    headers=NWS_HDR,
+                    timeout=8.0,
+                )
+                if r3.status_code != 200:
+                    continue
+                obs = r3.json()["properties"]
+            except Exception:
+                continue
+
+            wspd_raw = obs.get("windSpeed",     {}).get("value")
+            wdir_raw = obs.get("windDirection",  {}).get("value")
+            if wspd_raw is None:          # no valid wind obs → try next
+                continue
+
+            wspd_ms  = round(float(wspd_raw), 2)
+            wspd_mph = round(wspd_ms * 2.237, 1)
+            wdir     = round(float(wdir_raw), 0) if wdir_raw is not None else 0.0
+            wdir_lbl = _deg_to_cardinal(wdir) if wdir_raw is not None else "VAR"
+
+            gust_raw  = obs.get("windGust", {}).get("value")
+            gust_ms   = round(float(gust_raw), 1)  if gust_raw else None
+            gust_mph  = round(float(gust_raw) * 2.237, 1) if gust_raw else None
+
+            temp_raw  = obs.get("temperature",  {}).get("value")   # °C
+            temp_c    = round(float(temp_raw), 1)  if temp_raw is not None else None
+            temp_f    = round(temp_c * 9/5 + 32, 1) if temp_c is not None else None
+
+            cloud_layers   = obs.get("cloudLayers", [])
+            cloud_fraction = _metar_cloud_fraction(cloud_layers)
+            cloud_pct      = round(cloud_fraction * 100)
+
+            raw_metar  = obs.get("rawMessage", "")
+            obs_time   = obs.get("timestamp",  "")
+
+            from dispersion import determine_stability_class
+            solar_el   = _estimate_solar_elevation(lat, lon)
+            is_day     = solar_el > 0
+            stability  = determine_stability_class(wspd_ms, is_day, cloud_fraction, solar_el)
+
+            return {
+                "station_id":        sid,
+                "station_name":      name,
+                "distance_km":       round(dist_km, 1),
+                "obs_time_utc":      obs_time,
+                "wind_speed_ms":     wspd_ms,
+                "wind_speed_mph":    wspd_mph,
+                "wind_gust_ms":      gust_ms,
+                "wind_gust_mph":     gust_mph,
+                "wind_dir_from_deg": wdir,
+                "wind_dir_label":    wdir_lbl,
+                "temp_f":            temp_f,
+                "temp_c":            temp_c,
+                "cloud_cover_pct":   cloud_pct,
+                "raw_metar":         raw_metar,
+                "stability_class":   stability,
+                "stability_desc":    _stability_description(stability),
+                "source":            f"ASOS/AWOS — {sid}",
+                # NWS compat fields expected by frontend wxData schema
+                "wind_gusts_ms":     gust_ms,
+                "wind_gusts_mph":    gust_mph,
+                "is_day":            is_day,
+                "solar_elevation_deg": round(solar_el, 1),
+                "weather_code":      0,
+                "weather_desc":      f"ASOS obs — {sid}",
+                "humidity_pct":      None,
+            }
+
+    raise ValueError("No nearby ASOS station returned valid wind data")
+
+
 def _deg_to_cardinal(deg: float) -> str:
     """Convert degrees (from) to 16-point cardinal direction string."""
     dirs = [

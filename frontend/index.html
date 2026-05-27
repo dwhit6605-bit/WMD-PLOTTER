@@ -399,6 +399,16 @@ input:checked+.slider:before{transform:translateX(16px)}
           <div style="margin-top:8px;font-size:11px;color:var(--muted)" id="wx-stability-label"></div>
           <div class="stability-bar" id="stability-bar"></div>
         </div>
+        <!-- ASOS/AWOS live observation card -->
+        <div id="asos-section" style="display:none;margin-top:10px">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-bottom:5px;display:flex;align-items:center;gap:6px">
+            📡 ASOS/AWOS Observation
+            <span id="asos-age" style="font-size:10px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none"></span>
+          </div>
+          <div id="asos-card" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px"></div>
+          <button class="btn btn-ghost btn-full" id="btn-use-asos" onclick="useAsosData()" style="display:none;margin-top:6px;font-size:11px">📡 Use ASOS Data for Modeling</button>
+        </div>
+
         <div class="toggle-row" style="margin-top:10px">
           <span class="toggle-label">Manual weather override</span>
           <label class="toggle"><input type="checkbox" id="chk-manual-wx" onchange="toggleManualWx()"/><span class="slider"></span></label>
@@ -901,7 +911,7 @@ let lastDenseGasData = null, lastFireSmokeData = null;
 let denseGasLayers = [], firesmokeLayersList = [];
 let _lastPopResult = null;
 let denseGasChems = [], fireTypesList = [];
-let wxData = null, selectedChem = null;
+let wxData = null, asosData = null, selectedChem = null;
 let lastPlumeData = null, lastBlastData = null, lastRadData = null, lastBleveData = null, lastERGData = null;
 let ergLatLon = null;
 const ergLayers = [];
@@ -1769,13 +1779,97 @@ async function fetchWeather() {
     if (!r.ok) throw new Error(await r.text());
     wxData = await r.json();
     renderWeather();
-    _updateWeatherStepBody();   // update the Step 2 summary card
+    _updateWeatherStepBody();
     toast(`Weather loaded — ${wxData.wind_dir_label} ${wxData.wind_speed_mph} mph, PG-${wxData.stability_class}`, 3000);
   } catch(e) {
     if (statusEl) statusEl.textContent = '⚠ failed';
     toast(`Weather error: ${e.message}`, 4000);
+  } finally {
+    btn.innerHTML = '⟳ Refresh Weather'; btn.disabled = false;
   }
-  finally { btn.innerHTML='⟳ Refresh Weather'; btn.disabled=false; }
+  // Fire ASOS fetch in parallel — updates card asynchronously, no spinner
+  fetchAsosWeather();
+}
+
+async function fetchAsosWeather() {
+  if (!incidentLatLon) return;
+  const section = document.getElementById('asos-section');
+  const card    = document.getElementById('asos-card');
+  const ageEl   = document.getElementById('asos-age');
+  section.style.display = 'block';
+  card.innerHTML = '<div style="color:var(--muted);font-size:11px"><span class="spin">⟳</span> fetching nearest station…</div>';
+  try {
+    const r = await fetch(`${API}/api/weather/asos?lat=${incidentLatLon.lat}&lon=${incidentLatLon.lon}`);
+    if (!r.ok) throw new Error(await r.text());
+    asosData = await r.json();
+    renderAsosCard();
+  } catch(e) {
+    card.innerHTML = `<div style="color:var(--muted);font-size:11px">ASOS unavailable — ${e.message.slice(0,80)}</div>`;
+    if (ageEl) ageEl.textContent = '';
+  }
+}
+
+function renderAsosCard() {
+  if (!asosData) return;
+  const d       = asosData;
+  const section = document.getElementById('asos-section');
+  const card    = document.getElementById('asos-card');
+  const ageEl   = document.getElementById('asos-age');
+  const useBtn  = document.getElementById('btn-use-asos');
+  section.style.display = 'block';
+
+  const obsMs  = d.obs_time_utc ? new Date(d.obs_time_utc).getTime() : 0;
+  const ageMin = obsMs ? Math.round((Date.now() - obsMs) / 60000) : null;
+  const ageStr = ageMin === null ? '' : ageMin < 60 ? `${ageMin} min ago` : `${Math.round(ageMin/60)}h ago`;
+  if (ageEl) ageEl.textContent = ageStr ? `— ${ageStr}` : '';
+
+  const gustStr = d.wind_gust_mph ? ` G${fmtMph(d.wind_gust_mph)}` : '';
+  const distStr = useImperial ? `${(d.distance_km * 0.621371).toFixed(1)} mi` : `${d.distance_km} km`;
+
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+      <div>
+        <div style="font-weight:700;font-size:13px;color:var(--accent2)">${d.station_id}</div>
+        <div style="color:var(--muted);font-size:10px;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.station_name}</div>
+      </div>
+      <div style="text-align:right;font-size:10px;color:var(--muted)">
+        <div>${distStr} away</div>
+        <div>${ageStr}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;font-size:11px;margin-bottom:6px">
+      <div><span style="color:var(--muted)">Wind </span><b>${d.wind_dir_label} ${fmtMph(d.wind_speed_mph)}${gustStr}</b></div>
+      <div><span style="color:var(--muted)">Temp </span><b>${d.temp_f !== null ? fmtTempF(d.temp_f) : '—'}</b></div>
+      <div><span style="color:var(--muted)">Cloud </span><b>${d.cloud_cover_pct}%</b></div>
+      <div><span style="color:var(--muted)">PG </span><b>${d.stability_class}</b></div>
+    </div>
+    ${d.raw_metar ? `<div style="font-size:9px;color:var(--muted);font-family:monospace;word-break:break-all;line-height:1.4;border-top:1px solid var(--border);padding-top:4px;margin-top:2px">${d.raw_metar}</div>` : ''}`;
+
+  if (useBtn) useBtn.style.display = 'block';
+}
+
+function useAsosData() {
+  if (!asosData) return;
+  wxData = {
+    wind_speed_ms:     asosData.wind_speed_ms,
+    wind_speed_mph:    asosData.wind_speed_mph,
+    wind_dir_from_deg: asosData.wind_dir_from_deg,
+    wind_dir_label:    asosData.wind_dir_label,
+    wind_gusts_ms:     asosData.wind_gust_ms,
+    wind_gusts_mph:    asosData.wind_gust_mph,
+    cloud_cover_pct:   asosData.cloud_cover_pct,
+    temp_f:            asosData.temp_f,
+    temp_c:            asosData.temp_c,
+    is_day:            asosData.is_day,
+    weather_code:      0,
+    weather_desc:      `ASOS — ${asosData.station_id}`,
+    stability_class:   asosData.stability_class,
+    stability_desc:    asosData.stability_desc,
+    source:            asosData.source,
+  };
+  renderWeather();
+  _updateWeatherStepBody();
+  toast(`Using ASOS ${asosData.station_id} — ${asosData.wind_dir_label} ${fmtMph(asosData.wind_speed_mph)}, PG-${asosData.stability_class}`, 3000);
 }
 
 function renderWeather() {
