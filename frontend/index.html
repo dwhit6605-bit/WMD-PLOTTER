@@ -333,7 +333,7 @@ input:checked+.slider:before{transform:translateX(16px)}
     <div class="hdr-badge">⚠ FOR AUTHORIZED USE ONLY</div>
     <div style="flex:1"></div>
     <div id="version-badge" class="version-badge" title="WHITWERX Model Display">v—</div>
-    <button id="btn-units" onclick="toggleUnits()" title="Toggle distance units (imperial / metric)" style="font-size:10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:4px;padding:2px 8px;letter-spacing:.06em;cursor:pointer;transition:color .2s,border-color .2s;color:var(--muted);font-weight:700">MI</button>
+    <button id="btn-units" onclick="toggleUnits()" title="Toggle units: US Customary ↔ Metric SI" style="font-size:11px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:4px;padding:3px 10px;letter-spacing:.06em;cursor:pointer;transition:color .2s,border-color .2s;color:var(--muted);font-weight:700;display:flex;align-items:center;gap:4px">📐 <span id="btn-units-lbl">US</span></button>
     <div id="hdr-status" style="font-size:12px;color:var(--muted)">Ready</div>
   </div>
 
@@ -1447,12 +1447,16 @@ function fmtPpm(v) {
   return Math.round(v)+' ppm';
 }
 
-function fmtKm(km, d=2)  { return useImperial ? `${(km*0.621371).toFixed(d)} mi`  : `${km.toFixed(d)} km`; }
-function fmtM(m)         { return useImperial ? `${Math.round(m*3.28084)} ft`      : `${Math.round(m)} m`; }
-function fmtMs(ms)       { return useImperial ? `${(ms*2.23694).toFixed(1)} mph`   : `${(ms*3.6).toFixed(1)} km/h`; }
-function fmtMph(mph)     { return useImperial ? `${mph} mph`                       : `${(mph*1.60934).toFixed(1)} km/h`; }
-function fmtTempF(f)     { return useImperial ? `${Math.round(f)}°F`               : `${Math.round((f-32)*5/9)}°C`; }
-function fmtDist(km)     { if(useImperial){const mi=km*0.621371;return mi<0.5?`${Math.round(mi*5280)} ft`:`${mi.toFixed(2)} mi`;}return km<1?`${Math.round(km*1000)} m`:`${km.toFixed(2)} km`; }
+function fmtKm(km, d=2)       { return useImperial ? `${(km*0.621371).toFixed(d)} mi`      : `${km.toFixed(d)} km`; }
+function fmtM(m)               { return useImperial ? `${Math.round(m*3.28084)} ft`          : `${Math.round(m)} m`; }
+function fmtMs(ms)             { return useImperial ? `${(ms*2.23694).toFixed(1)} mph`        : `${(ms*3.6).toFixed(1)} km/h`; }
+function fmtMph(mph)           { return useImperial ? `${mph} mph`                            : `${(mph*1.60934).toFixed(1)} km/h`; }
+function fmtTempF(f)           { return useImperial ? `${Math.round(f)}°F`                    : `${Math.round((f-32)*5/9)}°C`; }
+function fmtDist(km)           { if(useImperial){const mi=km*0.621371;return mi<0.5?`${Math.round(mi*5280)} ft`:`${mi.toFixed(2)} mi`;}return km<1?`${Math.round(km*1000)} m`:`${km.toFixed(2)} km`; }
+function fmtKg(kg)             { return useImperial ? `${(kg*2.20462).toFixed(1)} lb`         : `${kg.toFixed(1)} kg`; }
+function fmtPressure(psi, kPa) { return useImperial ? `${psi} psi`                            : `${kPa} kPa`; }
+function fmtDoseRate(msvhr)    { return useImperial ? `${(msvhr*100).toFixed(1)} mrem/hr`     : `${msvhr} mSv/hr`; }
+function fmtDose(msv)          { return useImperial ? `${(msv*100).toFixed(1)} mrem`          : `${msv} mSv`; }
 
 function applyPreset() {
   const sel = document.getElementById('sel-preset');
@@ -1837,7 +1841,7 @@ function renderBlastOnMap(data) {
   for (const feat of zones) {
     const p = feat.properties;
     const layer = L.geoJSON(feat,{style:{color:p.color,weight:2,fillColor:p.color,fillOpacity:.20,opacity:.85,dashArray:'4 3'}}).addTo(map);
-    layer.bindPopup(`<b>${p.label}</b><br/>${p.psi} psi / ${p.kPa} kPa<br/>Radius: ${fmtKm(p.radius_km, 3)}<br/><em>${p.desc}</em>`);
+    layer.bindPopup(`<b>${p.label}</b><br/>${fmtPressure(p.psi, p.kPa)}<br/>Radius: ${fmtKm(p.radius_km, 3)}<br/><em>${p.desc}</em>`);
     blastLayers.push(layer);
   }
   if (blastLayers.length>0) {
@@ -1852,7 +1856,7 @@ function renderBlastResults(data) {
     `<div class="result-row"><span class="result-label"><span class="threshold-dot" style="background:${s.color};border:1px solid #fff4"></span>${s.full_label}</span>
     <span><span class="result-val">${fmtKm(s.radius_km, 3)}</span></span></div>`).join('');
   const expName = explosives.find(e=>e.id===data.explosive_id)?.name||data.explosive_id;
-  document.getElementById('blast-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${expName} · ${data.weight_kg.toFixed(1)} kg → ${data.W_tnt_kg} kg TNT equiv<br/>Model: Brode (1955) / Hopkinson-Cranz</div>`;
+  document.getElementById('blast-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${expName} · ${fmtKg(data.weight_kg)} → ${fmtKg(data.W_tnt_kg)} TNT equiv<br/>Model: Brode (1955) / Hopkinson-Cranz</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1979,7 +1983,7 @@ function renderRadiationOnMap(data) {
   for (const feat of sorted) {
     const p = feat.properties;
     const layer = L.geoJSON(feat,{style:{color:p.color,weight:2,fillColor:p.color,fillOpacity:.18,opacity:.85,dashArray:'6 3'}}).addTo(map);
-    layer.bindPopup(`<b>${p.label}</b><br/>Dose: ${p.dose_msvhr} mSv/hr<br/>Downwind: ${fmtKm(p.max_downwind_km)}<br/><em>${p.desc}</em>`);
+    layer.bindPopup(`<b>${p.label}</b><br/>Dose: ${fmtDoseRate(p.dose_msvhr)}<br/>Downwind: ${fmtKm(p.max_downwind_km)}<br/><em>${p.desc}</em>`);
     radLayers.push(layer);
   }
   if (radLayers.length>0) {
@@ -2134,7 +2138,7 @@ function renderBleveResults(data) {
     <span><span class="result-val">${fmtKm(s.radius_km, 3)}</span></span></div>`;
   }).filter(Boolean).join('');
   const fb = data.fireball;
-  document.getElementById('bleve-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${data.fuel_name} · ${data.mass_kg.toFixed(0)} kg<br/>Fireball: r=${fmtM(fb.radius_m)} · t=${fb.duration_s.toFixed(1)} s · SEP=${fb.sep_kwm2} kW/m²<br/>Model: Roberts (1982)</div>`;
+  document.getElementById('bleve-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${data.fuel_name} · ${fmtKg(data.mass_kg)}<br/>Fireball: r=${fmtM(fb.radius_m)} · t=${fb.duration_s.toFixed(1)} s · SEP=${fb.sep_kwm2} kW/m²<br/>Model: Roberts (1982)</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3158,11 +3162,14 @@ function renderProbitResults(data) {
 
 function _updateUnitBtn() {
   const btn = document.getElementById('btn-units');
+  const lbl = document.getElementById('btn-units-lbl');
   if (!btn) return;
-  btn.textContent      = useImperial ? 'MI' : 'KM';
-  btn.style.color      = useImperial ? 'var(--accent)' : 'var(--muted)';
-  btn.style.borderColor= useImperial ? 'var(--accent)' : 'var(--border)';
+  if (lbl) lbl.textContent  = useImperial ? 'US' : 'SI';
+  btn.title                 = useImperial ? 'Units: US Customary — click for Metric SI' : 'Units: Metric SI — click for US Customary';
+  btn.style.color           = useImperial ? 'var(--accent)' : 'var(--muted)';
+  btn.style.borderColor     = useImperial ? 'var(--accent)' : 'var(--border)';
 }
+_updateUnitBtn();
 
 function toggleUnits() {
   useImperial = !useImperial;
