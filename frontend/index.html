@@ -3189,12 +3189,94 @@ function disableExport(tool) { _activeOverlays[tool]=false; _refreshExportUI(); 
 async function downloadKML() {
   const r = await fetch(`${API}/kml/download`);
   if (!r.ok) { toast('No overlays to export yet', 2000); return; }
-  const blob = await r.blob();
+  let kmlText = await r.text();
+
+  // Merge annotations from all slots into a KML Folder and inject before </Document>
+  const allAnnot = _annotLayers.flat().filter(Boolean);
+  if (allAnnot.length > 0) {
+    const annotPlacemarks = allAnnot.map(_annotLayerToKML).filter(Boolean).join('\n');
+    const folder = `<Folder><name>Annotations</name>\n${annotPlacemarks}\n</Folder>`;
+    kmlText = kmlText.replace('</Document>', folder + '\n</Document>');
+  }
+
+  const blob = new Blob([kmlText], { type: 'application/vnd.google-earth.kml+xml' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `wmd_export_${Date.now()}.kml`;
   a.click();
+  URL.revokeObjectURL(a.href);
   toast('KML downloaded', 1500);
+}
+
+// ── Annotation → KML helpers ────────────────────────────────────────────────
+
+function _hexToKMLColor(hex, alpha = 1.0) {
+  // KML colour order: AABBGGRR
+  const h = hex.replace('#', '').padEnd(6, '0');
+  const r = h.slice(0, 2), g = h.slice(2, 4), b = h.slice(4, 6);
+  const a = Math.round(alpha * 255).toString(16).padStart(2, '0');
+  return `${a}${b}${g}${r}`;
+}
+
+function _escapeXML(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function _annotLayerToKML(layer) {
+  const color   = layer.options?.color || '#FF4444';
+  const lineClr = _hexToKMLColor(color, 1.0);
+  const fillClr = _hexToKMLColor(color, 0.25);
+  const styleEl = `<Style>
+    <LineStyle><color>${lineClr}</color><width>2</width></LineStyle>
+    <PolyStyle><color>${fillClr}</color></PolyStyle>
+  </Style>`;
+
+  // Circle — approximate as 64-vertex polygon
+  if (layer instanceof L.Circle) {
+    const c  = layer.getLatLng();
+    const rm = layer.getRadius();      // metres
+    const pts = [];
+    for (let i = 0; i <= 64; i++) {
+      const θ    = (i / 64) * 2 * Math.PI;
+      const dlat = (rm / 111320) * Math.cos(θ);
+      const dlon = (rm / (111320 * Math.cos(c.lat * Math.PI / 180))) * Math.sin(θ);
+      pts.push(`${(c.lng + dlon).toFixed(6)},${(c.lat + dlat).toFixed(6)},0`);
+    }
+    return `<Placemark><name>Circle</name>${styleEl}
+      <Polygon><outerBoundaryIs><LinearRing>
+        <coordinates>${pts.join(' ')}</coordinates>
+      </LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+  }
+
+  // Polygon (must be before Polyline — Polygon extends Polyline)
+  if (layer instanceof L.Polygon) {
+    const ring = layer.getLatLngs()[0];
+    const pts  = ring.map(ll => `${ll.lng.toFixed(6)},${ll.lat.toFixed(6)},0`);
+    pts.push(pts[0]); // close ring
+    return `<Placemark><name>Polygon</name>${styleEl}
+      <Polygon><outerBoundaryIs><LinearRing>
+        <coordinates>${pts.join(' ')}</coordinates>
+      </LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+  }
+
+  // Polyline / Line
+  if (layer instanceof L.Polyline) {
+    const lls = layer.getLatLngs();
+    const pts  = lls.map(ll => `${ll.lng.toFixed(6)},${ll.lat.toFixed(6)},0`).join(' ');
+    return `<Placemark><name>Line</name>${styleEl}
+      <LineString><coordinates>${pts}</coordinates></LineString></Placemark>`;
+  }
+
+  // Marker / Text label
+  if (layer instanceof L.Marker) {
+    const ll  = layer.getLatLng();
+    const txt = (layer.pm?.getText && layer.pm.getText()) || 'Label';
+    return `<Placemark><name>${_escapeXML(txt)}</name>
+      <Point><coordinates>${ll.lng.toFixed(6)},${ll.lat.toFixed(6)},0</coordinates></Point>
+    </Placemark>`;
+  }
+
+  return '';
 }
 
 async function downloadTAKDP() {
