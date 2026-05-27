@@ -48,9 +48,10 @@ from firms import fetch_firms_hotspots
 from nws_forecast import fetch_nws_forecast
 from hifld import fetch_hifld_infra
 from nifc import fetch_nifc_perimeters
+from aegl_db import get_aegl
 
-APP_VERSION = "2.2.0"
-BUILD_DATE  = "2026-05-25"   # v2.2.0: NASA FIRMS, NWS forecast, HIFLD, NIFC feeds
+APP_VERSION = "2.3.0"
+BUILD_DATE  = "2026-05-27"   # v2.3.0: AEGL table, plume animation, print report, multi-incident
 
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="WMD Plotter API", version=APP_VERSION)
@@ -369,6 +370,88 @@ async def compute_plume(req: PlumeRequest, request: Request):
             "live_kml": f"{base_url}/kml/live.kml",
             "download": f"{base_url}/kml/download",
         },
+    })
+
+
+@app.get("/api/aegl/{chem_id}")
+async def get_aegl_data(chem_id: str):
+    """Return multi-time-point AEGL values (10min, 60min, 8hr) for a chemical."""
+    data = get_aegl(chem_id)
+    if not data:
+        raise HTTPException(status_code=404, detail=f"No AEGL data for '{chem_id}'")
+    return JSONResponse(content={"chem_id": chem_id, "aegl": data})
+
+
+@app.post("/api/plume/animate")
+async def animate_plume(req: PlumeRequest):
+    """
+    Compute plume animation frames at t=0,5,10,15,20,30,45,60,90,120 minutes.
+    Each frame clips the steady-state plume to the distance travelled by the
+    plume front at that elapsed time (wind_speed × t).
+    Returns an array of GeoJSON FeatureCollections, one per time step.
+    """
+    chem = get_chemical(req.chemical_id)
+    if not chem:
+        raise HTTPException(status_code=404, detail=f"Chemical '{req.chemical_id}' not found.")
+
+    if req.manual_weather and req.wind_speed_ms is not None and req.wind_dir_from_deg is not None:
+        wind_ms   = req.wind_speed_ms
+        wind_from = req.wind_dir_from_deg
+        stability = (req.stability_class or "D").upper()
+    else:
+        try:
+            wx = await fetch_weather(req.lat, req.lon)
+        except Exception:
+            wx = {"wind_speed_ms": 3.0, "wind_dir_from_deg": 270.0, "stability_class": "D"}
+        wind_ms   = req.wind_speed_ms   or wx["wind_speed_ms"]
+        wind_from = req.wind_dir_from_deg or wx["wind_dir_from_deg"]
+        stability = (req.stability_class or wx["stability_class"]).upper()
+
+    thresholds = get_thresholds(chem, use_aegl=req.use_aegl)
+    if not thresholds:
+        raise HTTPException(status_code=422, detail="No hazard thresholds for this chemical.")
+
+    Q_gs = req.release_rate_kg_min * 1000 / 60.0
+
+    time_steps = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120]
+    frames = []
+
+    for t_min in time_steps:
+        x_front = max(wind_ms * t_min * 60, 50.0)   # metres; min 50m so source area shown
+        contours = compute_all_contours(
+            Q_gs=Q_gs, u_ms=wind_ms, stability=stability, mw=chem["mw"],
+            thresholds=thresholds, source_lat=req.lat, source_lon=req.lon,
+            wind_from_deg=wind_from, H_m=req.release_height_m,
+            x_max_clip=x_front,
+        )
+        features = []
+        for level, info in contours.items():
+            latlon = info.get("latlon", [])
+            if latlon:
+                coords = [[ln, lt] for lt, ln in latlon]
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "Polygon", "coordinates": [coords]},
+                    "properties": {
+                        "level": level, "label": info["label"],
+                        "color": info["color"],
+                        "threshold_ppm": info["threshold_ppm"],
+                        "max_downwind_km": round(info["max_downwind_m"] / 1000, 3),
+                    },
+                })
+        frames.append({
+            "time_min": t_min,
+            "x_front_m": round(x_front, 0),
+            "features": features,
+        })
+
+    return JSONResponse(content={
+        "frames": frames,
+        "wind_speed_ms": wind_ms,
+        "wind_from_deg": wind_from,
+        "stability": stability,
+        "chemical": chem["name"],
+        "total_time_steps": len(time_steps),
     })
 
 

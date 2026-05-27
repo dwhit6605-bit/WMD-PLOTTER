@@ -90,6 +90,39 @@ input:checked+.slider:before{transform:translateX(16px)}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 
+/* ── AEGL multi-time table ── */
+.aegl-tbl{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px}
+.aegl-tbl th{font-size:10px;color:var(--muted);padding:2px 4px;text-align:center;font-weight:600;border-bottom:1px solid var(--border)}
+.aegl-tbl td{padding:3px 4px;text-align:center;border-bottom:1px solid var(--border);font-family:monospace}
+.aegl-tbl tr:last-child td{border-bottom:none}
+.aegl-1{color:#FFD700}.aegl-2{color:#FF8C00}.aegl-3{color:var(--red)}
+
+/* ── Incident slots ── */
+.slot-tabs{display:flex;gap:4px;margin-bottom:8px}
+.slot-tab{flex:1;padding:3px 5px;font-size:11px;font-weight:700;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--muted);cursor:pointer;transition:all .15s}
+.slot-tab.active-slot{color:#0d1117;border-color:transparent}
+
+/* ── Plume animation ── */
+.anim-ctrl{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:8px}
+.anim-time{font-size:13px;font-weight:700;font-family:monospace;color:var(--accent2)}
+
+/* ── Print report ── */
+@media print{
+  #map-container,#map-overlay,#legend,#toast,#mobile-fab,#mobile-overlay,
+  .btn,#hdr-status,#geo-status,.slot-tabs,.coord-hint,
+  #section-toolpicker,#section-add-overlay,#panel-weather,.tool-panel,
+  #section-location .row2,#btn-use-location,#anim-section{display:none!important}
+  #app,#body,#sidebar,html,body{height:auto!important;overflow:visible!important;display:block!important}
+  #print-header{display:block!important}
+  #sidebar{width:100%!important;border:none!important}
+  .section{border-bottom:1px solid #ccc!important;padding:8px 0!important}
+  .section-hdr{color:#333!important;font-size:9px!important;letter-spacing:.1em!important;margin-bottom:4px!important}
+  body{background:#fff!important;color:#000!important}
+  .result-val,.wx-value,.chem-name{color:#000!important}
+  .result-row,.threshold-row{color:#333!important}
+}
+#print-header{display:none;font-size:10px;font-weight:400;padding:0 14px 12px;border-bottom:2px solid var(--border);margin-bottom:4px}
+
 /* ── Tool Picker ── */
 .step-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--accent2);color:#0d1117;font-size:11px;font-weight:800;flex-shrink:0}
 .step-badge.done{background:var(--green)}
@@ -302,12 +335,18 @@ input:checked+.slider:before{transform:translateX(16px)}
 
   <div id="body">
     <div id="sidebar">
+      <div id="print-header"></div>
 
       <!-- STEP 1 -->
       <div class="section" id="section-location">
         <div class="section-hdr">
           <span class="step-badge" id="step1-badge">1</span>
           Incident Location
+        </div>
+        <div class="slot-tabs" id="slot-tabs">
+          <button class="slot-tab active-slot" id="slot-tab-0" style="background:#f85149;color:#0d1117" onclick="switchSlot(0)">◉ A</button>
+          <button class="slot-tab" id="slot-tab-1" onclick="switchSlot(1)">+ B</button>
+          <button class="slot-tab" id="slot-tab-2" onclick="switchSlot(2)" style="display:none">+ C</button>
         </div>
         <div class="coord-display" id="coord-display">— click map to place —</div>
         <div class="coord-hint">Click map to place · drag marker to move</div>
@@ -412,6 +451,27 @@ input:checked+.slider:before{transform:translateX(16px)}
       <div class="section" id="results-section" style="display:none">
         <div class="section-hdr">📊 Plume Results</div>
         <div id="results-content"></div>
+        <button class="btn btn-ghost btn-full" style="margin-top:6px;font-size:11px" onclick="startPlumeAnimation()">🎬 Animate Plume Over Time</button>
+      </div>
+
+      <!-- PLUME ANIMATION -->
+      <div class="section" id="anim-section" style="display:none">
+        <div class="section-hdr">🎬 Plume Animation</div>
+        <div id="anim-status" style="font-size:11px;color:var(--muted)"></div>
+        <div class="anim-ctrl" id="anim-ctrl" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <span class="anim-time" id="anim-time-label">T+0</span>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-ghost" style="padding:3px 10px;font-size:12px" id="btn-anim-play" onclick="toggleAnimation()">▶ Play</button>
+              <button class="btn btn-ghost" style="padding:3px 10px;font-size:12px" onclick="stopAnimation()">■ Reset</button>
+            </div>
+          </div>
+          <input type="range" id="anim-slider" min="0" max="9" value="0" step="1" style="width:100%;accent-color:var(--accent2);cursor:pointer"
+                 oninput="seekAnimation(parseInt(this.value))"/>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:2px">
+            <span>T+0</span><span>T+30m</span><span>T+1hr</span><span>T+2hr</span>
+          </div>
+        </div>
       </div>
 
       <!-- RADIATION -->
@@ -685,6 +745,7 @@ input:checked+.slider:before{transform:translateX(16px)}
           <button class="btn btn-ghost" id="btn-kml-net" onclick="copyNetworkLink()" disabled>🔗 Network Link</button>
           <button class="btn btn-ghost" id="btn-tak-dp" onclick="downloadTAKDP()" disabled style="grid-column:1/-1;background:rgba(0,120,200,0.12);border-color:rgba(0,120,200,0.4);color:#5bb8ff">📦 TAK Data Package (.zip)</button>
           <button class="btn btn-ghost" id="btn-cot-xml" onclick="downloadCoT()" disabled style="grid-column:1/-1;background:rgba(0,160,120,0.10);border-color:rgba(0,160,120,0.35);color:#4dd9b0;font-size:11px">📡 CoT XML — ATAK / FreeTAKServer / WinTAK</button>
+          <button class="btn btn-ghost" onclick="printReport()" style="grid-column:1/-1;font-size:11px;margin-top:2px">🖨 Print / Save PDF Incident Report</button>
         </div>
         <div id="export-url" style="display:none;margin-top:8px">
           <input type="text" id="inp-export-url" readonly onclick="this.select()" style="font-size:11px;cursor:pointer"/>
@@ -819,6 +880,116 @@ const _activeOverlays = { plume: false, blast: false, radiation: false, bleve: f
 const activePanels = new Set();
 let timeline = JSON.parse(localStorage.getItem('wmd_timeline') || '[]');
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-incident slot management (A / B / C)
+// ─────────────────────────────────────────────────────────────────────────────
+const _SLOT_COLORS = ['#f85149','#79c0ff','#3fb950'];
+const _SLOT_GLOWS  = ['rgba(248,81,73,.8)','rgba(121,192,255,.8)','rgba(63,185,80,.8)'];
+const _slots = [null, null, null];
+let _activeSlot = 0;
+
+function _makeIncidentIcon(idx) {
+  const lbl = String.fromCharCode(65 + idx);
+  return L.divIcon({
+    className:'',
+    html:`<div style="position:relative;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:22px;filter:drop-shadow(0 0 4px ${_SLOT_GLOWS[idx]})">☢<span style="position:absolute;top:-3px;right:-4px;width:14px;height:14px;border-radius:50%;background:${_SLOT_COLORS[idx]};color:#0d1117;font-size:8px;font-weight:900;display:flex;align-items:center;justify-content:center">${lbl}</span></div>`,
+    iconSize:[32,32], iconAnchor:[16,16]
+  });
+}
+
+function _captureSlot() {
+  return {
+    latLon: incidentLatLon ? {...incidentLatLon} : null,
+    marker: incidentMarker,
+    plumeLayers:[...plumeLayers], blastLayers:[...blastLayers],
+    radLayers:[...radLayers],     bleveLayers:[...bleveLayers],
+    denseGasLayers:[...denseGasLayers], firesmokeLayersList:[...firesmokeLayersList],
+    plumeData:lastPlumeData, blastData:lastBlastData,
+    radData:lastRadData,     bleveData:lastBleveData,
+    denseGasData:lastDenseGasData, fireSmokeData:lastFireSmokeData, ergData:lastERGData,
+    wxData, selectedChem,
+    blastLatLon, blastMarker, radLatLon, radMarker, bleveLatLon, bleveMarker, ergLatLon,
+  };
+}
+
+function _restoreSlot(idx) {
+  const s = _slots[idx];
+  if (!s) {
+    incidentLatLon=null; incidentMarker=null;
+    plumeLayers=[]; blastLayers=[]; radLayers=[]; bleveLayers=[];
+    denseGasLayers=[]; firesmokeLayersList=[];
+    lastPlumeData=lastBlastData=lastRadData=lastBleveData=null;
+    lastDenseGasData=lastFireSmokeData=lastERGData=null;
+    wxData=null; selectedChem=null;
+    blastLatLon=null; blastMarker=null; radLatLon=null; radMarker=null;
+    bleveLatLon=null; bleveMarker=null; ergLatLon=null;
+    return;
+  }
+  incidentLatLon=s.latLon; incidentMarker=s.marker;
+  plumeLayers=s.plumeLayers; blastLayers=s.blastLayers;
+  radLayers=s.radLayers;    bleveLayers=s.bleveLayers;
+  denseGasLayers=s.denseGasLayers; firesmokeLayersList=s.firesmokeLayersList;
+  lastPlumeData=s.plumeData; lastBlastData=s.blastData;
+  lastRadData=s.radData;     lastBleveData=s.bleveData;
+  lastDenseGasData=s.denseGasData; lastFireSmokeData=s.fireSmokeData; lastERGData=s.ergData;
+  wxData=s.wxData; selectedChem=s.selectedChem;
+  blastLatLon=s.blastLatLon; blastMarker=s.blastMarker;
+  radLatLon=s.radLatLon;   radMarker=s.radMarker;
+  bleveLatLon=s.bleveLatLon; bleveMarker=s.bleveMarker;
+  ergLatLon=s.ergLatLon;
+}
+
+function _updateSlotTabs() {
+  for (let i = 0; i < 3; i++) {
+    const btn = document.getElementById(`slot-tab-${i}`);
+    if (!btn) continue;
+    const isActive = i === _activeSlot;
+    const populated = isActive ? !!incidentLatLon : !!_slots[i]?.latLon;
+    btn.classList.toggle('active-slot', isActive);
+    btn.style.background = isActive ? _SLOT_COLORS[i] : '';
+    btn.style.color       = isActive ? '#0d1117' : '';
+    btn.textContent = isActive  ? `◉ ${String.fromCharCode(65+i)}`
+                    : populated ? `● ${String.fromCharCode(65+i)}`
+                                : `+ ${String.fromCharCode(65+i)}`;
+  }
+  const cBtn = document.getElementById('slot-tab-2');
+  if (cBtn) cBtn.style.display = (_slots[1]?.latLon || _activeSlot >= 1) ? '' : 'none';
+}
+
+function switchSlot(newIdx) {
+  if (newIdx === _activeSlot) return;
+  _slots[_activeSlot] = _captureSlot();
+  if (incidentMarker) incidentMarker.setOpacity(0.35);
+  _activeSlot = newIdx;
+  _restoreSlot(newIdx);
+  if (incidentMarker) incidentMarker.setOpacity(1.0);
+
+  _updateSlotTabs();
+  updateCoordDisplay();
+  updateBlastCoordDisplay(); updateRadCoordDisplay(); updateBleveCoordDisplay();
+  renderChemCard();
+  _updateWeatherStepBody();
+  _animStop();
+  document.getElementById('anim-section').style.display = 'none';
+
+  if (incidentLatLon) {
+    document.getElementById('step1-badge').classList.add('done');
+    _showWeatherStep();
+    showToolPicker();
+    if (wxData) document.getElementById('step2-badge').classList.add('done');
+    if (lastPlumeData) { document.getElementById('results-section').style.display='block'; renderResults(lastPlumeData); }
+    else document.getElementById('results-section').style.display='none';
+  } else {
+    ['step1-badge','step2-badge','step3-badge'].forEach(id => document.getElementById(id).classList.remove('done'));
+    document.getElementById('section-weather-step').style.display = 'none';
+    document.getElementById('wx-step-body').innerHTML = '';
+    document.getElementById('section-toolpicker').style.display = 'none';
+    document.getElementById('section-add-overlay').style.display = 'none';
+    document.getElementById('results-section').style.display = 'none';
+  }
+  document.getElementById('legend').style.display = 'none';
+}
+
 // Step 3: core hazard models shown in the guided picker
 const TOOLS = [
   { id:'plume',      icon:'☣',  label:'Chemical Plume',   desc:'TIC / TIM / CWA dispersal',       needsWeather:true,  isModel:true  },
@@ -900,8 +1071,8 @@ function startPlaceMode() {
 function placeIncident(lat, lon) {
   incidentLatLon = { lat, lon };
   if (incidentMarker) map.removeLayer(incidentMarker);
-  incidentMarker = L.marker([lat,lon], { icon:incidentIcon, draggable:true })
-    .addTo(map).bindPopup(`<b>Incident</b><br/>${lat.toFixed(5)}, ${lon.toFixed(5)}`);
+  incidentMarker = L.marker([lat,lon], { icon:_makeIncidentIcon(_activeSlot), draggable:true })
+    .addTo(map).bindPopup(`<b>Incident ${String.fromCharCode(65+_activeSlot)}</b><br/>${lat.toFixed(5)}, ${lon.toFixed(5)}`);
   incidentMarker.on('dragend', e => {
     const p = e.target.getLatLng();
     incidentLatLon = { lat:p.lat, lon:p.lng };
@@ -912,6 +1083,7 @@ function placeIncident(lat, lon) {
   document.getElementById('step1-badge').classList.add('done');
   document.getElementById('btn-wx').disabled = false;
   document.getElementById('btn-run').disabled = !selectedChem;
+  _updateSlotTabs();
 
   // Show Step 2 (weather) and auto-fetch
   _showWeatherStep();
@@ -983,6 +1155,10 @@ function clearIncident() {
   document.getElementById('step3-badge').classList.remove('done');
   document.getElementById('section-weather-step').style.display = 'none';
   document.getElementById('wx-step-body').innerHTML = '';
+  document.getElementById('anim-section').style.display = 'none';
+  _animStop();
+  _slots[_activeSlot] = null;
+  _updateSlotTabs();
   Object.keys(_activeOverlays).forEach(k => _activeOverlays[k] = false);
   _refreshExportUI();
   document.getElementById('sb-model').textContent = 'No model run';
@@ -1202,13 +1378,13 @@ function renderChemCard() {
   let thresholds = [];
   if (useAEGL && c.aegl1_60_ppm!=null) {
     thresholds = [
-      {label:'AEGL-1 (60min)', val:c.aegl1_60_ppm, color:'#FFFF00'},
-      {label:'AEGL-2 (60min)', val:c.aegl2_60_ppm, color:'#FF8C00'},
-      {label:'AEGL-3 (60min)', val:c.aegl3_60_ppm, color:'#FF0000'},
+      {label:'AEGL-1', val:c.aegl1_60_ppm, color:'#FFD700'},
+      {label:'AEGL-2', val:c.aegl2_60_ppm, color:'#FF8C00'},
+      {label:'AEGL-3', val:c.aegl3_60_ppm, color:'#FF0000'},
     ];
   } else if (c.erpg1_ppm!=null) {
     thresholds = [
-      {label:'ERPG-1', val:c.erpg1_ppm, color:'#FFFF00'},
+      {label:'ERPG-1', val:c.erpg1_ppm, color:'#FFD700'},
       {label:'ERPG-2', val:c.erpg2_ppm, color:'#FF8C00'},
       {label:'ERPG-3', val:c.erpg3_ppm, color:'#FF0000'},
     ];
@@ -1216,15 +1392,45 @@ function renderChemCard() {
   const catBadge = c.category==='CWA'
     ? '<span class="category-badge badge-cwa">CWA</span>'
     : '<span class="category-badge badge-tic">TIC</span>';
-  const rows = thresholds.map(t=>`<div class="threshold-row"><span><span class="threshold-dot" style="background:${t.color}"></span>${t.label}</span><span>${t.val!=null?fmtPpm(t.val):'N/A'}</span></div>`).join('');
+  const rows = thresholds.map(t=>`<div class="threshold-row"><span><span class="threshold-dot" style="background:${t.color}"></span>${t.label} (60min)</span><span>${t.val!=null?fmtPpm(t.val):'N/A'}</span></div>`).join('');
   const warning = c.warning ? `<div class="chem-warning">⚠ ${c.warning}</div>` : '';
+  const cameoUrl = `https://cameochemicals.noaa.gov/search/simple?search_api_views_fulltext=${encodeURIComponent(c.name)}`;
   card.style.display = 'block';
   card.innerHTML = `<div class="chem-name">${c.name} ${catBadge}</div>
     <div class="chem-formula">${c.formula} · MW ${c.mw} g/mol</div>
     ${c.idlh_ppm?`<div style="font-size:11px;color:var(--muted);margin-bottom:4px">IDLH: ${c.idlh_ppm} ppm</div>`:''}
     ${rows}
+    <div id="aegl-multitime" style="min-height:8px"></div>
     ${c.description?`<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">${c.description}</div>`:''}
-    ${warning}`;
+    ${warning}
+    <a href="${cameoUrl}" target="_blank" rel="noopener"
+       style="display:inline-block;margin-top:8px;font-size:11px;color:var(--accent2);text-decoration:none;border:1px solid var(--border);border-radius:4px;padding:2px 8px">
+      📋 CAMEO Chemicals →</a>`;
+
+  fetch(`${API}/api/aegl/${encodeURIComponent(c.id)}`)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      const el = document.getElementById('aegl-multitime');
+      if (!el || !data) return;
+      const a = data.aegl;
+      const lc = ['','aegl-1','aegl-2','aegl-3'];
+      const ll = ['','AEGL-1','AEGL-2','AEGL-3'];
+      el.innerHTML = `
+        <table class="aegl-tbl">
+          <thead><tr>
+            <th style="text-align:left">Level</th>
+            <th>10 min</th><th>60 min</th><th>8 hr</th>
+          </tr></thead>
+          <tbody>${[1,2,3].map(lv=>`<tr>
+            <td class="${lc[lv]}" style="text-align:left;font-weight:700">${ll[lv]}</td>
+            <td class="${lc[lv]}">${a[lv]?.['10min']!=null?fmtPpm(a[lv]['10min']):'—'}</td>
+            <td class="${lc[lv]}">${a[lv]?.['60min']!=null?fmtPpm(a[lv]['60min']):'—'}</td>
+            <td class="${lc[lv]}">${a[lv]?.['8hr']!=null?fmtPpm(a[lv]['8hr']):'—'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+        <div style="font-size:9px;color:var(--muted);margin-top:2px">EPA AEGL Program · ppm v/v</div>`;
+    })
+    .catch(() => {});
 }
 
 function fmtPpm(v) {
@@ -1347,6 +1553,123 @@ function renderResults(data) {
   const wx=data.weather, m=data.model;
   const windStr = wx&&wx.wind_dir_label ? `Wind: ${wx.wind_dir_label} at ${fmtMph(wx.wind_speed_mph)}` : `Wind: ${fmtMs(m.wind_speed_ms)} from ${m.wind_dir_from_deg}°`;
   content.innerHTML = rows.join('') + `<div style="margin-top:8px;font-size:11px;color:var(--muted)">${windStr}<br/>Stability: PG-${m.stability_class} · Q = ${m.Q_gs.toFixed(1)} g/s</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plume animation
+// ─────────────────────────────────────────────────────────────────────────────
+let _animFrames = null, _animTimer = null, _animIdx = 0, _animPlaying = false;
+const _animLayers = [];
+
+async function startPlumeAnimation() {
+  if (!incidentLatLon || !selectedChem) { toast('Run the plume model first', 2000); return; }
+  const sec = document.getElementById('anim-section');
+  const status = document.getElementById('anim-status');
+  const ctrl = document.getElementById('anim-ctrl');
+  sec.style.display = 'block';
+  ctrl.style.display = 'none';
+  status.textContent = '⟳ Computing animation frames…';
+  _animStop();
+
+  const useManual = document.getElementById('chk-manual-wx').checked;
+  const body = {
+    lat: incidentLatLon.lat, lon: incidentLatLon.lon,
+    chemical_id: selectedChem.id,
+    use_aegl: document.getElementById('chk-aegl').checked,
+    release_rate_kg_min: parseFloat(document.getElementById('sl-rate').value),
+    release_height_m: parseFloat(document.getElementById('sl-height').value),
+    manual_weather: useManual,
+  };
+  if (useManual) {
+    body.wind_speed_ms     = parseFloat(document.getElementById('inp-wind-speed').value)||3;
+    body.wind_dir_from_deg = parseFloat(document.getElementById('inp-wind-dir').value)||270;
+    body.stability_class   = document.getElementById('sel-stability').value;
+  }
+  try {
+    const r = await fetch(`${API}/api/plume/animate`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    _animFrames = data.frames;
+    _animIdx = 0;
+    status.textContent = `${_animFrames.length} frames · wind ${(data.wind_speed_ms*2.237).toFixed(1)} mph · PG-${data.stability}`;
+    document.getElementById('anim-slider').max = _animFrames.length - 1;
+    ctrl.style.display = 'block';
+    _renderAnimFrame(0);
+    if (isMobile()) setTimeout(()=>sec.scrollIntoView({behavior:'smooth'}),200);
+  } catch(e) {
+    status.textContent = `⚠ ${e.message}`;
+  }
+}
+
+function _renderAnimFrame(idx) {
+  _animIdx = idx;
+  const frame = _animFrames?.[idx];
+  if (!frame) return;
+  _animLayers.forEach(l => map.removeLayer(l)); _animLayers.length = 0;
+  const order = ['low','medium','high'];
+  const sorted = order.map(lv => frame.features.find(f=>f.properties.level===lv)).filter(Boolean);
+  for (const feat of sorted) {
+    const p = feat.properties;
+    const l = L.geoJSON(feat,{style:{color:p.color,weight:2,fillColor:p.color,fillOpacity:.28,opacity:.9}}).addTo(map);
+    _animLayers.push(l);
+  }
+  const t = frame.time_min;
+  document.getElementById('anim-time-label').textContent =
+    t===0 ? 'T+0 (source)' : t<60 ? `T+${t} min` : `T+${(t/60).toFixed(1)} hr`;
+  document.getElementById('anim-slider').value = idx;
+}
+
+function seekAnimation(idx) { _animStop(false); _renderAnimFrame(idx); }
+
+function toggleAnimation() {
+  if (_animPlaying) { _animStop(false); return; }
+  if (!_animFrames) return;
+  _animPlaying = true;
+  document.getElementById('btn-anim-play').textContent = '⏸ Pause';
+  function step() {
+    if (!_animPlaying) return;
+    const next = (_animIdx + 1) % _animFrames.length;
+    _renderAnimFrame(next);
+    if (next < _animFrames.length - 1) { _animTimer = setTimeout(step, 600); }
+    else { _animPlaying = false; document.getElementById('btn-anim-play').textContent = '▶ Play'; }
+  }
+  _animTimer = setTimeout(step, 600);
+}
+
+function _animStop(clearLayers=true) {
+  clearTimeout(_animTimer); _animTimer=null; _animPlaying=false;
+  const btn = document.getElementById('btn-anim-play');
+  if (btn) btn.textContent = '▶ Play';
+  if (clearLayers) { _animLayers.forEach(l=>map.removeLayer(l)); _animLayers.length=0; }
+}
+
+function stopAnimation() { _animStop(); if(_animFrames) _renderAnimFrame(0); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Print / PDF incident report
+// ─────────────────────────────────────────────────────────────────────────────
+function printReport() {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  const now = new Date();
+  const ts = now.toLocaleString('en-US',{dateStyle:'full',timeStyle:'short'});
+  const slotLbl = String.fromCharCode(65 + _activeSlot);
+  const hdr = document.getElementById('print-header');
+  hdr.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div>
+        <div style="font-size:18px;font-weight:900;letter-spacing:.06em">WHITWERX WMD PLOTTER</div>
+        <div style="font-size:11px;margin-top:2px">Incident Brief — ${ts} · Incident ${slotLbl}</div>
+      </div>
+      <div style="text-align:right;font-size:10px;line-height:1.8;color:#555">
+        <div><b>Location:</b> ${incidentLatLon.lat.toFixed(5)}°, ${incidentLatLon.lon.toFixed(5)}°</div>
+        ${wxData?`<div><b>Wind:</b> ${wxData.wind_dir_label} at ${wxData.wind_speed_mph} mph · Stability: PG-${wxData.stability_class}</div>`:''}
+        ${selectedChem?`<div><b>Agent:</b> ${selectedChem.name} (${selectedChem.formula})</div>`:''}
+        <div style="color:#c00;font-weight:700;margin-top:4px">PLANNING ESTIMATE ONLY — NOT FOR LIFE-SAFETY DECISIONS</div>
+      </div>
+    </div>`;
+  window.print();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

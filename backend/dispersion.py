@@ -191,6 +191,7 @@ def compute_plume_polygon(
     stability: str,
     H_m: float = 0.0,
     n_points: int = 120,
+    x_max_clip: Optional[float] = None,
 ) -> list[tuple[float, float]]:
     """
     Compute plume boundary polygon in plume coordinates (x, y) in metres.
@@ -199,10 +200,15 @@ def compute_plume_polygon(
     The polygon traces the right side (y > 0) from source outward, then the
     left side (y < 0) back to source.
     Returns empty list if release is below threshold.
+
+    x_max_clip: if provided, clip polygon to this downwind distance (m).
+                Used by the animation endpoint to show plume at a given time.
     """
     x_max = find_max_downwind(threshold_gm3, Q_gs, u_ms, stability, H_m)
     if x_max <= 0:
         return []
+    if x_max_clip is not None and x_max_clip < x_max:
+        x_max = max(x_max_clip, 5.0)
 
     # Find x_min (very close to source; plume width very narrow there)
     x_start = max(H_m * 2 + 1.0, 5.0)
@@ -351,6 +357,7 @@ def compute_all_contours(
     source_lon: float,
     wind_from_deg: float,
     H_m: float = 0.0,
+    x_max_clip: Optional[float] = None,
 ) -> dict:
     """
     Compute plume contour polygons for all threshold levels.
@@ -370,7 +377,7 @@ def compute_all_contours(
         if ppm_val is None or ppm_val <= 0:
             continue
         threshold_gm3 = ppm_to_gm3(ppm_val, mw)
-        polygon_xy = compute_plume_polygon(threshold_gm3, Q_gs, u_ms, stability, H_m)
+        polygon_xy = compute_plume_polygon(threshold_gm3, Q_gs, u_ms, stability, H_m, x_max_clip=x_max_clip)
         if not polygon_xy:
             result[level] = {
                 "latlon": [],
