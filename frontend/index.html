@@ -6,7 +6,6 @@
 <title>WHITWERX Model Display (WMD) — CBRN Planning</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/leaflet-image@0.4.0/leaflet-image.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -109,13 +108,17 @@ input:checked+.slider:before{transform:translateX(16px)}
 
 /* ── Print report ── */
 @media print{
-  #map-container,#map-overlay,#legend,#toast,#mobile-fab,#mobile-overlay,
+  #map-overlay,#legend,#toast,#mobile-fab,#mobile-overlay,
   .btn,#hdr-status,#geo-status,.slot-tabs,.coord-hint,
   #section-toolpicker,#section-add-overlay,#panel-weather,.tool-panel,
-  #section-location .row2,#btn-use-location,#anim-section{display:none!important}
-  #app,#body,#sidebar,html,body{height:auto!important;overflow:visible!important;display:block!important}
+  #section-location .row2,#btn-use-location,#anim-section,#header,#status-bar{display:none!important}
+  html,body{height:auto!important;overflow:visible!important}
+  #app{display:block!important;height:auto!important}
+  #body{display:block!important;height:auto!important;overflow:visible!important}
   #print-header{display:block!important}
-  #sidebar{width:100%!important;border:none!important}
+  #sidebar{width:100%!important;border:none!important;overflow:visible!important;height:auto!important}
+  #map-wrap{height:320px!important;position:relative!important;width:100%!important;display:block!important;page-break-after:avoid}
+  #map{position:absolute!important;inset:0!important;height:320px!important}
   .section{border-bottom:1px solid #ccc!important;padding:8px 0!important}
   .section-hdr{color:#333!important;font-size:9px!important;letter-spacing:.1em!important;margin-bottom:4px!important}
   body{background:#fff!important;color:#000!important}
@@ -766,7 +769,7 @@ input:checked+.slider:before{transform:translateX(16px)}
 
     </div><!-- /sidebar -->
 
-    <div style="position:relative;flex:1">
+    <div id="map-wrap" style="position:relative;flex:1">
       <div id="map"></div>
       <div id="map-overlay">
         <div class="map-pill" id="pill-wind" style="display:none">
@@ -1657,10 +1660,8 @@ function printReport() {
   const ts = now.toLocaleString('en-US',{dateStyle:'full',timeStyle:'short'});
   const slotLbl = String.fromCharCode(65 + _activeSlot);
   const hdr = document.getElementById('print-header');
-
-  // Build header text content first
-  const headerMeta = `
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+  hdr.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
       <div>
         <div style="font-size:18px;font-weight:900;letter-spacing:.06em">WHITWERX WMD PLOTTER</div>
         <div style="font-size:11px;margin-top:2px">Incident Brief — ${ts} · Incident ${slotLbl}</div>
@@ -1672,20 +1673,7 @@ function printReport() {
         <div style="color:#c00;font-weight:700;margin-top:4px">PLANNING ESTIMATE ONLY — NOT FOR LIFE-SAFETY DECISIONS</div>
       </div>
     </div>`;
-
-  // Capture map with leaflet-image then print
-  leafletImage(map, function(err, canvas) {
-    let mapImgHtml = '';
-    if (!err && canvas) {
-      const dataUrl = canvas.toDataURL('image/png');
-      mapImgHtml = `<img src="${dataUrl}" style="width:100%;max-height:380px;object-fit:cover;border:1px solid #ccc;border-radius:4px;display:block;margin-bottom:8px" alt="Incident Map"/>`;
-    } else {
-      console.warn('Map capture failed:', err);
-      mapImgHtml = `<div style="width:100%;height:60px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;border:1px solid #ccc;border-radius:4px;font-size:11px;color:#888;margin-bottom:8px">Map capture unavailable</div>`;
-    }
-    hdr.innerHTML = headerMeta + mapImgHtml;
-    window.print();
-  });
+  window.print();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
