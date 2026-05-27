@@ -6,7 +6,7 @@
 <title>WHITWERX Model Display (WMD) — CBRN Planning</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-image@0.4.0/leaflet-image.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -1651,7 +1651,7 @@ function stopAnimation() { _animStop(); if(_animFrames) _renderAnimFrame(0); }
 // ─────────────────────────────────────────────────────────────────────────────
 // Print / PDF incident report
 // ─────────────────────────────────────────────────────────────────────────────
-async function printReport() {
+function printReport() {
   if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
   const now = new Date();
   const ts = now.toLocaleString('en-US',{dateStyle:'full',timeStyle:'short'});
@@ -1673,25 +1673,19 @@ async function printReport() {
       </div>
     </div>`;
 
-  // Attempt map capture with html2canvas
-  let mapImgHtml = '';
-  try {
-    const mapEl = document.getElementById('map');
-    const canvas = await html2canvas(mapEl, {
-      useCORS: true,
-      allowTaint: false,
-      logging: false,
-      scale: 1,
-    });
-    const dataUrl = canvas.toDataURL('image/png');
-    mapImgHtml = `<img src="${dataUrl}" style="width:100%;max-height:380px;object-fit:cover;border:1px solid #ccc;border-radius:4px;display:block;margin-bottom:8px" alt="Incident Map"/>`;
-  } catch(e) {
-    console.warn('Map capture failed:', e);
-    mapImgHtml = `<div style="width:100%;height:60px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;border:1px solid #ccc;border-radius:4px;font-size:11px;color:#888;margin-bottom:8px">Map capture unavailable</div>`;
-  }
-
-  hdr.innerHTML = headerMeta + mapImgHtml;
-  window.print();
+  // Capture map with leaflet-image then print
+  leafletImage(map, function(err, canvas) {
+    let mapImgHtml = '';
+    if (!err && canvas) {
+      const dataUrl = canvas.toDataURL('image/png');
+      mapImgHtml = `<img src="${dataUrl}" style="width:100%;max-height:380px;object-fit:cover;border:1px solid #ccc;border-radius:4px;display:block;margin-bottom:8px" alt="Incident Map"/>`;
+    } else {
+      console.warn('Map capture failed:', err);
+      mapImgHtml = `<div style="width:100%;height:60px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;border:1px solid #ccc;border-radius:4px;font-size:11px;color:#888;margin-bottom:8px">Map capture unavailable</div>`;
+    }
+    hdr.innerHTML = headerMeta + mapImgHtml;
+    window.print();
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
