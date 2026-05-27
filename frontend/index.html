@@ -6,6 +6,8 @@
 <title>WHITWERX Model Display (WMD) — CBRN Planning</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.14.2/dist/leaflet-geoman.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.14.2/dist/leaflet-geoman.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -98,6 +100,13 @@ input:checked+.slider:before{transform:translateX(16px)}
 .aegl-1{color:#FFD700}.aegl-2{color:#FF8C00}.aegl-3{color:var(--red)}
 
 /* ── Incident slots ── */
+/* ── Annotation toolbar ── */
+.annot-toolbar{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:8px}
+.annot-btn{min-width:0;padding:6px 4px;font-size:15px;border-radius:5px}
+.annot-btn.annot-active{background:var(--accent2)!important;color:#0d1117!important;border-color:var(--accent2)!important}
+.color-swatches{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}
+.clr-swatch{width:22px;height:22px;border-radius:4px;cursor:pointer;border:2px solid transparent;flex-shrink:0;transition:border-color .12s}
+.clr-swatch.clr-active{border-color:#fff!important}
 .slot-tabs{display:flex;gap:4px;margin-bottom:8px}
 .slot-tab{flex:1;padding:3px 5px;font-size:11px;font-weight:700;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--muted);cursor:pointer;transition:all .15s}
 .slot-tab.active-slot{color:#0d1117;border-color:transparent}
@@ -775,6 +784,28 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div id="timeline-list"></div>
       </div>
 
+      <!-- ANNOTATE -->
+      <div class="section" id="section-annotate">
+        <div class="section-hdr">✏️ Draw / Annotate</div>
+        <div class="annot-toolbar">
+          <button class="btn btn-ghost annot-btn" id="annot-btn-Line"    title="Draw line"    onclick="startDraw('Line')">╱</button>
+          <button class="btn btn-ghost annot-btn" id="annot-btn-Polygon" title="Draw polygon" onclick="startDraw('Polygon')">⬡</button>
+          <button class="btn btn-ghost annot-btn" id="annot-btn-Circle"  title="Draw circle"  onclick="startDraw('Circle')">○</button>
+          <button class="btn btn-ghost annot-btn" id="annot-btn-Text"    title="Add text label" onclick="startDraw('Text')" style="font-size:13px;font-weight:700">T</button>
+          <button class="btn btn-ghost annot-btn" id="annot-btn-erase"   title="Delete annotation (click a shape)" onclick="toggleAnnotErase()" style="font-size:13px">🗑</button>
+        </div>
+        <div class="color-swatches" id="annot-colors">
+          <div class="clr-swatch clr-active" data-color="#FF4444" style="background:#FF4444" onclick="setAnnotColor('#FF4444')" title="Red"></div>
+          <div class="clr-swatch" data-color="#FF8C00" style="background:#FF8C00" onclick="setAnnotColor('#FF8C00')" title="Orange"></div>
+          <div class="clr-swatch" data-color="#FFD700" style="background:#FFD700" onclick="setAnnotColor('#FFD700')" title="Yellow"></div>
+          <div class="clr-swatch" data-color="#00CC55" style="background:#00CC55" onclick="setAnnotColor('#00CC55')" title="Green"></div>
+          <div class="clr-swatch" data-color="#3399FF" style="background:#3399FF" onclick="setAnnotColor('#3399FF')" title="Blue"></div>
+          <div class="clr-swatch" data-color="#CC44FF" style="background:#CC44FF" onclick="setAnnotColor('#CC44FF')" title="Purple"></div>
+          <div class="clr-swatch" data-color="#FFFFFF" style="background:#FFFFFF;border:2px solid var(--border)" onclick="setAnnotColor('#FFFFFF')" title="White"></div>
+        </div>
+        <button class="btn btn-ghost btn-full" style="font-size:11px" onclick="clearSlotAnnotations()">🗑 Clear Annotations (this incident)</button>
+      </div>
+
       <!-- EXPORT -->
       <div class="section">
         <div class="section-hdr">📤 Export Active Overlays</div>
@@ -1074,6 +1105,123 @@ const tileSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/service
   { maxZoom:19, attribution:'© Esri', crossOrigin: 'anonymous' });
 L.control.layers({'Street':tileStreet,'Satellite':tileSat},{},{position:'topleft'}).addTo(map);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Draw / Annotate  (Leaflet-Geoman)
+// Per-slot annotation layers — all visible simultaneously on the map,
+// clearSlotAnnotations() removes only the active slot's layers.
+// ─────────────────────────────────────────────────────────────────────────────
+let _annotColor  = '#FF4444';
+let _annotMode   = null;          // currently active draw type string or null
+let _annotErase  = false;
+let _annotLayers = [[], [], []];  // per-slot layer arrays
+
+function _initAnnotations() {
+  if (!map.pm) return;
+  // Disable the built-in toolbar — we drive everything from the sidebar
+  map.pm.addControls({ position:'topleft', drawMarker:false, drawCircleMarker:false,
+    drawPolyline:false, drawRectangle:false, drawPolygon:false, drawCircle:false,
+    drawText:false, editMode:false, dragMode:false, cutPolygon:false, removalMode:false,
+    rotateMode:false });
+  // Hide the geoman toolbar entirely; we use our own buttons
+  const ctrl = document.querySelector('.leaflet-pm-toolbar');
+  if (ctrl) ctrl.style.display = 'none';
+
+  map.on('pm:create', e => {
+    const layer = e.layer;
+    if (layer.setStyle) {
+      layer.setStyle({ color:_annotColor, fillColor:_annotColor,
+                       fillOpacity:0.15, weight:2.5, opacity:0.9 });
+    }
+    // Tag with slot
+    layer._annotSlot = _activeSlot;
+    _annotLayers[_activeSlot].push(layer);
+    // Allow editing on click (toggle)
+    layer.on('click', function() {
+      if (!_annotErase) this.pm.toggleEdit();
+    });
+    // Exit draw mode after each shape so user re-clicks to draw another
+    _annotMode = null;
+    _updateAnnotBtns();
+  });
+
+  map.on('pm:remove', e => {
+    const slot = e.layer._annotSlot ?? _activeSlot;
+    _annotLayers[slot] = _annotLayers[slot].filter(l => l !== e.layer);
+  });
+
+  map.on('pm:globaleditmodetoggled', () => _updateAnnotBtns());
+}
+
+function startDraw(type) {
+  if (!map.pm) return;
+  map.pm.disableDraw();
+  map.pm.disableGlobalRemovalMode();
+  _annotErase = false;
+  document.getElementById('annot-btn-erase')?.classList.remove('annot-active');
+
+  if (_annotMode === type) {          // toggle off
+    _annotMode = null;
+    _updateAnnotBtns();
+    return;
+  }
+  _annotMode = type;
+  _updateAnnotBtns();
+
+  const pathOpts = { color:_annotColor, fillColor:_annotColor, fillOpacity:0.15, weight:2.5 };
+  if (type === 'Text') {
+    map.pm.enableDraw('Text', { textOptions:{ text:'' } });
+  } else if (type === 'Circle') {
+    map.pm.enableDraw('Circle', { pathOptions: pathOpts });
+  } else if (type === 'Polygon') {
+    map.pm.enableDraw('Polygon', { pathOptions: pathOpts, snappable:false });
+  } else if (type === 'Line') {
+    map.pm.enableDraw('Line', { pathOptions: pathOpts, snappable:false });
+  }
+}
+
+function toggleAnnotErase() {
+  if (!map.pm) return;
+  map.pm.disableDraw();
+  _annotMode = null;
+  _updateAnnotBtns();
+  _annotErase = !_annotErase;
+  if (_annotErase) {
+    map.pm.enableGlobalRemovalMode();
+    document.getElementById('annot-btn-erase')?.classList.add('annot-active');
+  } else {
+    map.pm.disableGlobalRemovalMode();
+    document.getElementById('annot-btn-erase')?.classList.remove('annot-active');
+  }
+}
+
+function setAnnotColor(color) {
+  _annotColor = color;
+  document.querySelectorAll('.clr-swatch').forEach(el =>
+    el.classList.toggle('clr-active', el.dataset.color === color));
+}
+
+function _updateAnnotBtns() {
+  ['Line','Polygon','Circle','Text'].forEach(t => {
+    document.getElementById(`annot-btn-${t}`)?.classList.toggle('annot-active', _annotMode === t);
+  });
+}
+
+function clearSlotAnnotations() {
+  _annotLayers[_activeSlot].forEach(l => { try { map.removeLayer(l); } catch(_){} });
+  _annotLayers[_activeSlot] = [];
+}
+
+function _stopAllAnnotModes() {
+  if (!map.pm) return;
+  map.pm.disableDraw();
+  map.pm.disableGlobalRemovalMode();
+  _annotMode = null; _annotErase = false;
+  _updateAnnotBtns();
+  document.getElementById('annot-btn-erase')?.classList.remove('annot-active');
+}
+
+_initAnnotations();
+
 map.on('mousemove', e => {
   document.getElementById('sb-coords').textContent =
     `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
@@ -1205,6 +1353,9 @@ function clearIncident() {
   document.getElementById('wx-panel').style.display = 'none';
   document.getElementById('pill-wind').style.display = 'none';
   document.getElementById('pill-stability').style.display = 'none';
+  // Stop any active draw mode and clear this slot's annotations
+  _stopAllAnnotModes();
+  clearSlotAnnotations();
 }
 
 function updateCoordDisplay() {
