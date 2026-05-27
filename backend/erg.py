@@ -25,6 +25,14 @@ import math
 #   large: {isolation_m, day_pad_km, night_pad_km}
 
 ERG_TABLE1: dict[str, dict] = {
+    # ── Generic / Unknown Gas presets ─────────────────────────────────────────
+    # GEN-GAS: conservative worst-case distances for an unidentified toxic gas
+    # (Guide 111 — Unknown / Generic Hazmat Gas). Use when UN # is unavailable.
+    "GEN-GAS": {"name": "Generic Gas / Unknown Toxic Vapor (Guide 111)",
+                "guide": 111, "hl": True,
+                "small": {"isolation_m": 100, "day_pad_km": 0.5, "night_pad_km": 1.6},
+                "large": {"isolation_m": 300, "day_pad_km": 1.8, "night_pad_km": 5.0}},
+    # ── Standard Table 1 entries ───────────────────────────────────────────────
     "1005": {"name": "Ammonia, anhydrous",                   "guide": 125, "hl": False,
              "small": {"isolation_m": 30,  "day_pad_km": 0.1, "night_pad_km": 0.2},
              "large": {"isolation_m": 150, "day_pad_km": 0.8, "night_pad_km": 2.7}},
@@ -365,9 +373,15 @@ _ALIASES: dict[str, str] = {
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def get_erg_entry(un_number: str) -> dict | None:
-    """Return full ERG entry for a UN number (string, no leading zeros)."""
-    un = un_number.strip().lstrip("0") or "0"
-    un = un_number.strip().zfill(4)
+    """Return full ERG entry for a UN number or special key like 'GEN-GAS'."""
+    key = un_number.strip()
+    # Allow special non-numeric keys (e.g. GEN-GAS)
+    if not key.isdigit():
+        entry = ERG_TABLE1.get(key.upper())
+        if entry:
+            return {"un_number": key.upper(), **entry}
+        return None
+    un = key.zfill(4)
     entry = ERG_TABLE1.get(un)
     if entry:
         return {"un_number": un, **entry}

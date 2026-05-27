@@ -319,13 +319,32 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div id="geo-status" style="font-size:10px;color:var(--muted);margin-top:4px;min-height:12px;text-align:center"></div>
       </div>
 
-      <!-- STEP 2: TOOL PICKER -->
-      <div class="section" id="section-toolpicker" style="display:none">
+      <!-- STEP 2: WEATHER -->
+      <div class="section" id="section-weather-step" style="display:none">
         <div class="section-hdr">
           <span class="step-badge" id="step2-badge">2</span>
-          What would you like to model?
+          Weather Conditions
+          <span id="wx-step-status" style="font-size:10px;color:var(--muted);margin-left:4px"></span>
+        </div>
+        <div id="wx-step-body">
+          <!-- populated dynamically -->
+        </div>
+      </div>
+
+      <!-- STEP 3: HAZARD MODEL PICKER -->
+      <div class="section" id="section-toolpicker" style="display:none">
+        <div class="section-hdr">
+          <span class="step-badge" id="step3-badge">3</span>
+          Select Hazard Model
         </div>
         <div class="tool-picker-grid" id="tool-picker-grid"></div>
+      </div>
+
+      <!-- POST-MODEL: ADD TO SCENARIO -->
+      <div class="section" id="section-add-overlay" style="display:none">
+        <div class="section-hdr" style="color:var(--green)">📎 Add to Scenario</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Enrich your model with additional data layers:</div>
+        <div class="tool-picker-grid" id="overlay-picker-grid"></div>
       </div>
 
       <!-- SHARED WEATHER -->
@@ -464,6 +483,15 @@ input:checked+.slider:before{transform:translateX(16px)}
       <div class="section tool-panel" id="panel-erg" style="display:none">
         <div class="section-hdr">🧪 ERG 2024 — Isolation &amp; PAD</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">DOT Emergency Response Guidebook 2024 · Table 1 · Toxic Inhalation Hazard materials.</div>
+        <div style="margin-bottom:8px">
+          <div style="font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Quick Select</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="selectERGPreset('GEN-GAS')">⚠ GEN GAS (Guide 111)</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="selectERGPreset('1017')">Cl₂ Chlorine</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="selectERGPreset('1005')">NH₃ Ammonia</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="selectERGPreset('1076')">CG Phosgene</button>
+          </div>
+        </div>
         <label>UN Number or Chemical Name</label>
         <input type="text" id="inp-erg-search" placeholder="e.g. 1017  or  chlorine" oninput="searchERG()" autocomplete="off" style="font-size:14px"/>
         <div id="erg-search-results" style="display:none;max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;margin-top:2px;background:var(--panel)"></div>
@@ -791,20 +819,22 @@ const _activeOverlays = { plume: false, blast: false, radiation: false, bleve: f
 const activePanels = new Set();
 let timeline = JSON.parse(localStorage.getItem('wmd_timeline') || '[]');
 
+// Step 3: core hazard models shown in the guided picker
 const TOOLS = [
-  { id:'plume',      icon:'☣',  label:'Chemical Plume',   desc:'TIC / TIM / CWA dispersal',       needsWeather:true  },
-  { id:'radiation',  icon:'☢',  label:'Radiation (RDD)',   desc:'Radiological dispersal',           needsWeather:true  },
-  { id:'blast',      icon:'💥', label:'Blast Zones',       desc:'Explosive / IED damage',           needsWeather:false },
-  { id:'bleve',      icon:'🔥', label:'BLEVE / Fireball',  desc:'Pressurized fuel thermal hazard',  needsWeather:false },
-  { id:'dense_gas',  icon:'🌫',  label:'Dense Gas',          desc:'Heavy gas cloud hazard zones',     needsWeather:true  },
-  { id:'fire_smoke', icon:'🔥', label:'Fire / Smoke',      desc:'Buoyant plume: PM2.5 & CO zones',  needsWeather:true  },
-  { id:'probit',     icon:'☠',  label:'Probit / Casualty', desc:'Dose-response casualty estimate',  needsWeather:false },
-  { id:'erg',        icon:'🧪', label:'ERG 2024',          desc:'UN hazmat isolation & PAD zones',  needsWeather:false },
-  { id:'infra',      icon:'🏗',  label:'Infrastructure',   desc:'Critical facilities nearby',       needsWeather:false },
-  { id:'live_data',  icon:'📡', label:'Live Data Feeds',  desc:'FIRMS · NIFC · NWS Forecast',      needsWeather:false },
-  { id:'population', icon:'👥', label:'Population Impact', desc:'Exposure estimates (Census)',       needsWeather:false },
-  { id:'shelter',    icon:'🏠', label:'Shelter / Evac',    desc:'Protective action guidance',       needsWeather:false },
-  { id:'timeline',   icon:'📅', label:'Incident Timeline', desc:'CBRN scenario log & replay',       needsWeather:false },
+  { id:'plume',      icon:'☣',  label:'Chemical Plume',   desc:'TIC / TIM / CWA dispersal',       needsWeather:true,  isModel:true  },
+  { id:'blast',      icon:'💥', label:'Blast Zones',       desc:'Explosive / IED damage',           needsWeather:false, isModel:true  },
+  { id:'bleve',      icon:'🔥', label:'BLEVE / Fireball',  desc:'Pressurized fuel thermal hazard',  needsWeather:false, isModel:true  },
+  { id:'dense_gas',  icon:'🌫', label:'Dense Gas',         desc:'Heavy gas cloud hazard zones',     needsWeather:true,  isModel:true  },
+  { id:'erg',        icon:'🧪', label:'ERG 2024',          desc:'UN hazmat isolation & PAD zones',  needsWeather:false, isModel:true  },
+  // Additional tools (shown in "Add to Scenario" after model runs, and accessible any time from overlay picker)
+  { id:'radiation',  icon:'☢',  label:'Radiation (RDD)',   desc:'Radiological dispersal',           needsWeather:true,  isModel:false },
+  { id:'fire_smoke', icon:'🔥', label:'Fire / Smoke',      desc:'Buoyant plume: PM2.5 & CO zones',  needsWeather:true,  isModel:false },
+  { id:'probit',     icon:'☠',  label:'Probit / Casualty', desc:'Dose-response casualty estimate',  needsWeather:false, isModel:false },
+  { id:'infra',      icon:'🏗',  label:'Infrastructure',   desc:'Critical facilities nearby',       needsWeather:false, isModel:false },
+  { id:'population', icon:'👥', label:'Population Impact', desc:'Exposure estimates (Census)',       needsWeather:false, isModel:false },
+  { id:'live_data',  icon:'📡', label:'Live Data Feeds',  desc:'FIRMS · NIFC · NWS Forecast',      needsWeather:false, isModel:false },
+  { id:'shelter',    icon:'🏠', label:'Shelter / Evac',    desc:'Protective action guidance',       needsWeather:false, isModel:false },
+  { id:'timeline',   icon:'📅', label:'Incident Timeline', desc:'CBRN scenario log & replay',       needsWeather:false, isModel:false },
 ];
 
 const INFRA_TYPES = {
@@ -876,13 +906,57 @@ function placeIncident(lat, lon) {
     const p = e.target.getLatLng();
     incidentLatLon = { lat:p.lat, lon:p.lng };
     updateCoordDisplay();
-    if (wxData) fetchWeather();
+    fetchWeather();  // re-fetch weather when marker is dragged
   });
   updateCoordDisplay();
   document.getElementById('step1-badge').classList.add('done');
   document.getElementById('btn-wx').disabled = false;
-  showToolPicker();
   document.getElementById('btn-run').disabled = !selectedChem;
+
+  // Show Step 2 (weather) and auto-fetch
+  _showWeatherStep();
+  showToolPicker();
+  fetchWeather();
+}
+
+function _showWeatherStep() {
+  const sec = document.getElementById('section-weather-step');
+  sec.style.display = 'block';
+  _updateWeatherStepBody();
+}
+
+function _updateWeatherStepBody() {
+  const body = document.getElementById('wx-step-body');
+  if (!body) return;
+  if (!wxData) {
+    body.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12px;color:var(--muted)">
+        <span class="spin" style="font-size:16px">⟳</span> Fetching weather…
+      </div>`;
+    return;
+  }
+  const cls = wxData.stability_class;
+  body.innerHTML = `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-weight:700">${wxData.wind_dir_label} ${wxData.wind_speed_mph} mph</span>
+        <span style="background:#79c0ff22;border:1px solid var(--accent2);border-radius:4px;padding:1px 7px;font-size:11px;font-weight:700">PG-${cls}</span>
+      </div>
+      <div style="color:var(--muted);font-size:11px">${wxData.temp_f}°F · ${wxData.weather_desc||''} · ${wxData.stability_desc}</div>
+      <div style="color:var(--muted);font-size:10px;margin-top:2px">Source: ${wxData.source}</div>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn btn-ghost" style="flex:1;font-size:11px;padding:5px 8px" onclick="fetchWeather()">⟳ Refresh</button>
+      <button class="btn btn-ghost" style="flex:1;font-size:11px;padding:5px 8px" onclick="openWeatherPanel()">✎ Manual</button>
+    </div>`;
+  document.getElementById('step2-badge').classList.add('done');
+  document.getElementById('wx-step-status').textContent = '';
+}
+
+function openWeatherPanel() {
+  // Open the full weather panel (inside whichever model panel is active, or just reveal it)
+  document.getElementById('panel-weather').style.display = 'block';
+  document.getElementById('panel-weather').scrollIntoView({ behavior: 'smooth' });
 }
 
 function clearIncident() {
@@ -905,6 +979,10 @@ function clearIncident() {
   document.getElementById('bleve-results-section').style.display = 'none';
   document.getElementById('legend').style.display = 'none';
   document.getElementById('step1-badge').classList.remove('done');
+  document.getElementById('step2-badge').classList.remove('done');
+  document.getElementById('step3-badge').classList.remove('done');
+  document.getElementById('section-weather-step').style.display = 'none';
+  document.getElementById('wx-step-body').innerHTML = '';
   Object.keys(_activeOverlays).forEach(k => _activeOverlays[k] = false);
   _refreshExportUI();
   document.getElementById('sb-model').textContent = 'No model run';
@@ -987,16 +1065,28 @@ function useMyLocation() {
 _initGeolocation();
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tool picker
+// Tool picker — Step 3 (models) + overlay section
 // ─────────────────────────────────────────────────────────────────────────────
 function buildToolPicker() {
-  document.getElementById('tool-picker-grid').innerHTML = TOOLS.map(t =>
+  // Step 3: hazard models only
+  document.getElementById('tool-picker-grid').innerHTML = TOOLS.filter(t => t.isModel).map(t =>
     `<button class="tool-card" id="card-${t.id}" onclick="toggleTool('${t.id}')">
       <div class="tool-icon">${t.icon}</div>
       <div class="tool-label">${t.label}</div>
       <div class="tool-desc">${t.desc}</div>
     </button>`
   ).join('');
+  // Overlay picker (shown after model runs)
+  const overlayGrid = document.getElementById('overlay-picker-grid');
+  if (overlayGrid) {
+    overlayGrid.innerHTML = TOOLS.filter(t => !t.isModel).map(t =>
+      `<button class="tool-card" id="card-${t.id}" onclick="toggleTool('${t.id}')">
+        <div class="tool-icon">${t.icon}</div>
+        <div class="tool-label">${t.label}</div>
+        <div class="tool-desc">${t.desc}</div>
+      </button>`
+    ).join('');
+  }
 }
 
 function showToolPicker() {
@@ -1005,7 +1095,17 @@ function showToolPicker() {
 
 function hideToolPicker() {
   document.getElementById('section-toolpicker').style.display = 'none';
+  document.getElementById('section-add-overlay').style.display = 'none';
   [...activePanels].forEach(id => deactivateTool(id));
+}
+
+/** Called after any hazard model finishes computing — reveals the overlay section */
+function showAddOverlay() {
+  document.getElementById('section-add-overlay').style.display = 'block';
+  // Scroll it into view on mobile
+  if (isMobile()) {
+    setTimeout(() => document.getElementById('section-add-overlay')?.scrollIntoView({behavior:'smooth'}), 200);
+  }
 }
 
 function toggleTool(id) {
@@ -1019,6 +1119,7 @@ function activateTool(id) {
   if (panel) panel.style.display = 'block';
   const tool = TOOLS.find(t => t.id === id);
   if (tool?.needsWeather) document.getElementById('panel-weather').style.display = 'block';
+  if (tool?.isModel) document.getElementById('step3-badge').classList.add('done');
 
   if (id === 'blast'     && incidentLatLon && !blastLatLon) snapBlastToIncident();
   if (id === 'radiation' && incidentLatLon && !radLatLon)   snapRadToIncident();
@@ -1254,15 +1355,21 @@ function renderResults(data) {
 async function fetchWeather() {
   if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
   const btn = document.getElementById('btn-wx');
+  const statusEl = document.getElementById('wx-step-status');
   btn.innerHTML = '<span class="spin">⟳</span> Fetching…';
   btn.disabled = true;
+  if (statusEl) statusEl.textContent = '⟳ fetching…';
   try {
     const r = await fetch(`${API}/api/weather?lat=${incidentLatLon.lat}&lon=${incidentLatLon.lon}`);
     if (!r.ok) throw new Error(await r.text());
     wxData = await r.json();
     renderWeather();
+    _updateWeatherStepBody();   // update the Step 2 summary card
     toast(`Weather loaded — ${wxData.wind_dir_label} ${wxData.wind_speed_mph} mph, PG-${wxData.stability_class}`, 3000);
-  } catch(e) { toast(`Weather error: ${e.message}`, 4000); }
+  } catch(e) {
+    if (statusEl) statusEl.textContent = '⚠ failed';
+    toast(`Weather error: ${e.message}`, 4000);
+  }
   finally { btn.innerHTML='⟳ Refresh Weather'; btn.disabled=false; }
 }
 
@@ -1748,6 +1855,24 @@ async function selectERGEntry(un) {
     document.getElementById('erg-selected-name').textContent =
       `UN${_currentERGEntry.un_number} — ${_currentERGEntry.name} · Guide #${_currentERGEntry.guide}`;
     renderERGStats();
+  } catch(e) { toast(`ERG lookup error: ${e.message}`, 3000); }
+}
+
+/** Quick-select an ERG preset by key (UN number string or special key like 'GEN-GAS') */
+async function selectERGPreset(key) {
+  document.getElementById('erg-search-results').style.display = 'none';
+  const displayKey = key.match(/^\d+$/) ? `UN${key}` : key;
+  document.getElementById('inp-erg-search').value = displayKey;
+  try {
+    const r = await fetch(`${API}/api/erg/${encodeURIComponent(key)}`);
+    if (!r.ok) { toast('ERG entry not found', 2000); return; }
+    _currentERGEntry = await r.json();
+    document.getElementById('erg-selected').style.display = 'block';
+    const namePrefix = _currentERGEntry.un_number.match(/^\d+$/) ? `UN${_currentERGEntry.un_number}` : _currentERGEntry.un_number;
+    document.getElementById('erg-selected-name').textContent =
+      `${namePrefix} — ${_currentERGEntry.name} · Guide #${_currentERGEntry.guide}`;
+    renderERGStats();
+    document.getElementById('btn-erg-run').disabled = !ergLatLon;
   } catch(e) { toast(`ERG lookup error: ${e.message}`, 3000); }
 }
 
@@ -2402,7 +2527,7 @@ function _refreshExportUI() {
   document.getElementById('export-summary').textContent = hasAny ? `Exporting: ${active.join(' + ')}` : 'No overlays computed yet.';
 }
 
-function enableExport(tool) { _activeOverlays[tool]=true; _refreshExportUI(); }
+function enableExport(tool) { _activeOverlays[tool]=true; _refreshExportUI(); showAddOverlay(); }
 function disableExport(tool) { _activeOverlays[tool]=false; _refreshExportUI(); }
 
 async function downloadKML() {
