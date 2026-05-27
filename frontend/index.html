@@ -436,9 +436,17 @@ input:checked+.slider:before{transform:translateX(16px)}
           <label class="toggle"><input type="checkbox" id="chk-aegl" checked onchange="onChemicalChange()"/><span class="slider"></span></label>
         </div>
         <div id="chem-card" class="chem-card" style="display:none"></div>
-        <label style="margin-top:10px">Release Rate — <span id="lbl-rate">1.0</span> kg/min</label>
-        <input type="range" id="sl-rate" min="0.1" max="500" step="0.1" value="1" oninput="document.getElementById('lbl-rate').textContent=parseFloat(this.value).toFixed(1)"/>
-        <div class="row2" style="margin-top:2px;font-size:11px;color:var(--muted)"><span>0.1 kg/min</span><span style="text-align:right">500 kg/min</span></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;margin-bottom:4px">
+          <label style="margin:0">Release Rate — <span id="lbl-rate">1.0</span> <span id="lbl-rate-unit">kg/min</span></label>
+          <select id="sel-rate-unit" onchange="onRateUnitChange()" style="width:auto;padding:2px 6px;font-size:11px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">
+            <option value="kg_min">kg/min</option>
+            <option value="g_s">g/s</option>
+            <option value="lb_min">lb/min</option>
+            <option value="lb_hr">lb/hr</option>
+          </select>
+        </div>
+        <input type="range" id="sl-rate" min="0.1" max="500" step="0.1" value="1" oninput="updateRateLabel()"/>
+        <div class="row2" style="margin-top:2px;font-size:11px;color:var(--muted)"><span id="rate-hint-min">0.1 kg/min</span><span id="rate-hint-max" style="text-align:right">500 kg/min</span></div>
         <label style="margin-top:10px">Release Height — <span id="lbl-height">0</span> m</label>
         <input type="range" id="sl-height" min="0" max="200" step="1" value="0" oninput="document.getElementById('lbl-height').textContent=this.value"/>
         <label style="margin-top:10px">Scenario Preset</label>
@@ -486,12 +494,18 @@ input:checked+.slider:before{transform:translateX(16px)}
         <label style="margin-top:10px">Radionuclide</label>
         <select id="sel-radionuclide" onchange="onRadionuclideChange()"></select>
         <div style="font-size:10px;color:var(--muted);margin-top:3px" id="rad-nuclide-note"></div>
-        <label style="margin-top:10px">Release Rate — <span id="lbl-rad-unit-toggle" style="cursor:pointer;color:var(--accent2);font-size:11px;text-decoration:underline" onclick="toggleRadUnit()">switch to mCi/min</span></label>
+        <label style="margin-top:10px">Release Rate</label>
         <div class="row2">
-          <input type="number" id="inp-rad-rate" value="1" min="0.0001" step="0.001" style="font-size:16px" oninput="updateRadNote()"/>
-          <div style="display:flex;align-items:center;padding:0 4px;font-size:13px;color:var(--muted)" id="lbl-rad-unit">Ci/min</div>
+          <input type="number" id="inp-rad-rate" value="1" min="0.000001" step="0.001" style="font-size:16px" oninput="updateRadNote()"/>
+          <select id="sel-rad-unit" onchange="updateRadNote()" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:13px;cursor:pointer">
+            <option value="uCi_min">µCi/min</option>
+            <option value="mCi_min">mCi/min</option>
+            <option value="Ci_min" selected>Ci/min</option>
+            <option value="MBq_s">MBq/s</option>
+            <option value="GBq_s">GBq/s</option>
+          </select>
         </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:4px" id="rad-rate-note">— Ci/s</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.6" id="rad-rate-note">—</div>
         <label style="margin-top:10px">Release Height — <span id="lbl-rad-height">0</span> m</label>
         <input type="range" id="sl-rad-height" min="0" max="200" step="1" value="0" oninput="document.getElementById('lbl-rad-height').textContent=this.value"/>
         <button class="btn btn-full" id="btn-rad-run" onclick="runRadiation()" disabled style="background:#6B238E;color:#fff;border:none;margin-top:10px">☢ Compute Radiation Zones</button>
@@ -654,7 +668,18 @@ input:checked+.slider:before{transform:translateX(16px)}
         <select id="sel-dense-gas" onchange="_onDenseGasChange()"><option value="">Loading…</option></select>
         <div id="dense-gas-warning" style="display:none;font-size:11px;color:#FF8C00;background:rgba(255,140,0,0.1);padding:6px 8px;border-radius:4px;margin-top:6px;line-height:1.4"></div>
         <div class="row2" style="margin-top:8px">
-          <div><label>Release Rate (kg/min)</label><input type="number" id="inp-dg-rate" value="10" min="0.01" max="10000" step="0.1" style="font-size:16px"/></div>
+          <div>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <label style="margin:0">Release Rate</label>
+              <select id="sel-dg-unit" onchange="onDGUnitChange()" style="width:auto;padding:2px 6px;font-size:11px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">
+                <option value="kg_min">kg/min</option>
+                <option value="g_s">g/s</option>
+                <option value="lb_min">lb/min</option>
+                <option value="lb_hr">lb/hr</option>
+              </select>
+            </div>
+            <input type="number" id="inp-dg-rate" value="10" min="0.01" max="10000" step="0.1" style="font-size:16px;margin-top:4px"/>
+          </div>
           <div><label>Release Height (m)</label><input type="number" id="inp-dg-height" value="0" min="0" max="500" style="font-size:16px"/></div>
         </div>
         <button class="btn btn-primary btn-full" style="margin-top:10px" onclick="runDenseGas()">🌫 Compute Dense Gas Zones</button>
@@ -1447,6 +1472,55 @@ function fmtPpm(v) {
   return Math.round(v)+' ppm';
 }
 
+// ── Release-rate unit conversion table (all → kg/min) ──────────────────────
+const RATE_UNITS = {
+  kg_min: { label:'kg/min', toKgMin:1,          fromKgMin:1         },
+  g_s:    { label:'g/s',    toKgMin:0.06,        fromKgMin:16.6667   },
+  lb_min: { label:'lb/min', toKgMin:0.453592,    fromKgMin:2.20462   },
+  lb_hr:  { label:'lb/hr',  toKgMin:0.00755987,  fromKgMin:132.277   },
+};
+// ── Radiation activity unit table (all → Ci/min) ────────────────────────────
+// 1 Ci = 3.7×10¹⁰ Bq; 1 Ci/min = 3.7×10¹⁰ Bq/60 s ≈ 616.667 MBq/s
+const RAD_UNITS = {
+  uCi_min: { label:'µCi/min', toCiMin:1e-6            },
+  mCi_min: { label:'mCi/min', toCiMin:0.001           },
+  Ci_min:  { label:'Ci/min',  toCiMin:1               },
+  MBq_s:   { label:'MBq/s',   toCiMin:1/616.667       },
+  GBq_s:   { label:'GBq/s',   toCiMin:1000/616.667    },
+};
+
+let _dgUnitPrev = 'kg_min';
+
+function updateRateLabel() {
+  const kgMin = parseFloat(document.getElementById('sl-rate').value);
+  const unit  = document.getElementById('sel-rate-unit')?.value || 'kg_min';
+  const info  = RATE_UNITS[unit];
+  const val   = kgMin * info.fromKgMin;
+  const dp    = unit === 'lb_hr' ? 0 : 1;
+  document.getElementById('lbl-rate').textContent      = val.toFixed(dp);
+  document.getElementById('lbl-rate-unit').textContent  = info.label;
+  const minHint = document.getElementById('rate-hint-min');
+  const maxHint = document.getElementById('rate-hint-max');
+  if (minHint) minHint.textContent = `${(0.1  * info.fromKgMin).toFixed(dp)} ${info.label}`;
+  if (maxHint) maxHint.textContent = `${(500  * info.fromKgMin).toFixed(0)}  ${info.label}`;
+}
+function onRateUnitChange() { updateRateLabel(); }
+
+function onDGUnitChange() {
+  const sel    = document.getElementById('sel-dg-unit');
+  const inp    = document.getElementById('inp-dg-rate');
+  const oldInfo = RATE_UNITS[_dgUnitPrev];
+  const newInfo = RATE_UNITS[sel.value];
+  const kgMin  = (parseFloat(inp.value) || 0) * oldInfo.toKgMin;
+  inp.value    = (kgMin * newInfo.fromKgMin).toFixed(3);
+  _dgUnitPrev  = sel.value;
+}
+function getDGRateKgMin() {
+  const val  = parseFloat(document.getElementById('inp-dg-rate').value) || 0;
+  const unit = document.getElementById('sel-dg-unit')?.value || 'kg_min';
+  return val * RATE_UNITS[unit].toKgMin;
+}
+
 function fmtKm(km, d=2)       { return useImperial ? `${(km*0.621371).toFixed(d)} mi`      : `${km.toFixed(d)} km`; }
 function fmtM(m)               { return useImperial ? `${Math.round(m*3.28084)} ft`          : `${Math.round(m)} m`; }
 function fmtMs(ms)             { return useImperial ? `${(ms*2.23694).toFixed(1)} mph`        : `${(ms*3.6).toFixed(1)} km/h`; }
@@ -1465,7 +1539,7 @@ function applyPreset() {
   const rate = parseFloat(opt.dataset.rate), h = parseFloat(opt.dataset.h);
   const slRate = document.getElementById('sl-rate');
   slRate.value = Math.min(rate, slRate.max);
-  document.getElementById('lbl-rate').textContent = parseFloat(slRate.value).toFixed(1);
+  updateRateLabel();
   document.getElementById('sl-height').value = h;
   document.getElementById('lbl-height').textContent = h;
 }
@@ -1927,25 +2001,28 @@ function updateRadCoordDisplay() {
 
 function clearRadLayers() { for(const l of radLayers) map.removeLayer(l); radLayers=[]; }
 
-function toggleRadUnit() {
-  radUnitCi = !radUnitCi;
-  const inp = document.getElementById('inp-rad-rate');
-  const val = parseFloat(inp.value)||0;
-  document.getElementById('lbl-rad-unit').textContent = radUnitCi?'Ci/min':'mCi/min';
-  document.getElementById('lbl-rad-unit-toggle').textContent = radUnitCi?'switch to mCi/min':'switch to Ci/min';
-  inp.value = radUnitCi ? (val/1000).toFixed(6) : (val*1000).toFixed(3);
-  updateRadNote();
-}
-
 function getRadRateCiMin() {
-  const val = parseFloat(document.getElementById('inp-rad-rate').value)||0;
-  return radUnitCi ? val : val/1000;
+  const val  = parseFloat(document.getElementById('inp-rad-rate').value) || 0;
+  const unit = document.getElementById('sel-rad-unit')?.value || 'Ci_min';
+  return val * RAD_UNITS[unit].toCiMin;
 }
 
 function updateRadNote() {
-  const ciS = getRadRateCiMin()/60;
-  document.getElementById('rad-rate-note').textContent =
-    ciS<0.001 ? `${(ciS*1e6).toFixed(2)} µCi/s` : ciS<1 ? `${(ciS*1000).toFixed(4)} mCi/s` : `${ciS.toFixed(6)} Ci/s`;
+  const ciMin = getRadRateCiMin();
+  const ciS   = ciMin / 60;
+  const bqS   = ciS * 3.7e10;
+  const parts = [];
+  if (ciS < 1e-9)      parts.push(`${(ciS*1e12).toFixed(2)} pCi/s`);
+  else if (ciS < 1e-6) parts.push(`${(ciS*1e9).toFixed(2)} nCi/s`);
+  else if (ciS < 0.001)parts.push(`${(ciS*1e6).toFixed(2)} µCi/s`);
+  else if (ciS < 1)    parts.push(`${(ciS*1000).toFixed(3)} mCi/s`);
+  else                 parts.push(`${ciS.toFixed(4)} Ci/s`);
+  if (bqS < 1e3)       parts.push(`${bqS.toFixed(0)} Bq/s`);
+  else if (bqS < 1e6)  parts.push(`${(bqS/1e3).toFixed(1)} kBq/s`);
+  else if (bqS < 1e9)  parts.push(`${(bqS/1e6).toFixed(2)} MBq/s`);
+  else if (bqS < 1e12) parts.push(`${(bqS/1e9).toFixed(2)} GBq/s`);
+  else                 parts.push(`${(bqS/1e12).toFixed(3)} TBq/s`);
+  document.getElementById('rad-rate-note').textContent = parts.join(' = ');
 }
 
 async function runRadiation() {
@@ -2003,7 +2080,10 @@ function renderRadiationResults(data) {
   const m=data.model;
   const n=radionuclides.find(x=>x.id===document.getElementById('sel-radionuclide').value);
   const ciMin=m.Q_ci_s*60;
-  document.getElementById('rad-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${n?n.name:''} · ${ciMin<0.01?(ciMin*1000).toFixed(3)+' mCi/min':ciMin.toFixed(4)+' Ci/min'}<br/>PG-${m.stability_class} · ${fmtMs(m.wind_speed_ms)} · EPA FGR-12 cloudshine</div>`;
+  const ciStr  = ciMin<0.01?(ciMin*1000).toFixed(3)+' mCi/min':ciMin.toFixed(4)+' Ci/min';
+  const bqS    = ciMin/60*3.7e10;
+  const bqStr  = bqS<1e6?`${(bqS/1e3).toFixed(1)} kBq/s`:bqS<1e9?`${(bqS/1e6).toFixed(2)} MBq/s`:bqS<1e12?`${(bqS/1e9).toFixed(2)} GBq/s`:`${(bqS/1e12).toFixed(3)} TBq/s`;
+  document.getElementById('rad-results-content').innerHTML = rows+`<div style="margin-top:8px;font-size:11px;color:var(--muted)">${n?n.name:''} · ${ciStr} (${bqStr})<br/>PG-${m.stability_class} · ${fmtMs(m.wind_speed_ms)} · EPA FGR-12 cloudshine</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2952,7 +3032,7 @@ async function runDenseGas() {
   if (!wxData) { toast('Fetch weather first', 2000); return; }
   const gasId = document.getElementById('sel-dense-gas').value;
   if (!gasId) { toast('Select a gas', 2000); return; }
-  const rate   = parseFloat(document.getElementById('inp-dg-rate').value)   || 10;
+  const rate   = getDGRateKgMin() || 10;
   const height = parseFloat(document.getElementById('inp-dg-height').value) || 0;
   const body = {
     lat: incidentLatLon.lat, lon: incidentLatLon.lon,
