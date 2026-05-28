@@ -79,6 +79,16 @@ input[type=range]{padding:4px 0;cursor:pointer;accent-color:var(--accent2)}
 .result-unit{color:var(--muted);font-size:11px;margin-left:2px}
 .coord-display{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:monospace;font-size:12px;color:var(--accent2);text-align:center;margin-top:8px}
 .coord-hint{font-size:11px;color:var(--muted);text-align:center;margin-top:4px}
+/* Geocode search */
+.geocode-wrap{position:relative;margin-bottom:8px}
+.geocode-wrap input{width:100%;padding-right:28px}
+.geocode-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0;line-height:1;display:none}
+.geocode-results{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:3100;background:var(--panel);border:1px solid var(--border);border-radius:7px;overflow:hidden;box-shadow:0 6px 24px rgba(0,0,0,.5);max-height:220px;overflow-y:auto;display:none}
+.geocode-item{padding:9px 11px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--text);line-height:1.4}
+.geocode-item:last-child{border-bottom:none}
+.geocode-item:hover,.geocode-item.gc-sel{background:rgba(121,192,255,0.08);color:var(--accent2)}
+.geocode-item .gc-main{font-weight:600;margin-bottom:1px}
+.geocode-item .gc-sub{font-size:11px;color:var(--muted)}
 .export-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
 .toggle-label{font-size:12px}
@@ -389,8 +399,16 @@ input:checked+.slider:before{transform:translateX(16px)}
           <button class="slot-tab" id="slot-tab-1" onclick="switchSlot(1)">+ B</button>
           <button class="slot-tab" id="slot-tab-2" onclick="switchSlot(2)" style="display:none">+ C</button>
         </div>
-        <div class="coord-display" id="coord-display">— click map to place —</div>
-        <div class="coord-hint">Click map to place · drag marker to move</div>
+        <div class="geocode-wrap">
+          <input type="text" id="inp-geocode" placeholder="Search address, city, or grid…"
+                 autocomplete="off" autocorrect="off" spellcheck="false"
+                 oninput="_gcOnInput()" onkeydown="_gcOnKey(event)"
+                 onfocus="_gcOnFocus()" style="font-size:13px"/>
+          <button class="geocode-clear" id="btn-gc-clear" onclick="_gcClear()" tabindex="-1">✕</button>
+          <div class="geocode-results" id="geocode-results"></div>
+        </div>
+        <div class="coord-display" id="coord-display">— search above or click map —</div>
+        <div class="coord-hint">Search · click map · or drag marker to set location</div>
         <div class="row2" style="margin-top:8px">
           <button class="btn btn-danger btn-full" onclick="startPlaceMode()">📍 Place Incident</button>
           <button class="btn btn-ghost btn-full" onclick="clearIncident()">Clear All</button>
@@ -844,6 +862,12 @@ input:checked+.slider:before{transform:translateX(16px)}
           <button class="btn btn-ghost" id="btn-tak-dp" onclick="downloadTAKDP()" disabled style="grid-column:1/-1;background:rgba(0,120,200,0.12);border-color:rgba(0,120,200,0.4);color:#5bb8ff">📦 TAK Data Package (.zip)</button>
           <button class="btn btn-ghost" id="btn-cot-xml" onclick="downloadCoT()" disabled style="grid-column:1/-1;background:rgba(0,160,120,0.10);border-color:rgba(0,160,120,0.35);color:#4dd9b0;font-size:11px">📡 CoT XML — ATAK / FreeTAKServer / WinTAK</button>
           <button class="btn btn-ghost" onclick="printReport()" style="grid-column:1/-1;font-size:11px;margin-top:2px">🖨 Print / Save PDF Incident Report</button>
+          <button class="btn btn-ghost" id="btn-share-url" onclick="shareScenarioURL()" style="grid-column:1/-1;font-size:11px;margin-top:2px;border-color:rgba(0,255,136,0.3);color:var(--green)">🔗 Copy Share Link</button>
+        </div>
+        <div id="share-url-bar" style="display:none;margin-top:8px;position:relative">
+          <input type="text" id="inp-share-url" readonly onclick="this.select()"
+                 style="font-size:11px;cursor:pointer;padding-right:60px"/>
+          <button onclick="_copyShareURL()" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:10px;background:var(--green);color:#0d1117;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-weight:700">Copy</button>
         </div>
         <div id="export-url" style="display:none;margin-top:8px">
           <input type="text" id="inp-export-url" readonly onclick="this.select()" style="font-size:11px;cursor:pointer"/>
@@ -3667,6 +3691,288 @@ loadFuels();
 loadDenseGases();
 loadFireTypes();
 renderTimeline();
+setTimeout(_applyURLParams, 600); // restore shared scenario after async inits settle
+</script>
+
+<script>
+// ── Geocode / address search (Nominatim) ─────────────────────────────────────
+
+let _gcTimer   = null;   // debounce timer
+let _gcData    = [];     // current result set
+let _gcSel     = -1;     // keyboard-selected index
+
+function _gcOnInput() {
+  const q = document.getElementById('inp-geocode').value;
+  document.getElementById('btn-gc-clear').style.display = q ? 'block' : 'none';
+  if (_gcTimer) clearTimeout(_gcTimer);
+  if (q.trim().length < 3) { _gcHide(); return; }
+  _gcTimer = setTimeout(() => _gcFetch(q.trim()), 380);
+}
+
+function _gcOnFocus() {
+  const q = document.getElementById('inp-geocode').value.trim();
+  if (q.length >= 3 && _gcData.length) _gcRender(_gcData);
+}
+
+function _gcOnKey(e) {
+  const res = document.getElementById('geocode-results');
+  if (res.style.display === 'none') return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _gcSel = Math.min(_gcSel + 1, _gcData.length - 1);
+    _gcHighlight();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _gcSel = Math.max(_gcSel - 1, 0);
+    _gcHighlight();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (_gcSel >= 0) _gcSelect(_gcSel);
+  } else if (e.key === 'Escape') {
+    _gcHide();
+  }
+}
+
+function _gcClear() {
+  document.getElementById('inp-geocode').value = '';
+  document.getElementById('btn-gc-clear').style.display = 'none';
+  _gcHide();
+  document.getElementById('inp-geocode').focus();
+}
+
+async function _gcFetch(q) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=6&addressdetails=1`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'en-US,en' } });
+    if (!r.ok) return;
+    _gcData = await r.json();
+    _gcSel  = -1;
+    _gcRender(_gcData);
+  } catch(err) { /* network error — stay silent */ }
+}
+
+function _gcRender(results) {
+  const el = document.getElementById('geocode-results');
+  if (!results.length) { el.style.display = 'none'; return; }
+  el.innerHTML = results.map((r, i) => {
+    const addr = r.address || {};
+    const main = addr.road || addr.suburb || addr.city || addr.county || r.display_name.split(',')[0];
+    const sub  = [addr.city||addr.town||addr.village, addr.state||addr.country]
+                   .filter(Boolean).join(', ');
+    return `<div class="geocode-item" data-idx="${i}" onmousedown="_gcSelect(${i})">
+      <div class="gc-main">${_escHTML(main)}</div>
+      <div class="gc-sub">${_escHTML(sub)}</div>
+    </div>`;
+  }).join('');
+  el.style.display = 'block';
+}
+
+function _gcHighlight() {
+  document.querySelectorAll('.geocode-item').forEach((el, i) =>
+    el.classList.toggle('gc-sel', i === _gcSel));
+}
+
+function _gcSelect(idx) {
+  const r = _gcData[idx];
+  if (!r) return;
+  const lat = parseFloat(r.lat);
+  const lon = parseFloat(r.lon);
+  // Shorten displayed name to first two parts
+  const short = r.display_name.split(',').slice(0, 2).join(',').trim();
+  document.getElementById('inp-geocode').value = short;
+  document.getElementById('btn-gc-clear').style.display = 'block';
+  _gcHide();
+  placeIncident(lat, lon);
+  map.flyTo([lat, lon], 14, { duration: 1.2 });
+}
+
+function _gcHide() {
+  document.getElementById('geocode-results').style.display = 'none';
+  _gcSel = -1;
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', e => {
+  if (!e.target.closest('.geocode-wrap')) _gcHide();
+});
+
+function _escHTML(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+
+// ── Share scenario via URL ────────────────────────────────────────────────────
+
+function shareScenarioURL() {
+  const url = _buildShareURL();
+  document.getElementById('inp-share-url').value = url;
+  document.getElementById('share-url-bar').style.display = 'block';
+  _copyShareURL();
+}
+
+function _copyShareURL() {
+  const inp = document.getElementById('inp-share-url');
+  inp.select();
+  try {
+    navigator.clipboard.writeText(inp.value)
+      .then(() => toast('Share link copied to clipboard', 2000))
+      .catch(() => { inp.select(); toast('Link selected — press Ctrl+C to copy', 3000); });
+  } catch(e) {
+    toast('Link selected — press Ctrl+C to copy', 3000);
+  }
+}
+
+function _buildShareURL() {
+  const p = new URLSearchParams();
+
+  // Location
+  if (incidentLatLon) {
+    p.set('lat', incidentLatLon.lat.toFixed(5));
+    p.set('lon', incidentLatLon.lon.toFixed(5));
+  }
+
+  // Active tool panels
+  const tools = [...activePanels].filter(id => TOOLS.find(t => t.id === id && t.isModel));
+  if (tools.length) p.set('tools', tools.join(','));
+
+  // Plume params
+  if (selectedChem) {
+    p.set('chem', selectedChem.id);
+    const rate = parseFloat(document.getElementById('sl-rate')?.value);
+    if (rate && rate !== 1) p.set('rate', rate);
+    const h = parseFloat(document.getElementById('sl-height')?.value);
+    if (h) p.set('h', h);
+  }
+
+  // Blast params
+  if (activePanels.has('blast')) {
+    const explo = document.getElementById('sel-explosive')?.value;
+    const kg    = document.getElementById('inp-blast-weight')?.value;
+    if (explo) p.set('explo', explo);
+    if (kg && parseFloat(kg) !== 10) p.set('kg', kg);
+  }
+
+  // BLEVE params
+  if (activePanels.has('bleve')) {
+    const fuel = document.getElementById('sel-fuel')?.value;
+    const mass = document.getElementById('inp-bleve-mass')?.value;
+    if (fuel) p.set('fuel', fuel);
+    if (mass && parseFloat(mass) !== 500) p.set('bmass', mass);
+  }
+
+  // ERG params
+  if (activePanels.has('erg')) {
+    const ergQ = document.getElementById('inp-erg-search')?.value;
+    if (ergQ) p.set('erg', ergQ);
+  }
+
+  // Weather (only if manual override is active)
+  const manualWx = document.getElementById('chk-manual-wx')?.checked;
+  if (manualWx) {
+    const wspd = document.getElementById('inp-wind-ms')?.value;
+    const wdir = document.getElementById('inp-wind-dir')?.value;
+    const stab = document.getElementById('sel-stability')?.value;
+    if (wspd) p.set('wspd', wspd);
+    if (wdir) p.set('wdir', wdir);
+    if (stab) p.set('stab', stab);
+    p.set('mwx', '1');
+  }
+
+  const base = window.location.origin + window.location.pathname;
+  return p.toString() ? `${base}?${p}` : base;
+}
+
+// ── Restore scenario from URL params ─────────────────────────────────────────
+
+function _applyURLParams() {
+  const p = new URLSearchParams(window.location.search);
+  if (!p.has('lat') && !p.has('lon')) return; // nothing to restore
+
+  const lat = parseFloat(p.get('lat'));
+  const lon = parseFloat(p.get('lon'));
+
+  if (!isNaN(lat) && !isNaN(lon)) {
+    placeIncident(lat, lon);
+    map.setView([lat, lon], 13);
+  }
+
+  // Chemical
+  const chemId = p.get('chem');
+  if (chemId) {
+    const sel = document.getElementById('sel-chemical');
+    if (sel) {
+      sel.value = chemId;
+      onChemicalChange();
+    }
+  }
+
+  // Release rate
+  const rate = parseFloat(p.get('rate'));
+  if (!isNaN(rate)) {
+    const slider = document.getElementById('sl-rate');
+    if (slider) { slider.value = rate; updateRateLabel(); }
+  }
+
+  // Height
+  const h = parseFloat(p.get('h'));
+  if (!isNaN(h)) {
+    const sl = document.getElementById('sl-height');
+    if (sl) { sl.value = h; document.getElementById('lbl-height').textContent = h; }
+  }
+
+  // Blast
+  const explo = p.get('explo');
+  if (explo) {
+    const sel = document.getElementById('sel-explosive');
+    if (sel) sel.value = explo;
+  }
+  const kg = parseFloat(p.get('kg'));
+  if (!isNaN(kg)) {
+    const inp = document.getElementById('inp-blast-weight');
+    if (inp) { inp.value = kg; updateTNTEquiv(); }
+  }
+
+  // BLEVE
+  const fuel = p.get('fuel');
+  if (fuel) {
+    const sel = document.getElementById('sel-fuel');
+    if (sel) sel.value = fuel;
+  }
+  const bmass = parseFloat(p.get('bmass'));
+  if (!isNaN(bmass)) {
+    const inp = document.getElementById('inp-bleve-mass');
+    if (inp) inp.value = bmass;
+  }
+
+  // ERG
+  const erg = p.get('erg');
+  if (erg) {
+    const inp = document.getElementById('inp-erg-search');
+    if (inp) { inp.value = erg; searchERG(); }
+  }
+
+  // Manual weather
+  if (p.has('mwx')) {
+    const chk = document.getElementById('chk-manual-wx');
+    if (chk && !chk.checked) chk.click();
+    const wspd = parseFloat(p.get('wspd'));
+    const wdir = parseFloat(p.get('wdir'));
+    const stab = p.get('stab');
+    if (!isNaN(wspd)) document.getElementById('inp-wind-ms').value = wspd;
+    if (!isNaN(wdir)) document.getElementById('inp-wind-dir').value = wdir;
+    if (stab) document.getElementById('sel-stability').value = stab;
+  }
+
+  // Open requested tool panels
+  const toolStr = p.get('tools');
+  if (toolStr) {
+    toolStr.split(',').forEach(id => {
+      if (TOOLS.find(t => t.id === id)) activateTool(id);
+    });
+  }
+
+  toast('Scenario loaded from shared link', 2500);
+}
 </script>
 
 <script>
