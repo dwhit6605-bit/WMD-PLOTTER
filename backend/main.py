@@ -154,6 +154,35 @@ async def serve_frontend():
     return HTMLResponse(content="<h1>WMD Plotter</h1><p>Frontend not found.</p>")
 
 
+@app.get("/sw.js")
+async def service_worker():
+    """Service worker must be served from root scope, not /static/."""
+    sw_path = FRONTEND_DIR / "sw.js"
+    if not sw_path.exists():
+        raise HTTPException(status_code=404, detail="sw.js not found")
+    return Response(
+        content=sw_path.read_text(),
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Service-Worker-Allowed": "/",
+        },
+    )
+
+
+@app.get("/manifest.json")
+async def web_manifest():
+    """PWA web app manifest."""
+    manifest_path = FRONTEND_DIR / "manifest.json"
+    if not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="manifest.json not found")
+    return Response(
+        content=manifest_path.read_text(),
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.get("/api/version")
 async def get_version():
     return JSONResponse(content={

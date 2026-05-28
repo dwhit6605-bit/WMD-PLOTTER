@@ -2,8 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
 <title>WHITWERX Model Display (WMD) — CBRN Planning</title>
+
+<!-- PWA -->
+<link rel="manifest" href="/manifest.json"/>
+<meta name="theme-color" content="#0d1117"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="WMD Plotter"/>
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png"/>
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png"/>
+<link rel="icon" type="image/png" sizes="512x512" href="/static/icons/icon-512.png"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.14.2/dist/leaflet-geoman.min.css"/>
@@ -343,6 +354,7 @@ input:checked+.slider:before{transform:translateX(16px)}
     <div style="flex:1"></div>
     <div id="version-badge" class="version-badge" title="WHITWERX Model Display">v—</div>
     <button id="btn-units" onclick="toggleUnits()" title="Toggle units: US Customary ↔ Metric SI" style="font-size:11px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:4px;padding:3px 10px;letter-spacing:.06em;cursor:pointer;transition:color .2s,border-color .2s;color:var(--muted);font-weight:700;display:flex;align-items:center;gap:4px">📐 <span id="btn-units-lbl">US</span></button>
+    <button id="btn-install-pwa" onclick="promptInstallPWA()" title="Install WMD Plotter as an app" style="display:none;font-size:11px;background:rgba(0,255,136,0.08);border:1px solid var(--green);border-radius:4px;padding:3px 10px;letter-spacing:.06em;cursor:pointer;color:var(--green);font-weight:700;align-items:center;gap:4px">⬇ Install App</button>
     <div id="hdr-status" style="font-size:12px;color:var(--muted)">Ready</div>
   </div>
 
@@ -3639,6 +3651,53 @@ loadFuels();
 loadDenseGases();
 loadFireTypes();
 renderTimeline();
+</script>
+
+<script>
+// ── PWA Service Worker registration ──────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .then(reg => {
+        // Prompt user when a new SW version is waiting
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              toast('App update available — reload to apply', 4000);
+            }
+          });
+        });
+      })
+      .catch(err => console.warn('[PWA] SW registration failed:', err));
+  });
+}
+
+// ── Install prompt (Android "Add to Home Screen") ────────────────────────────
+let _deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  _deferredInstallPrompt = e;
+  // Show install button if present
+  const btn = document.getElementById('btn-install-pwa');
+  if (btn) btn.style.display = 'inline-flex';
+});
+
+function promptInstallPWA() {
+  if (!_deferredInstallPrompt) return;
+  _deferredInstallPrompt.prompt();
+  _deferredInstallPrompt.userChoice.then(choice => {
+    if (choice.outcome === 'accepted') toast('WMD Plotter installed!', 2000);
+    _deferredInstallPrompt = null;
+    const btn = document.getElementById('btn-install-pwa');
+    if (btn) btn.style.display = 'none';
+  });
+}
+
+window.addEventListener('appinstalled', () => {
+  toast('WMD Plotter installed to home screen', 2000);
+  _deferredInstallPrompt = null;
+});
 </script>
 </body>
 </html>
