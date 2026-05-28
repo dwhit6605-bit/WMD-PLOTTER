@@ -131,7 +131,7 @@ input:checked+.slider:before{transform:translateX(16px)}
   #map-overlay,#legend,#toast,#mobile-fab,#mobile-overlay,
   .btn,#hdr-status,#geo-status,.slot-tabs,.coord-hint,
   #section-toolpicker,#section-add-overlay,#panel-weather,.tool-panel,
-  #section-location .row2,#btn-use-location,#anim-section,#header,#status-bar{display:none!important}
+  #section-location .row2,#btn-use-location,#anim-section,#header,#status-bar,#pwa-install-banner{display:none!important}
   html,body{height:auto!important;overflow:visible!important}
   #app{display:block!important;height:auto!important}
   #body{display:block!important;height:auto!important;overflow:visible!important}
@@ -354,13 +354,29 @@ input:checked+.slider:before{transform:translateX(16px)}
     <div style="flex:1"></div>
     <div id="version-badge" class="version-badge" title="WHITWERX Model Display">v—</div>
     <button id="btn-units" onclick="toggleUnits()" title="Toggle units: US Customary ↔ Metric SI" style="font-size:11px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:4px;padding:3px 10px;letter-spacing:.06em;cursor:pointer;transition:color .2s,border-color .2s;color:var(--muted);font-weight:700;display:flex;align-items:center;gap:4px">📐 <span id="btn-units-lbl">US</span></button>
-    <button id="btn-install-pwa" onclick="promptInstallPWA()" title="Install WMD Plotter as an app" style="display:none;font-size:11px;background:rgba(0,255,136,0.08);border:1px solid var(--green);border-radius:4px;padding:3px 10px;letter-spacing:.06em;cursor:pointer;color:var(--green);font-weight:700;align-items:center;gap:4px">⬇ Install App</button>
     <div id="hdr-status" style="font-size:12px;color:var(--muted)">Ready</div>
   </div>
 
   <div id="body">
     <div id="sidebar">
       <div id="print-header"></div>
+
+      <!-- PWA install banner — shown when not already installed -->
+      <div id="pwa-install-banner" style="display:none;margin-bottom:10px;border-radius:7px;border:1px solid var(--green);background:rgba(0,255,136,0.06);padding:10px 12px">
+        <div style="font-size:11px;font-weight:700;color:var(--green);letter-spacing:.06em;margin-bottom:6px">📲 INSTALL APP</div>
+        <!-- Android Chrome: shows when beforeinstallprompt fires -->
+        <div id="pwa-android-prompt" style="display:none">
+          <div style="font-size:12px;color:var(--text);margin-bottom:8px;line-height:1.4">Add WMD Plotter to your home screen for quick access in the field.</div>
+          <button class="btn btn-ghost btn-full" id="btn-install-pwa" onclick="promptInstallPWA()" style="border-color:var(--green);color:var(--green)">⬇ Add to Home Screen</button>
+        </div>
+        <!-- iOS Safari: manual instructions -->
+        <div id="pwa-ios-prompt" style="display:none">
+          <div style="font-size:12px;color:var(--text);line-height:1.6">
+            Tap <strong style="color:var(--green)">Share</strong> <span style="font-size:14px">⎋</span> at the bottom of Safari, then tap <strong style="color:var(--green)">"Add to Home Screen"</strong>.
+          </div>
+        </div>
+        <button onclick="document.getElementById('pwa-install-banner').style.display='none'" style="margin-top:6px;font-size:10px;background:none;border:none;color:var(--muted);cursor:pointer;padding:0">Dismiss</button>
+      </div>
 
       <!-- STEP 1 -->
       <div class="section" id="section-location">
@@ -3659,11 +3675,10 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
       .then(reg => {
-        // Prompt user when a new SW version is waiting
         reg.addEventListener('updatefound', () => {
-          const newWorker = reg.installing;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          const nw = reg.installing;
+          nw.addEventListener('statechange', () => {
+            if (nw.state === 'installed' && navigator.serviceWorker.controller) {
               toast('App update available — reload to apply', 4000);
             }
           });
@@ -3673,14 +3688,33 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-// ── Install prompt (Android "Add to Home Screen") ────────────────────────────
+// ── Install banner logic ──────────────────────────────────────────────────────
 let _deferredInstallPrompt = null;
+
+(function _initPWABanner() {
+  // Already running as installed standalone app — hide banner entirely
+  const isStandalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true;
+  if (isStandalone) return;
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  const isAndroidChrome = /Android/.test(navigator.userAgent);
+
+  if (isIOS && isSafari) {
+    // iOS Safari: show manual instructions immediately (no API available)
+    document.getElementById('pwa-ios-prompt').style.display = 'block';
+    document.getElementById('pwa-install-banner').style.display = 'block';
+  }
+  // Android Chrome: wait for beforeinstallprompt (handled below)
+})();
+
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   _deferredInstallPrompt = e;
-  // Show install button if present
-  const btn = document.getElementById('btn-install-pwa');
-  if (btn) btn.style.display = 'inline-flex';
+  document.getElementById('pwa-android-prompt').style.display = 'block';
+  document.getElementById('pwa-install-banner').style.display = 'block';
 });
 
 function promptInstallPWA() {
@@ -3689,14 +3723,14 @@ function promptInstallPWA() {
   _deferredInstallPrompt.userChoice.then(choice => {
     if (choice.outcome === 'accepted') toast('WMD Plotter installed!', 2000);
     _deferredInstallPrompt = null;
-    const btn = document.getElementById('btn-install-pwa');
-    if (btn) btn.style.display = 'none';
+    document.getElementById('pwa-install-banner').style.display = 'none';
   });
 }
 
 window.addEventListener('appinstalled', () => {
   toast('WMD Plotter installed to home screen', 2000);
   _deferredInstallPrompt = null;
+  document.getElementById('pwa-install-banner').style.display = 'none';
 });
 </script>
 </body>
