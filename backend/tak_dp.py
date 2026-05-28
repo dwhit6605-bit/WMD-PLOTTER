@@ -23,11 +23,13 @@ _MANIFEST_TEMPLATE = """\
     <Parameter name="uid" value="{uid}"/>
     <Parameter name="name" value="{name}"/>
     <Parameter name="onReceiveDelete" value="false"/>
+    <Parameter name="onReceiveImport" value="true"/>
   </Configuration>
   <Contents>
     <Content ignore="false" zipEntry="files/{kml_filename}">
       <Parameter name="contentType" value="KML"/>
       <Parameter name="name" value="{kml_display_name}"/>
+      <Parameter name="visible" value="true"/>
     </Content>
   </Contents>
 </MissionPackageManifest>
@@ -48,9 +50,9 @@ def build_tak_data_package(kml_bytes: bytes, active_tools: list[str]) -> tuple[b
 
     manifest = _MANIFEST_TEMPLATE.format(
         uid=pkg_uid,
-        name=f"WMD PLOTTER — {tool_tag.replace('_', ' ').upper()} {ts}",
+        name=f"WMD PLOTTER {tool_tag.replace('_', ' ').upper()} {ts}",
         kml_filename=kml_filename,
-        kml_display_name=f"WMD PLOTTER Hazard Zones ({ts})",
+        kml_display_name=f"WMD PLOTTER Hazard Zones {ts}",
     )
 
     buf = io.BytesIO()
@@ -127,5 +129,7 @@ def build_cot_xml(overlay_state: dict) -> str:
             uid   = f"wmd-{tool}-{z.get('level','z')}-{i}"
             events.append(_polygon_cot_event(uid, label, color, lonlat, src_lat, src_lon))
 
+    # <events> is the FreeTAK Server / WinTAK bulk-import container.
+    # For ATAK UDP streaming send each <event> individually without wrapper.
     body = "\n\n".join(events)
     return f'<?xml version="1.0" encoding="UTF-8"?>\n<events>\n{body}\n</events>'

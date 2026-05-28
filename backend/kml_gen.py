@@ -14,6 +14,19 @@ Spec: OGC KML 2.2 / Google Earth KML reference.
 from datetime import datetime, timezone
 
 
+# ── XML / string helpers ─────────────────────────────────────────────────────
+
+def _xml_escape(s: str) -> str:
+    """Escape a string for safe insertion into an XML element (not inside CDATA)."""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
 # ── Colour helpers (KML uses AABBGGRR hex) ────────────────────────────────────
 
 def _hex_to_kml_color(hex_color: str, alpha_pct: int = 50) -> str:
@@ -58,7 +71,7 @@ def _lonlat_ring_to_kml(lonlat: list) -> str:
 def _polygon_placemark(name: str, desc: str, style_id: str, coords_str: str) -> str:
     return f"""
   <Placemark>
-    <name>{name}</name>
+    <name>{_xml_escape(name)}</name>
     <description><![CDATA[{desc}]]></description>
     <styleUrl>#{style_id}</styleUrl>
     <Polygon>
@@ -77,7 +90,7 @@ def _point_placemark(name: str, desc: str, lat: float, lon: float,
                      icon_color: str = "ff0000ff") -> str:
     return f"""
   <Placemark>
-    <name>{name}</name>
+    <name>{_xml_escape(name)}</name>
     <description><![CDATA[{desc}]]></description>
     <Style>
       <IconStyle>
@@ -125,7 +138,7 @@ def _plume_folder(state: dict) -> tuple[str, str]:
         f"<b>Computed:</b> {now}"
     )
     placemarks = _point_placemark(
-        name=f"⚠ INCIDENT: {chem}",
+        name=f"[CHEM] INCIDENT: {chem}",
         desc=source_desc,
         lat=state["source_lat"],
         lon=state["source_lon"],
@@ -174,7 +187,7 @@ def _blast_folder(state: dict) -> tuple[str, str]:
         f"<b>Computed:</b> {now}"
     )
     placemarks = _point_placemark(
-        name="💥 DETONATION POINT",
+        name="[EXP] DETONATION POINT",
         desc=source_desc,
         lat=state["source_lat"],
         lon=state["source_lon"],
@@ -222,7 +235,7 @@ def _bleve_folder(state: dict) -> tuple[str, str]:
         f"<b>Computed:</b> {now}"
     )
     placemarks = _point_placemark(
-        name="🔥 BLEVE SOURCE",
+        name="[BLEVE] FIREBALL SOURCE",
         desc=source_desc,
         lat=state["source_lat"],
         lon=state["source_lon"],
@@ -278,7 +291,7 @@ def _radiation_folder(state: dict) -> tuple[str, str]:
         f"<b>Computed:</b> {now}"
     )
     placemarks = _point_placemark(
-        name=f"☢ RAD SOURCE: {symbol}",
+        name=f"[RAD] SOURCE: {symbol}",
         desc=source_desc,
         lat=state["source_lat"],
         lon=state["source_lon"],
@@ -327,15 +340,15 @@ def _erg_folder(state: dict) -> tuple[str, str]:
 
     styles = ""
     placemarks = _point_placemark(
-        name=f"🧪 SPILL SOURCE — UN{un}",
+        name=f"[ERG] SPILL SOURCE UN{un}",
         desc=(
-            f"<b>UN{un}</b> — {name}<br/>"
+            f"<b>UN{un}</b> - {name}<br/>"
             f"<b>Guide:</b> #{guide}<br/>"
             f"<b>Spill size:</b> {size}<br/>"
             f"<b>Isolation:</b> {sz.get('isolation_m', '?')} m<br/>"
             f"<b>PAD (day):</b> {sz.get('day_pad_km', '?')} km<br/>"
             f"<b>PAD (night):</b> {sz.get('night_pad_km', '?')} km<br/>"
-            f"<b>Source:</b> ERG 2024 Table 1 · DOT/PHMSA<br/>"
+            f"<b>Source:</b> ERG 2024 Table 1 / DOT/PHMSA<br/>"
             f"<b>Computed:</b> {now}"
         ),
         lat=state["source_lat"],
@@ -361,8 +374,8 @@ def _erg_folder(state: dict) -> tuple[str, str]:
 
     folder = f"""
   <Folder>
-    <name>ERG Zones — UN{un} {name} ({size})</name>
-    <description><![CDATA[ERG 2024 Table 1 · Initial Isolation &amp; Protective Action Distances · Guide #{guide}]]></description>
+    <name>ERG Zones UN{un} {_xml_escape(name)} ({size})</name>
+    <description><![CDATA[ERG 2024 Table 1 - Initial Isolation & Protective Action Distances - Guide #{guide}]]></description>
     <open>1</open>
     {placemarks}
   </Folder>"""
@@ -395,7 +408,7 @@ def _dense_gas_folder(state: dict) -> tuple[str, str]:
         f"<b>Computed:</b> {now}"
     )
     placemarks = _point_placemark(
-        name=f"🌫 DENSE GAS: {gas_name}",
+        name=f"[DG] DENSE GAS: {gas_name}",
         desc=source_desc,
         lat=state["source_lat"],
         lon=state["source_lon"],
@@ -447,7 +460,7 @@ def _fire_smoke_folder(state: dict) -> tuple[str, str]:
         f"<b>Computed:</b> {now}"
     )
     placemarks = _point_placemark(
-        name=f"🔥 FIRE: {fire_name}",
+        name=f"[FIRE] {fire_name}",
         desc=source_desc,
         lat=state["source_lat"],
         lon=state["source_lon"],
@@ -503,7 +516,7 @@ def _population_folder(state: dict) -> tuple[str, str]:
         f"<b>Computed:</b> {now}"
     )
     placemarks = _point_placemark(
-        name="👥 POPULATION EXPOSURE CENTER",
+        name="[POP] EXPOSURE CENTER",
         desc=source_desc,
         lat=state["source_lat"],
         lon=state["source_lon"],
@@ -562,7 +575,7 @@ def _infra_folder(state: dict) -> tuple[str, str]:
         f"<b>Queried:</b> {now}"
     )
     placemarks = _point_placemark(
-        name="🏢 INFRA SEARCH CENTER",
+        name="[INFRA] SEARCH CENTER",
         desc=source_desc,
         lat=state["source_lat"],
         lon=state["source_lon"],
@@ -641,9 +654,10 @@ def build_combined_kml(overlay_state: dict) -> str:
     active_str = " + ".join(active) if active else "No active overlays"
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-<Document>
-  <name>WHITWERX WMD Display — {active_str}</name>
+<kml xmlns="http://www.opengis.net/kml/2.2"
+     xmlns:atom="http://www.w3.org/2005/Atom">
+<Document id="wmd-plotter-root">
+  <name>{_xml_escape(f"WHITWERX WMD Display - {active_str}")}</name>
   <description><![CDATA[
     <b>WHITWERX Model Display (WMD)</b><br/>
     Active overlays: {active_str}<br/>
