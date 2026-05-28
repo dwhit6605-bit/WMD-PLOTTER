@@ -3684,14 +3684,22 @@ async function loadVersion() {
 buildToolPicker();
 _updateUnitBtn();
 loadVersion();
-loadChemicals();
-loadExplosives();
-loadRadionuclides();
-loadFuels();
-loadDenseGases();
-loadFireTypes();
-renderTimeline();
-setTimeout(_applyURLParams, 600); // restore shared scenario after async inits settle
+// Run all data-fetch inits in parallel; apply URL params only after every
+// dropdown is populated (avoids the sel.value race condition on cold load).
+Promise.all([
+  loadChemicals(),
+  loadExplosives(),
+  loadRadionuclides(),
+  loadFuels(),
+  loadDenseGases(),
+  loadFireTypes(),
+]).then(() => {
+  renderTimeline();
+  _applyURLParams();
+}).catch(() => {
+  renderTimeline();
+  setTimeout(_applyURLParams, 1500); // fallback if a fetch fails
+});
 </script>
 
 <script>
