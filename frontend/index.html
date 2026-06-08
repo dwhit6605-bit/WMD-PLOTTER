@@ -1373,6 +1373,8 @@ function openWeatherPanel() {
 function clearIncident() {
   if (incidentMarker) { map.removeLayer(incidentMarker); incidentMarker = null; }
   incidentLatLon = null;
+  // Clear all server-side overlays so exports don't include stale scenario data
+  fetch(`${API}/api/overlay`, { method: 'DELETE' }).catch(() => {});
   clearPlumeLayers(); clearBlastLayers(); clearRadLayers(); clearBleveLayers(); clearInfraLayers();
   if (blastMarker) { map.removeLayer(blastMarker); blastMarker = null; } blastLatLon = null;
   if (radMarker)   { map.removeLayer(radMarker);   radMarker = null;   } radLatLon = null;
@@ -1564,6 +1566,8 @@ function deactivateTool(id) {
   if (panel) panel.style.display = 'none';
   const stillNeedsWeather = [...activePanels].some(i => TOOLS.find(t=>t.id===i)?.needsWeather);
   if (!stillNeedsWeather) document.getElementById('panel-weather').style.display = 'none';
+  // Tell the server to drop this overlay so exports stay in sync with what's actually open
+  fetch(`${API}/api/overlay/${id}`, { method: 'DELETE' }).catch(() => {});
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3332,7 +3336,10 @@ function _annotLayerToKML(layer) {
 }
 
 async function downloadTAKDP() {
-  const r = await fetch(`${API}/export/tak-dp`);
+  // Pass the currently active panels so the server only bundles overlays the user has open
+  const activeTools = [...activePanels].join(',');
+  const url = activeTools ? `${API}/export/tak-dp?tools=${encodeURIComponent(activeTools)}` : `${API}/export/tak-dp`;
+  const r = await fetch(url);
   if (!r.ok) { toast('No overlays to export yet', 2000); return; }
   const blob = await r.blob();
   const cd = r.headers.get('Content-Disposition') || '';

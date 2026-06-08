@@ -545,13 +545,42 @@ async def download_kml():
     )
 
 
+@app.delete("/api/overlay/{tool_id}")
+async def clear_overlay(tool_id: str):
+    """Clear a single tool's overlay from server state (called when the user closes a tool panel)."""
+    if tool_id not in _overlay_state:
+        raise HTTPException(status_code=404, detail=f"Unknown overlay: {tool_id}")
+    _overlay_state[tool_id] = {}
+    return {"status": "cleared", "tool": tool_id}
+
+
+@app.delete("/api/overlay")
+async def clear_all_overlays():
+    """Clear all overlays (called on full scenario reset)."""
+    for key in _overlay_state:
+        _overlay_state[key] = {}
+    return {"status": "cleared"}
+
+
 @app.get("/export/tak-dp")
-async def export_tak_data_package():
-    """Download a TAK Data Package (.zip) for import into ATAK/WinTAK/iTAK."""
-    if not any(_overlay_state.values()):
+async def export_tak_data_package(tools: Optional[str] = Query(default=None)):
+    """Download a TAK Data Package (.zip) for import into ATAK/WinTAK/iTAK.
+
+    Optional ?tools=plume,blast query param restricts which overlays are included.
+    If omitted, all non-empty overlays are included (legacy behaviour).
+    """
+    # Determine which overlays to export
+    if tools:
+        requested = [t.strip() for t in tools.split(",") if t.strip()]
+        export_state = {k: v for k, v in _overlay_state.items() if k in requested and v}
+    else:
+        export_state = {k: v for k, v in _overlay_state.items() if v}
+
+    if not export_state:
         raise HTTPException(status_code=404, detail="No overlays computed yet.")
-    active = [k for k, v in _overlay_state.items() if v]
-    kml_bytes = build_combined_kml(_overlay_state).encode("utf-8")
+
+    active = list(export_state.keys())
+    kml_bytes = build_combined_kml(export_state).encode("utf-8")
     zip_bytes, filename = build_tak_data_package(kml_bytes, active)
     return Response(
         content=zip_bytes,
