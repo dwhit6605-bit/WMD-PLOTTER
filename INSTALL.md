@@ -8,15 +8,17 @@
 
 1. [Prerequisites](#1-prerequisites)
 2. [Deploy to a VPS (5 minutes)](#2-deploy-to-a-vps)
-3. [Environment Variables (API keys)](#3-environment-variables)
-4. [Verify It's Running](#4-verify-its-running)
-5. [First-Use Walkthrough](#5-first-use-walkthrough)
-6. [TAK / ATAK Integration](#6-tak--atak-integration)
-7. [Google Earth Integration](#7-google-earth-integration)
-8. [Managing the Service](#8-managing-the-service)
-9. [Updating](#9-updating)
-10. [Installing on a Phone (PWA)](#10-installing-on-a-phone-pwa)
-11. [Troubleshooting](#11-troubleshooting)
+3. [Deploy with Docker](#3-deploy-with-docker)
+4. [Access Control (Passphrase Gate)](#4-access-control-passphrase-gate)
+5. [Environment Variables (API keys)](#5-environment-variables)
+6. [Verify It's Running](#6-verify-its-running)
+7. [First-Use Walkthrough](#7-first-use-walkthrough)
+8. [TAK / ATAK Integration](#8-tak--atak-integration)
+9. [Google Earth Integration](#9-google-earth-integration)
+10. [Managing the Service](#10-managing-the-service)
+11. [Updating](#11-updating)
+12. [Installing on a Phone (PWA)](#12-installing-on-a-phone-pwa)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -75,7 +77,142 @@ The whole process takes **2–5 minutes**.
 
 ---
 
-## 3. Environment Variables
+## 3. Deploy with Docker
+
+If you prefer Docker over bare-metal systemd, a `docker-compose.yml` is included.
+
+### Prerequisites
+
+- Docker Engine 24+ and Docker Compose v2
+- Any Linux distro, macOS, or Windows (WSL2)
+
+### Quick start
+
+```bash
+git clone https://github.com/dwhit6605-bit/WMD-PLOTTER.git
+cd WMD-PLOTTER
+
+# Optional: add your FIRMS API key
+echo "FIRMS_MAP_KEY=your_key_here" > backend/.env
+
+docker compose up -d
+```
+
+Open `http://localhost:8000`.
+
+### Expose on a public port
+
+The default binds to `localhost:8000`. To expose it on all interfaces (e.g., behind your own reverse proxy):
+
+```yaml
+# docker-compose.yml — change the ports line:
+ports:
+  - "0.0.0.0:8000:8000"
+```
+
+### Adding HTTPS with Caddy (recommended for Docker)
+
+Create a `Caddyfile` next to docker-compose.yml:
+
+```
+your.domain.com {
+    reverse_proxy wmd-plotter:8000
+    basicauth /* {
+        wmd JDJhJDE0JHhY...   # bcrypt hash — generate with: caddy hash-password
+    }
+}
+```
+
+Add Caddy to your `docker-compose.yml`:
+
+```yaml
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - wmd-plotter
+
+volumes:
+  caddy_data:
+  caddy_config:
+```
+
+### Updating (Docker)
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+---
+
+## 4. Access Control (Passphrase Gate)
+
+By default the app is open to anyone who can reach the URL. For a shared or internet-facing server, enable HTTP Basic Auth so the app requires a username and passphrase before loading.
+
+### Enable at deploy time (VPS)
+
+```bash
+sudo bash deploy.sh \
+  --domain your.domain.com \
+  --email  you@example.com \
+  --git-url https://github.com/dwhit6605-bit/WMD-PLOTTER.git \
+  --auth-user wmd \
+  --auth-pass YourPassphraseHere
+```
+
+### Enable on an existing install (VPS)
+
+```bash
+# Install htpasswd utility
+sudo apt-get install -y apache2-utils
+
+# Create the password file
+sudo htpasswd -bc /etc/nginx/.wmd-htpasswd wmd YourPassphraseHere
+sudo chmod 640 /etc/nginx/.wmd-htpasswd
+sudo chown root:www-data /etc/nginx/.wmd-htpasswd
+
+# Add these two lines inside the server{} block in nginx config,
+# just before the first location{} block:
+sudo nano /etc/nginx/sites-available/wmd-plotter
+```
+
+Add inside `server { ... }`:
+```nginx
+auth_basic "WMD Plotter — Authorized Access Only";
+auth_basic_user_file /etc/nginx/.wmd-htpasswd;
+```
+
+Then reload nginx:
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### Change the passphrase
+
+```bash
+sudo htpasswd /etc/nginx/.wmd-htpasswd wmd
+# (prompts for new password)
+```
+
+### Disable auth
+
+Remove the two `auth_basic` lines from `/etc/nginx/sites-available/wmd-plotter`, then:
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+> **Note:** HTTP Basic Auth sends credentials with every request. Use it over HTTPS only (i.e., with a domain and Let's Encrypt certificate).
+
+---
+
+## 5. Environment Variables
 
 Some features require API keys. These are stored in a `.env` file that is **never committed to git**.
 
@@ -110,7 +247,7 @@ sudo systemctl restart wmd-plotter
 
 ---
 
-## 4. Verify It's Running
+## 6. Verify It's Running
 
 ```bash
 # Check service status
@@ -132,7 +269,7 @@ Open a browser and go to your domain (or `http://<server-ip>`). You should see t
 
 ---
 
-## 5. First-Use Walkthrough
+## 7. First-Use Walkthrough
 
 ### Step 1 — Place your incident
 
@@ -187,7 +324,7 @@ Use the **Export** section in the left panel:
 
 ---
 
-## 6. TAK / ATAK Integration
+## 8. TAK / ATAK Integration
 
 ### Import a Data Package into ATAK
 
@@ -212,7 +349,7 @@ Use the **Export** section in the left panel:
 
 ---
 
-## 7. Google Earth Integration
+## 9. Google Earth Integration
 
 ### One-time Network Link setup (live-updating)
 
@@ -227,7 +364,7 @@ Click **KML Download** for a one-time export. Open with Google Earth, ArcGIS, QG
 
 ---
 
-## 8. Managing the Service
+## 10. Managing the Service
 
 ```bash
 # Status
@@ -250,7 +387,7 @@ sudo journalctl -u wmd-plotter -n 100
 
 ---
 
-## 9. Updating
+## 11. Updating
 
 Pull the latest code and restart in one command:
 
@@ -262,7 +399,7 @@ This pulls from GitHub, upgrades any new Python dependencies, and restarts the s
 
 ---
 
-## 10. Installing on a Phone (PWA)
+## 12. Installing on a Phone (PWA)
 
 WMD Plotter is a **Progressive Web App** — it can be installed on Android or iOS and works like a native app with an offline shell.
 
@@ -285,7 +422,7 @@ Once installed, the app shell loads instantly even with no signal. Model runs st
 
 ---
 
-## 11. Troubleshooting
+## 13. Troubleshooting
 
 ### App doesn't load / blank page
 

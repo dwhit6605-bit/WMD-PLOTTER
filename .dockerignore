@@ -1,0 +1,32 @@
+# Git / CI
+.git/
+.github/
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Secrets — never bake into the image
+backend/.env
+backend/.env.*
+
+# Dev / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.claude/
+
+# Docs / assets (not needed at runtime)
+docs/
+*.md
+LICENSE
+
+# Test / CI artifacts
+htmlcov/
+.coverage

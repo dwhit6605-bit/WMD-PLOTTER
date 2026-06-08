@@ -7,10 +7,12 @@
 #   bash deploy.sh --domain your.domain.com --email you@example.com \
 #                  --git-url https://github.com/you/wmd-plotter.git
 #
-#   --domain   Your domain name (required for HTTPS)
-#   --email    Email for Let's Encrypt certificate (required with --domain)
-#   --git-url  Git repo URL; clones into APP_DIR and enables update.sh
-#   --port     Internal uvicorn port (default: 8000)
+#   --domain      Your domain name (required for HTTPS)
+#   --email       Email for Let's Encrypt certificate (required with --domain)
+#   --git-url     Git repo URL; clones into APP_DIR and enables wmd-update
+#   --port        Internal uvicorn port (default: 8000)
+#   --auth-user   Enable HTTP Basic Auth — set the username (default: wmd)
+#   --auth-pass   Enable HTTP Basic Auth — set the passphrase (required to enable auth)
 # =============================================================================
 set -euo pipefail
 
@@ -18,16 +20,21 @@ PORT=8000
 DOMAIN=""
 EMAIL=""
 GIT_URL=""
+AUTH_USER=""
+AUTH_PASS=""
 APP_USER="wmdplotter"
 APP_DIR="/opt/wmd-plotter"
 SERVICE="wmd-plotter"
+HTPASSWD_FILE="/etc/nginx/.wmd-htpasswd"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --port)    PORT="$2";    shift 2 ;;
-    --domain)  DOMAIN="$2";  shift 2 ;;
-    --email)   EMAIL="$2";   shift 2 ;;
-    --git-url) GIT_URL="$2"; shift 2 ;;
+    --port)      PORT="$2";      shift 2 ;;
+    --domain)    DOMAIN="$2";    shift 2 ;;
+    --email)     EMAIL="$2";     shift 2 ;;
+    --git-url)   GIT_URL="$2";   shift 2 ;;
+    --auth-user) AUTH_USER="$2"; shift 2 ;;
+    --auth-pass) AUTH_PASS="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -37,15 +44,29 @@ if [[ -n "$DOMAIN" && -z "$EMAIL" ]]; then
   exit 1
 fi
 
+if [[ -n "$AUTH_PASS" && -z "$AUTH_USER" ]]; then
+  AUTH_USER="wmd"
+fi
+
+if [[ -n "$AUTH_USER" && -z "$AUTH_PASS" ]]; then
+  echo "ERROR: --auth-pass is required when --auth-user is set."
+  exit 1
+fi
+
 echo "=== WMD Plotter Deployment ==="
 echo "Port:    $PORT"
 echo "Domain:  ${DOMAIN:-<not set, nginx will use server IP>}"
 echo "Git URL: ${GIT_URL:-<not set, copying from script directory>}"
+echo "Auth:    ${AUTH_USER:+enabled (user: $AUTH_USER)}${AUTH_USER:-disabled}"
 
 # ── 1. System packages ────────────────────────────────────────────────────────
 echo "→ Installing system packages…"
 apt-get update -q
 apt-get install -y -q python3 python3-pip python3-venv nginx curl git
+
+if [[ -n "$AUTH_PASS" ]]; then
+  apt-get install -y -q apache2-utils   # provides htpasswd
+fi
 
 # ── 2. App user ───────────────────────────────────────────────────────────────
 echo "→ Creating app user…"
@@ -103,7 +124,19 @@ systemctl enable "$SERVICE"
 systemctl restart "$SERVICE"
 echo "→ Service started ($(systemctl is-active $SERVICE))"
 
-# ── 6. Nginx reverse proxy ────────────────────────────────────────────────────
+# ── 6. HTTP Basic Auth (optional) ─────────────────────────────────────────────
+AUTH_DIRECTIVES=""
+if [[ -n "$AUTH_PASS" ]]; then
+  echo "→ Setting up HTTP Basic Auth (user: ${AUTH_USER})…"
+  htpasswd -bc "$HTPASSWD_FILE" "$AUTH_USER" "$AUTH_PASS"
+  chmod 640 "$HTPASSWD_FILE"
+  chown root:www-data "$HTPASSWD_FILE"
+  AUTH_DIRECTIVES="
+    auth_basic \"WMD Plotter — Authorized Access Only\";
+    auth_basic_user_file ${HTPASSWD_FILE};"
+fi
+
+# ── 7. Nginx reverse proxy ────────────────────────────────────────────────────
 echo "→ Configuring nginx…"
 SERVER_NAME=${DOMAIN:-_}
 
@@ -116,7 +149,7 @@ server {
 
     gzip on;
     gzip_types text/plain application/json application/vnd.google-earth.kml+xml;
-
+${AUTH_DIRECTIVES}
     location / {
         proxy_pass         http://127.0.0.1:${PORT};
         proxy_http_version 1.1;
@@ -138,7 +171,7 @@ ln -sf /etc/nginx/sites-available/wmd-plotter /etc/nginx/sites-enabled/wmd-plott
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 
-# ── 7. Firewall ───────────────────────────────────────────────────────────────
+# ── 8. Firewall ───────────────────────────────────────────────────────────────
 if command -v ufw &>/dev/null; then
   echo "→ Configuring UFW firewall…"
   ufw allow 22/tcp
@@ -149,7 +182,7 @@ if command -v ufw &>/dev/null; then
   ufw --force enable
 fi
 
-# ── 8. HTTPS via Let's Encrypt ────────────────────────────────────────────────
+# ── 9. HTTPS via Let's Encrypt ────────────────────────────────────────────────
 if [[ -n "$DOMAIN" ]]; then
   echo "→ Installing Certbot and requesting certificate for ${DOMAIN}…"
   apt-get install -y -q certbot python3-certbot-nginx
@@ -162,7 +195,7 @@ if [[ -n "$DOMAIN" ]]; then
   echo "→ HTTPS configured (auto-renews via certbot.timer)"
 fi
 
-# ── 9. Install update.sh ──────────────────────────────────────────────────────
+# ── 10. Install wmd-update ────────────────────────────────────────────────────
 if [[ -n "$GIT_URL" ]]; then
   echo "→ Installing update script at /usr/local/bin/wmd-update…"
   cat > /usr/local/bin/wmd-update <<'UPDATESCRIPT'
@@ -194,6 +227,14 @@ echo "  App:               ${BASE}/"
 echo "  API docs:          ${BASE}/docs"
 echo "  Live KML:          ${BASE}/kml/live.kml"
 echo "  Network Link KML:  ${BASE}/kml/network.kml"
+if [[ -n "$AUTH_PASS" ]]; then
+  echo ""
+  echo "  Auth:              HTTP Basic Auth enabled"
+  echo "  Username:          ${AUTH_USER}"
+  echo "  Change password:   htpasswd ${HTPASSWD_FILE} ${AUTH_USER}"
+  echo "  Disable auth:      Remove auth_basic lines from /etc/nginx/sites-available/wmd-plotter"
+  echo "                     then: nginx -t && systemctl reload nginx"
+fi
 echo ""
 echo "  Manage service:"
 echo "    systemctl status  $SERVICE"

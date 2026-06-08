@@ -45,9 +45,11 @@ Multiple models run simultaneously and stack on the same map.
 
 ---
 
-## Deploy in 5 Minutes
+## Deploy
 
-Requires Ubuntu 22.04 VPS. Run as root:
+### Option A — Ubuntu VPS (recommended)
+
+Requires Ubuntu 22.04. Run as root:
 
 ```bash
 git clone https://github.com/dwhit6605-bit/WMD-PLOTTER.git /tmp/wmd-install
@@ -59,16 +61,42 @@ sudo bash deploy.sh \
   --git-url https://github.com/dwhit6605-bit/WMD-PLOTTER.git
 ```
 
-The script handles everything: Python virtualenv, systemd service, nginx reverse proxy, UFW firewall, and Let's Encrypt HTTPS.
+Handles everything: Python virtualenv, systemd service, nginx reverse proxy, UFW firewall, and Let's Encrypt HTTPS. Takes 2–5 minutes.
 
-**No domain?** Drop the `--domain` and `--email` flags to deploy over HTTP on a plain IP.
+**Add access control** (optional but recommended):
 
-**Update later:**
 ```bash
-sudo wmd-update
+sudo bash deploy.sh \
+  --domain your.domain.com \
+  --email  you@example.com \
+  --git-url https://github.com/dwhit6605-bit/WMD-PLOTTER.git \
+  --auth-user wmd \
+  --auth-pass YourPassphraseHere
 ```
 
-See [INSTALL.md](INSTALL.md) for the complete deployment guide, environment variable setup, ATAK integration steps, and troubleshooting.
+Enables HTTP Basic Auth via nginx — all routes require the passphrase before the app loads.
+
+**Update later:** `sudo wmd-update`
+
+---
+
+### Option B — Docker
+
+```bash
+git clone https://github.com/dwhit6605-bit/WMD-PLOTTER.git
+cd WMD-PLOTTER
+
+# Optional: add your FIRMS key
+echo "FIRMS_MAP_KEY=your_key_here" > backend/.env
+
+docker compose up -d
+```
+
+Open `http://localhost:8000`. Put Caddy, Traefik, or nginx in front for HTTPS.
+
+---
+
+See [INSTALL.md](INSTALL.md) for the complete guide — environment variables, ATAK integration, PWA setup, and troubleshooting.
 
 ---
 

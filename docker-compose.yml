@@ -1,0 +1,38 @@
+services:
+
+  wmd-plotter:
+    build: .
+    image: wmd-plotter:latest
+    container_name: wmd-plotter
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: ./backend/.env
+        required: false          # App runs without .env (FIRMS key is optional)
+    environment:
+      PORT: "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Optional: nginx reverse proxy with HTTPS ─────────────────────────────────
+  # Uncomment this block and the volumes section below to add nginx + Let's Encrypt.
+  # Requires a domain pointed at this server and ports 80/443 open.
+  #
+  # nginx:
+  #   image: nginx:stable-alpine
+  #   container_name: wmd-nginx
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx/wmd-plotter.conf:/etc/nginx/conf.d/default.conf:ro
+  #     - ./nginx/certs:/etc/letsencrypt:ro
+  #     - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro   # optional auth
+  #   depends_on:
+  #     - wmd-plotter
