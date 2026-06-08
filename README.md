@@ -9,6 +9,8 @@ Run chemical plume, blast, radiation, BLEVE, dense gas, fire/smoke, and ERG 2024
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
+![WMD Plotter — Chlorine plume with AEGL-1/2/3 zones over Anaheim, CA](docs/screenshot.png)
+
 ---
 
 ## Hazard Models
