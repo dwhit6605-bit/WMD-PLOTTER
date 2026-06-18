@@ -866,6 +866,7 @@ input:checked+.slider:before{transform:translateX(16px)}
           <button class="btn btn-ghost" id="btn-kml-net" onclick="copyNetworkLink()" disabled>🔗 Network Link</button>
           <button class="btn btn-ghost" id="btn-tak-dp" onclick="downloadTAKDP()" disabled style="grid-column:1/-1;background:rgba(0,120,200,0.12);border-color:rgba(0,120,200,0.4);color:#5bb8ff">📦 TAK Data Package (.zip)</button>
           <button class="btn btn-ghost" id="btn-cot-xml" onclick="downloadCoT()" disabled style="grid-column:1/-1;background:rgba(0,160,120,0.10);border-color:rgba(0,160,120,0.35);color:#4dd9b0;font-size:11px">📡 CoT XML — ATAK / FreeTAKServer / WinTAK</button>
+          <button class="btn btn-ghost" id="btn-tak-push" onclick="pushToTAK()" disabled style="grid-column:1/-1;background:rgba(220,50,50,0.10);border-color:rgba(220,80,80,0.4);color:#ff7070;font-size:11px;display:none">📡 Push to TAK Server</button>
           <button class="btn btn-ghost" onclick="printReport()" style="grid-column:1/-1;font-size:11px;margin-top:2px">🖨 Print / Save PDF Incident Report</button>
           <button class="btn btn-ghost" id="btn-share-url" onclick="shareScenarioURL()" style="grid-column:1/-1;font-size:11px;margin-top:2px;border-color:rgba(0,255,136,0.3);color:var(--green)">🔗 Copy Share Link</button>
         </div>
@@ -3241,6 +3242,8 @@ function _refreshExportUI() {
   document.getElementById('btn-kml-net').disabled = !hasAny;
   document.getElementById('btn-tak-dp').disabled  = !hasAny;
   document.getElementById('btn-cot-xml').disabled = !hasAny;
+  const pushBtn = document.getElementById('btn-tak-push');
+  if (pushBtn.style.display !== 'none') pushBtn.disabled = !hasAny;
   document.getElementById('export-summary').textContent = hasAny ? `Exporting: ${active.join(' + ')}` : 'No overlays computed yet.';
 }
 
@@ -3366,6 +3369,33 @@ async function downloadCoT() {
   a.download = `wmd_cot_${Date.now()}.xml`;
   a.click();
   toast('CoT XML downloaded — import into ATAK / FreeTAKServer / WinTAK', 3000);
+}
+
+async function pushToTAK() {
+  const btn = document.getElementById('btn-tak-push');
+  const orig = btn.textContent;
+  btn.textContent = '📡 Pushing…';
+  btn.disabled = true;
+
+  const tools = [...activePanels].length ? [...activePanels] : null;
+  try {
+    const r = await fetch(`${API}/api/tak-push`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ tools }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d.success) {
+      toast(`✓ Pushed ${d.sent} CoT event${d.sent !== 1 ? 's' : ''} to TAK server`, 3000);
+    } else {
+      toast(`✗ TAK push failed: ${d.error || 'Unknown error'}`, 4000);
+    }
+  } catch (e) {
+    toast(`✗ TAK push error: ${e.message}`, 4000);
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
 }
 
 function copyNetworkLink() {
@@ -3707,6 +3737,14 @@ loadVersion();
     document.getElementById('hdr-username').textContent = u.username;
     if (u.role === 'admin') document.getElementById('hdr-admin-link').style.display = 'inline-flex';
     el.style.display = 'flex';
+
+    // Show "Push to TAK Server" button only if a TAK server is configured
+    const ts = await fetch('/api/tak-status').then(r => r.ok ? r.json() : null).catch(() => null);
+    if (ts?.configured) {
+      const pushBtn = document.getElementById('btn-tak-push');
+      pushBtn.style.display = '';
+      pushBtn.title = `Push to ${ts.host}:${ts.port}`;
+    }
   } catch { /* offline / non-auth mode — silently skip */ }
 })();
 

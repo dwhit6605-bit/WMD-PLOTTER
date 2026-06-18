@@ -82,6 +82,30 @@
     .muted { color: var(--muted); }
 
     .empty { text-align: center; padding: 32px; color: var(--muted); font-size: 13px; }
+
+    /* TAK config */
+    .tak-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; }
+    .tak-row label { font-size: 11px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 120px; }
+    .tak-row label span { letter-spacing: 0.5px; text-transform: uppercase; }
+    input[type=number] { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); font-family: inherit; font-size: 13px; padding: 8px 10px; outline: none; width: 100%; }
+    input[type=number]:focus { border-color: var(--green); }
+    .ssl-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; padding: 8px 0; }
+    .ssl-toggle input[type=checkbox] { accent-color: var(--green); width: 15px; height: 15px; cursor: pointer; }
+    .cert-section { margin-top: 8px; display: none; }
+    .cert-section.visible { display: block; }
+    .cert-area { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); font-family: inherit; font-size: 11px; padding: 8px; resize: vertical; min-height: 48px; outline: none; }
+    .cert-area:focus { border-color: var(--green); }
+    .cert-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+      border-radius: 4px; font-size: 11px; background: rgba(0,255,136,.08);
+      border: 1px solid rgba(0,255,136,.3); color: var(--green); margin-bottom: 8px; }
+    .tak-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+    .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+    .btn-outline:hover { border-color: var(--green); color: var(--green); opacity: 1; }
+    .tak-status { font-size: 11px; color: var(--muted); }
+    .tak-status.ok  { color: var(--green); }
+    .tak-status.err { color: var(--red); }
   </style>
 </head>
 <body>
@@ -116,6 +140,53 @@
     <div class="msg" id="create-msg"></div>
   </div>
 
+  <!-- TAK Server Config -->
+  <div class="card" id="tak-card">
+    <h3>TAK Server Configuration</h3>
+
+    <div class="tak-row">
+      <label><span>Host / IP</span>
+        <input type="text" id="tak-host" placeholder="192.168.1.50 or tak.example.com" spellcheck="false"/>
+      </label>
+      <label style="max-width:110px"><span>Port</span>
+        <input type="number" id="tak-port" value="8087" min="1" max="65535"/>
+      </label>
+      <label style="max-width:160px"><span>Callsign</span>
+        <input type="text" id="tak-callsign" placeholder="WMD PLOTTER" spellcheck="false"/>
+      </label>
+    </div>
+
+    <label class="ssl-toggle">
+      <input type="checkbox" id="tak-ssl" onchange="toggleCertSection()"/>
+      Use SSL / TLS
+    </label>
+
+    <div class="cert-section" id="cert-section">
+      <div id="cert-badge-area"></div>
+      <div class="tak-row" style="margin-bottom:8px">
+        <label><span>Client Certificate (P12 file)</span>
+          <input type="file" id="tak-cert-file" accept=".p12,.pfx"
+                 style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:6px 8px;width:100%;cursor:pointer"
+                 onchange="onCertFile(this)"/>
+        </label>
+        <label style="max-width:180px"><span>P12 Passphrase</span>
+          <input type="password" id="tak-cert-pass" placeholder="(leave blank if none)"/>
+        </label>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+        Leave certificate blank for SSL without mutual auth (port 8088). Upload a P12 for full certificate auth (port 8089).
+      </div>
+    </div>
+
+    <div class="tak-actions">
+      <button class="btn btn-green" onclick="saveTakConfig()">Save Config</button>
+      <button class="btn btn-outline" onclick="testTakConnection()">Test Connection</button>
+      <button class="btn btn-red" id="btn-clear-cert" style="display:none" onclick="clearTakCert()">Remove Cert</button>
+      <span class="tak-status" id="tak-status"></span>
+    </div>
+    <div class="msg" id="tak-msg"></div>
+  </div>
+
   <!-- User list -->
   <div class="card" style="padding:0;overflow:hidden">
     <table>
@@ -138,11 +209,15 @@
 <script>
 let _me = null;
 
+let _takCertB64 = null;   // base64-encoded P12 bytes from file picker
+let _hasCert    = false;  // server already has a cert stored
+
 async function init() {
   const r = await fetch('/auth/me');
   if (!r.ok) { location.href = '/login'; return; }
   _me = await r.json();
   loadUsers();
+  loadTakConfig();
 }
 
 async function loadUsers() {
@@ -208,6 +283,118 @@ async function deleteUser(id, name) {
 async function doLogout() {
   await fetch('/auth/logout', {method:'POST'});
   location.href = '/login';
+}
+
+// ── TAK Server Config ─────────────────────────────────────────────────────────
+
+async function loadTakConfig() {
+  const r = await fetch('/api/admin/tak-config');
+  if (!r.ok) return;
+  const d = await r.json();
+  document.getElementById('tak-host').value     = d.host || '';
+  document.getElementById('tak-port').value     = d.port || '8087';
+  document.getElementById('tak-callsign').value = d.callsign || 'WMD PLOTTER';
+  document.getElementById('tak-ssl').checked    = !!d.ssl;
+  toggleCertSection();
+  _hasCert = !!d.has_cert;
+  renderCertBadge();
+}
+
+function toggleCertSection() {
+  const ssl = document.getElementById('tak-ssl').checked;
+  document.getElementById('cert-section').classList.toggle('visible', ssl);
+}
+
+function renderCertBadge() {
+  const area = document.getElementById('cert-badge-area');
+  const btn  = document.getElementById('btn-clear-cert');
+  if (_hasCert || _takCertB64) {
+    area.innerHTML = '<div class="cert-badge">🔐 Client certificate loaded</div>';
+    btn.style.display = '';
+  } else {
+    area.innerHTML = '';
+    btn.style.display = 'none';
+  }
+}
+
+function onCertFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const bytes = new Uint8Array(e.target.result);
+    _takCertB64 = btoa(String.fromCharCode(...bytes));
+    _hasCert = false;
+    renderCertBadge();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function saveTakConfig() {
+  const body = {
+    host:     document.getElementById('tak-host').value.trim(),
+    port:     parseInt(document.getElementById('tak-port').value) || 8087,
+    ssl:      document.getElementById('tak-ssl').checked,
+    callsign: document.getElementById('tak-callsign').value.trim() || 'WMD PLOTTER',
+  };
+  if (_takCertB64) {
+    body.cert_p12_b64 = _takCertB64;
+    body.cert_pass    = document.getElementById('tak-cert-pass').value;
+  }
+  const r = await fetch('/api/admin/tak-config', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+  });
+  if (r.ok) {
+    if (_takCertB64) { _hasCert = true; _takCertB64 = null; renderCertBadge(); }
+    showMsg('tak-msg', 'TAK server configuration saved.', 'success');
+  } else {
+    const d = await r.json().catch(()=>({}));
+    showMsg('tak-msg', d.detail || 'Save failed.', 'error');
+  }
+}
+
+async function clearTakCert() {
+  if (!confirm('Remove the stored client certificate?')) return;
+  const r = await fetch('/api/admin/tak-config', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ clear_cert: true }),
+  });
+  if (r.ok) {
+    _hasCert = false; _takCertB64 = null;
+    document.getElementById('tak-cert-file').value = '';
+    renderCertBadge();
+    showMsg('tak-msg', 'Certificate removed.', 'success');
+  }
+}
+
+async function testTakConnection() {
+  const statusEl = document.getElementById('tak-status');
+  statusEl.textContent = 'Connecting…';
+  statusEl.className   = 'tak-status';
+
+  // Save first so the test uses current form values
+  await saveTakConfig();
+
+  // Push an empty-tools request — server returns "no overlays" rather than a socket error
+  // We test the connection by using the test endpoint
+  const r = await fetch('/api/tak-push', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ tools: ['__test__'] }),
+  });
+  const d = await r.json().catch(()=>({}));
+
+  if (d.error && d.error.includes('No active overlays')) {
+    // Socket connected OK, just nothing to send
+    statusEl.textContent = '✓ Connected to TAK server';
+    statusEl.className   = 'tak-status ok';
+  } else if (d.success) {
+    statusEl.textContent = `✓ Connected — ${d.sent} event(s) sent`;
+    statusEl.className   = 'tak-status ok';
+  } else {
+    statusEl.textContent = `✗ ${d.error || 'Connection failed'}`;
+    statusEl.className   = 'tak-status err';
+  }
+  setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'tak-status'; }, 8000);
 }
 
 init();

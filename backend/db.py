@@ -29,6 +29,33 @@ def init_db() -> None:
             last_login    TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def get_setting(key: str) -> Optional[str]:
+    conn = _connect()
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else None
+
+
+def set_setting(key: str, value: Optional[str]) -> None:
+    conn = _connect()
+    if value is None:
+        conn.execute("DELETE FROM settings WHERE key=?", (key,))
+    else:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
     conn.commit()
     conn.close()
 
