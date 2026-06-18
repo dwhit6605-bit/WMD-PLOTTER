@@ -3377,7 +3377,9 @@ async function pushToTAK() {
   btn.textContent = '📡 Pushing…';
   btn.disabled = true;
 
-  const tools = [...activePanels].length ? [...activePanels] : null;
+  // Use _activeOverlays (tools with actual server-side data) not activePanels (open UI panels)
+  const activeToolList = Object.entries(_activeOverlays).filter(([,v])=>v).map(([k])=>k);
+  const tools = activeToolList.length ? activeToolList : null;
   try {
     const r = await fetch(`${API}/api/tak-push`, {
       method: 'POST',
