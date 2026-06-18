@@ -57,17 +57,15 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
     enterprise sync endpoint.
 
     config keys:
-      host        — TAK server hostname
-      marti_port  — Marti HTTPS port (default 8443)
-      cert_p12    — base64-encoded P12 client cert (optional)
-      cert_pass   — P12 passphrase (optional)
+      host            — TAK server hostname
+      marti_port      — Marti HTTPS port (default 8443)
+      marti_cert_p12  — base64-encoded admin.p12 (from /opt/tak/certs/files/admin.p12)
+      marti_cert_pass — passphrase for admin.p12 (default: atakatak)
 
     Returns {"success": bool, "url": str|None, "error": str|None}
     """
     host       = (config.get("host") or "").strip()
     marti_port = int(config.get("marti_port") or 8443)
-    cert_p12   = config.get("cert_p12")
-    cert_pass  = config.get("cert_pass") or ""
 
     if not host:
         return {"success": False, "url": None, "error": "TAK server host not configured"}
@@ -83,13 +81,13 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
 
     url = f"https://{host}:{marti_port}/Marti/sync/missionupload"
 
-    params   = {"name": filename.replace(".zip", ""), "creatorUid": "WMD-PLOTTER"}
-    files    = {"assetfile": (filename, zip_bytes, "application/zip")}
-    marti_user = config.get("marti_user") or ""
-    marti_pass = config.get("marti_pass") or ""
+    params         = {"name": filename.replace(".zip", ""), "creatorUid": "WMD-PLOTTER"}
+    files          = {"assetfile": (filename, zip_bytes, "application/zip")}
+    marti_cert_p12 = config.get("marti_cert_p12")
+    marti_cert_pass = config.get("marti_cert_pass") or ""
 
-    def _make_ctx(with_cert: bool = False, cert_path: str = None, key_path: str = None):
-        """TLS 1.2 context — avoids TLS 1.3 CERTIFICATE_REQUIRED handshake alert."""
+    def _make_ctx(cert_p12_b64: str = None, passphrase: str = "") -> tuple:
+        """Return (ssl_context, [temp_paths]) using TLS 1.2 to avoid TLS 1.3 cert alerts."""
         import ssl as _ssl
         ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
@@ -97,52 +95,44 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
         try:
             ctx.maximum_version = _ssl.TLSVersion.TLSv1_2
         except AttributeError:
-            pass  # Python < 3.7 fallback
-        if with_cert and cert_path:
-            ctx.load_cert_chain(cert_path, key_path)
-        return ctx
+            pass
+        temps = []
+        if cert_p12_b64:
+            cp, kp = _pem_tempfiles(cert_p12_b64, passphrase)
+            ctx.load_cert_chain(cp, kp)
+            temps = [cp, kp]
+        return ctx, temps
 
-    cert_path = key_path = None
+    all_temps = []
     try:
-        # Attempt 1: Basic auth with admin credentials (if configured)
-        if marti_user:
-            async with httpx.AsyncClient(
-                verify=_make_ctx(), timeout=30.0,
-                auth=(marti_user, marti_pass),
-            ) as client:
+        # Attempt 1: Marti admin cert (admin.p12) — correct auth for port 8443
+        if marti_cert_p12:
+            ctx, temps = _make_ctx(marti_cert_p12, marti_cert_pass)
+            all_temps += temps
+            async with httpx.AsyncClient(verify=ctx, timeout=30.0) as client:
                 resp = await client.post(url, files=files, params=params)
             if resp.status_code in (200, 201):
                 return {"success": True, "url": resp.text.strip(), "error": None,
                         "zones": len(active)}
             if resp.status_code not in (401, 403):
                 return {"success": False, "url": None,
-                        "error": f"Marti HTTP {resp.status_code}: {resp.text[:300]}"}
+                        "error": f"Marti HTTP {resp.status_code}: {resp.text[:200]}"}
 
-        # Attempt 2: no auth (some TAK servers allow anonymous missionupload)
-        async with httpx.AsyncClient(verify=_make_ctx(), timeout=30.0) as client:
+        # Attempt 2: anonymous (some servers allow unauthenticated missionupload)
+        ctx, _ = _make_ctx()
+        async with httpx.AsyncClient(verify=ctx, timeout=30.0) as client:
             resp = await client.post(url, files=files, params=params)
         if resp.status_code in (200, 201):
             return {"success": True, "url": resp.text.strip(), "error": None,
                     "zones": len(active)}
 
-        # Attempt 3: client cert (for servers that use mutual TLS on Marti)
-        if cert_p12 and resp.status_code in (401, 403):
-            cert_path, key_path = _pem_tempfiles(cert_p12, cert_pass)
-            async with httpx.AsyncClient(
-                verify=_make_ctx(True, cert_path, key_path), timeout=30.0
-            ) as client:
-                resp = await client.post(url, files=files, params=params)
-            if resp.status_code in (200, 201):
-                return {"success": True, "url": resp.text.strip(), "error": None,
-                        "zones": len(active)}
-
         if resp.status_code in (401, 403):
             return {
                 "success": False, "url": None,
                 "error": (
-                    f"Marti HTTP {resp.status_code}: TAK Server requires the admin client "
-                    "certificate (admin.p12) for API access — Basic auth is not accepted. "
-                    "Upload admin.p12 as your certificate in the admin panel, or use TCP CoT push."
+                    "Marti HTTP 403 — upload admin.p12 from your TAK server "
+                    "(/opt/tak/certs/files/admin.p12) in the admin panel under "
+                    "'Marti API Certificate'. Default passphrase is 'atakatak'."
                 ),
             }
         return {"success": False, "url": None,
@@ -152,9 +142,8 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
         return {"success": False, "url": None, "error": str(exc)}
 
     finally:
-        for path in (cert_path, key_path):
-            if path:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
+        for path in all_temps:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass

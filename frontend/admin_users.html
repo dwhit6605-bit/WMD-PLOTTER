@@ -181,19 +181,31 @@
       </div>
     </div>
 
-    <div class="tak-row" style="margin-top:12px">
-      <label><span>Marti Username <span style="font-weight:400;text-transform:none">(optional — TAK Server admin login)</span></span>
-        <input type="text" id="tak-marti-user" placeholder="admin" spellcheck="false" autocomplete="off"/>
-      </label>
-      <label style="max-width:220px"><span>Marti Password</span>
-        <input type="password" id="tak-marti-pass" placeholder="(leave blank if not needed)" autocomplete="off"/>
-      </label>
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:10px">
+        Marti API Certificate <span style="font-weight:400;text-transform:none;letter-spacing:0">(for data package push — upload admin.p12 from your TAK server)</span>
+      </div>
+      <div id="marti-cert-badge-area"></div>
+      <div class="tak-row" style="margin-bottom:6px">
+        <label><span>Admin Certificate (admin.p12)</span>
+          <input type="file" id="tak-marti-cert-file" accept=".p12,.pfx"
+                 style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:6px 8px;width:100%;cursor:pointer"
+                 onchange="onMartiCertFile(this)"/>
+        </label>
+        <label style="max-width:200px"><span>Passphrase <span style="font-weight:400">(default: atakatak)</span></span>
+          <input type="password" id="tak-marti-cert-pass" placeholder="atakatak" autocomplete="off"/>
+        </label>
+      </div>
+      <div style="font-size:11px;color:var(--muted)">
+        Find it on your TAK server: <code style="color:var(--accent2)">/opt/tak/certs/files/admin.p12</code>
+      </div>
     </div>
 
     <div class="tak-actions">
       <button class="btn btn-green" onclick="saveTakConfig()">Save Config</button>
       <button class="btn btn-outline" onclick="testTakConnection()">Test Connection</button>
-      <button class="btn btn-red" id="btn-clear-cert" style="display:none" onclick="clearTakCert()">Remove Cert</button>
+      <button class="btn btn-red" id="btn-clear-cert" style="display:none" onclick="clearTakCert()">Remove CoT Cert</button>
+      <button class="btn btn-red" id="btn-clear-marti-cert" style="display:none" onclick="clearMartiCert()">Remove Marti Cert</button>
       <span class="tak-status" id="tak-status"></span>
     </div>
     <div class="msg" id="tak-msg"></div>
@@ -221,8 +233,10 @@
 <script>
 let _me = null;
 
-let _takCertB64 = null;   // base64-encoded P12 bytes from file picker
-let _hasCert    = false;  // server already has a cert stored
+let _takCertB64      = null;   // CoT cert (port 8089)
+let _hasCert         = false;
+let _martiCertB64    = null;   // Marti admin cert (port 8443)
+let _hasMartiCert    = false;
 
 async function init() {
   const r = await fetch('/auth/me');
@@ -307,12 +321,12 @@ async function loadTakConfig() {
   document.getElementById('tak-port').value        = d.port || '8087';
   document.getElementById('tak-marti-port').value  = d.marti_port || '8443';
   document.getElementById('tak-callsign').value    = d.callsign || 'WMD PLOTTER';
-  document.getElementById('tak-marti-user').value  = d.marti_user || '';
-  document.getElementById('tak-marti-pass').value  = d.marti_pass || '';
-  document.getElementById('tak-ssl').checked    = !!d.ssl;
+  document.getElementById('tak-ssl').checked       = !!d.ssl;
   toggleCertSection();
-  _hasCert = !!d.has_cert;
+  _hasCert      = !!d.has_cert;
+  _hasMartiCert = !!d.has_marti_cert;
   renderCertBadge();
+  renderMartiCertBadge();
 }
 
 function toggleCertSection() {
@@ -324,11 +338,23 @@ function renderCertBadge() {
   const area = document.getElementById('cert-badge-area');
   const btn  = document.getElementById('btn-clear-cert');
   if (_hasCert || _takCertB64) {
-    area.innerHTML = '<div class="cert-badge">🔐 Client certificate loaded</div>';
+    area.innerHTML = '<div class="cert-badge">🔐 CoT client certificate loaded</div>';
     btn.style.display = '';
   } else {
     area.innerHTML = '';
     btn.style.display = 'none';
+  }
+}
+
+function renderMartiCertBadge() {
+  const area = document.getElementById('marti-cert-badge-area');
+  const btn  = document.getElementById('btn-clear-marti-cert');
+  if (_hasMartiCert || _martiCertB64) {
+    area.innerHTML = '<div class="cert-badge">🔐 Marti admin certificate loaded</div>';
+    if (btn) btn.style.display = '';
+  } else {
+    area.innerHTML = '';
+    if (btn) btn.style.display = 'none';
   }
 }
 
@@ -345,6 +371,19 @@ function onCertFile(input) {
   reader.readAsArrayBuffer(file);
 }
 
+function onMartiCertFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const bytes = new Uint8Array(e.target.result);
+    _martiCertB64 = btoa(String.fromCharCode(...bytes));
+    _hasMartiCert = false;
+    renderMartiCertBadge();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 async function saveTakConfig() {
   const body = {
     host:       document.getElementById('tak-host').value.trim(),
@@ -352,18 +391,21 @@ async function saveTakConfig() {
     marti_port: parseInt(document.getElementById('tak-marti-port').value) || 8443,
     ssl:        document.getElementById('tak-ssl').checked,
     callsign:   document.getElementById('tak-callsign').value.trim() || 'WMD PLOTTER',
-    marti_user: document.getElementById('tak-marti-user').value.trim(),
-    marti_pass: document.getElementById('tak-marti-pass').value,
   };
   if (_takCertB64) {
     body.cert_p12_b64 = _takCertB64;
     body.cert_pass    = document.getElementById('tak-cert-pass').value;
   }
+  if (_martiCertB64) {
+    body.marti_cert_p12_b64 = _martiCertB64;
+    body.marti_cert_pass    = document.getElementById('tak-marti-cert-pass').value;
+  }
   const r = await fetch('/api/admin/tak-config', {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
   });
   if (r.ok) {
-    if (_takCertB64) { _hasCert = true; _takCertB64 = null; renderCertBadge(); }
+    if (_takCertB64)    { _hasCert = true;      _takCertB64   = null; renderCertBadge(); }
+    if (_martiCertB64)  { _hasMartiCert = true; _martiCertB64 = null; renderMartiCertBadge(); }
     showMsg('tak-msg', 'TAK server configuration saved.', 'success');
   } else {
     const d = await r.json().catch(()=>({}));
@@ -372,7 +414,7 @@ async function saveTakConfig() {
 }
 
 async function clearTakCert() {
-  if (!confirm('Remove the stored client certificate?')) return;
+  if (!confirm('Remove the stored CoT client certificate?')) return;
   const r = await fetch('/api/admin/tak-config', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ clear_cert: true }),
@@ -381,7 +423,21 @@ async function clearTakCert() {
     _hasCert = false; _takCertB64 = null;
     document.getElementById('tak-cert-file').value = '';
     renderCertBadge();
-    showMsg('tak-msg', 'Certificate removed.', 'success');
+    showMsg('tak-msg', 'CoT certificate removed.', 'success');
+  }
+}
+
+async function clearMartiCert() {
+  if (!confirm('Remove the stored Marti admin certificate?')) return;
+  const r = await fetch('/api/admin/tak-config', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ clear_marti_cert: true }),
+  });
+  if (r.ok) {
+    _hasMartiCert = false; _martiCertB64 = null;
+    document.getElementById('tak-marti-cert-file').value = '';
+    renderMartiCertBadge();
+    showMsg('tak-msg', 'Marti certificate removed.', 'success');
   }
 }
 
