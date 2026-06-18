@@ -57,6 +57,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  get_user_by_id, update_last_login, list_users, delete_user, update_password, \
                  get_setting, set_setting
 from tak_push import push_cot, push_test_point
+from tak_marti import push_via_marti
 from auth import (
     hash_password, verify_password, create_token, decode_token,
     auth_middleware, current_user, require_admin,
@@ -1288,11 +1289,12 @@ async def get_cot_xml():
 async def get_tak_config(user: dict = Depends(require_admin)):
     """Return current TAK server config (cert blob omitted, only has_cert flag)."""
     return {
-        "host":      get_setting("tak_host") or "",
-        "port":      get_setting("tak_port") or "8087",
-        "ssl":       (get_setting("tak_ssl") or "false") == "true",
-        "callsign":  get_setting("tak_callsign") or "WMD PLOTTER",
-        "has_cert":  bool(get_setting("tak_cert_p12")),
+        "host":        get_setting("tak_host") or "",
+        "port":        get_setting("tak_port") or "8087",
+        "marti_port":  get_setting("tak_marti_port") or "8443",
+        "ssl":         (get_setting("tak_ssl") or "false") == "true",
+        "callsign":    get_setting("tak_callsign") or "WMD PLOTTER",
+        "has_cert":    bool(get_setting("tak_cert_p12")),
     }
 
 
@@ -1300,10 +1302,11 @@ async def get_tak_config(user: dict = Depends(require_admin)):
 async def save_tak_config(request: Request, user: dict = Depends(require_admin)):
     """Save TAK server config. Send cert_p12_b64=null and clear_cert=true to remove cert."""
     body = await request.json()
-    set_setting("tak_host",     (body.get("host") or "").strip())
-    set_setting("tak_port",     str(int(body.get("port") or 8087)))
-    set_setting("tak_ssl",      "true" if body.get("ssl") else "false")
-    set_setting("tak_callsign", (body.get("callsign") or "WMD PLOTTER").strip())
+    set_setting("tak_host",       (body.get("host") or "").strip())
+    set_setting("tak_port",       str(int(body.get("port") or 8087)))
+    set_setting("tak_marti_port", str(int(body.get("marti_port") or 8443)))
+    set_setting("tak_ssl",        "true" if body.get("ssl") else "false")
+    set_setting("tak_callsign",   (body.get("callsign") or "WMD PLOTTER").strip())
     if body.get("clear_cert"):
         set_setting("tak_cert_p12",  None)
         set_setting("tak_cert_pass", None)
@@ -1343,6 +1346,25 @@ async def tak_push(request: Request, user: dict = Depends(current_user)):
     }
     result = push_cot(config, _overlay_state)
     result["server_tools"] = server_tools
+    return JSONResponse(result, status_code=200 if result["success"] else 502)
+
+
+@app.post("/api/tak-push-marti")
+async def tak_push_marti(user: dict = Depends(current_user)):
+    """Push overlay state to TAK server via Marti HTTPS data package upload."""
+    if not any(_overlay_state.values()):
+        return JSONResponse(
+            {"success": False, "url": None,
+             "error": "No model data — run a plume/blast/radiation model first."},
+            status_code=400,
+        )
+    config = {
+        "host":       get_setting("tak_host"),
+        "marti_port": get_setting("tak_marti_port") or "8443",
+        "cert_p12":   get_setting("tak_cert_p12"),
+        "cert_pass":  get_setting("tak_cert_pass") or "",
+    }
+    result = await push_via_marti(config, _overlay_state)
     return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 

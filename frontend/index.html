@@ -3378,16 +3378,13 @@ async function pushToTAK() {
   btn.disabled = true;
 
   try {
-    const r = await fetch(`${API}/api/tak-push`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({}),
-    });
+    // Primary: Marti HTTPS data package upload (distributes to all connected clients)
+    const r = await fetch(`${API}/api/tak-push-marti`, { method: 'POST' });
     const d = await r.json().catch(() => ({}));
     if (d.success) {
-      toast(`✓ Pushed ${d.sent} CoT event${d.sent !== 1 ? 's' : ''} to TAK server`, 3000);
+      toast(`✓ Data package sent to TAK server (${d.zones || '?'} overlay${d.zones !== 1 ? 's' : ''})`, 3500);
     } else {
-      toast(`✗ TAK push failed: ${d.error || 'Unknown error'}`, 4000);
+      toast(`✗ TAK push failed: ${d.error || 'Unknown error'}`, 5000);
     }
   } catch (e) {
     toast(`✗ TAK push error: ${e.message}`, 4000);

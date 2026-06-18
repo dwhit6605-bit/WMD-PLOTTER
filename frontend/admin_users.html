@@ -148,8 +148,11 @@
       <label><span>Host / IP</span>
         <input type="text" id="tak-host" placeholder="192.168.1.50 or tak.example.com" spellcheck="false"/>
       </label>
-      <label style="max-width:110px"><span>Port</span>
+      <label style="max-width:110px"><span>CoT Port</span>
         <input type="number" id="tak-port" value="8087" min="1" max="65535"/>
+      </label>
+      <label style="max-width:110px"><span>API Port</span>
+        <input type="number" id="tak-marti-port" value="8443" min="1" max="65535" title="Marti HTTPS port (default 8443)"/>
       </label>
       <label style="max-width:160px"><span>Callsign</span>
         <input type="text" id="tak-callsign" placeholder="WMD PLOTTER" spellcheck="false"/>
@@ -291,9 +294,10 @@ async function loadTakConfig() {
   const r = await fetch('/api/admin/tak-config');
   if (!r.ok) return;
   const d = await r.json();
-  document.getElementById('tak-host').value     = d.host || '';
-  document.getElementById('tak-port').value     = d.port || '8087';
-  document.getElementById('tak-callsign').value = d.callsign || 'WMD PLOTTER';
+  document.getElementById('tak-host').value        = d.host || '';
+  document.getElementById('tak-port').value        = d.port || '8087';
+  document.getElementById('tak-marti-port').value  = d.marti_port || '8443';
+  document.getElementById('tak-callsign').value    = d.callsign || 'WMD PLOTTER';
   document.getElementById('tak-ssl').checked    = !!d.ssl;
   toggleCertSection();
   _hasCert = !!d.has_cert;
@@ -332,10 +336,11 @@ function onCertFile(input) {
 
 async function saveTakConfig() {
   const body = {
-    host:     document.getElementById('tak-host').value.trim(),
-    port:     parseInt(document.getElementById('tak-port').value) || 8087,
-    ssl:      document.getElementById('tak-ssl').checked,
-    callsign: document.getElementById('tak-callsign').value.trim() || 'WMD PLOTTER',
+    host:       document.getElementById('tak-host').value.trim(),
+    port:       parseInt(document.getElementById('tak-port').value) || 8087,
+    marti_port: parseInt(document.getElementById('tak-marti-port').value) || 8443,
+    ssl:        document.getElementById('tak-ssl').checked,
+    callsign:   document.getElementById('tak-callsign').value.trim() || 'WMD PLOTTER',
   };
   if (_takCertB64) {
     body.cert_p12_b64 = _takCertB64;
