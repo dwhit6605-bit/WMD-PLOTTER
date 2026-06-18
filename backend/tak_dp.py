@@ -87,9 +87,8 @@ def _polygon_cot_event(uid: str, label: str, color: str,
     vertices = "\n        ".join(
         f'<vertex lat="{pt[1]:.6f}" lon="{pt[0]:.6f}"/>' for pt in lonlat_ring
     )
-    return f"""<event version="2.0" uid="{uid}" type="u-d-r" how="m-g"
-       time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}"
-       access="Undefined" qos="0-r-r" opex="o-">
+    return f"""<event version="2.0" uid="{uid}" type="u-d-f" how="m-g"
+       time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}">
   <point lat="{center_lat:.6f}" lon="{center_lon:.6f}" hae="9999999.0" ce="9999999.0" le="9999999.0"/>
   <detail>
     <shape>
@@ -97,6 +96,9 @@ def _polygon_cot_event(uid: str, label: str, color: str,
         {vertices}
       </polyline>
     </shape>
+    <strokeColor value="{stroke}"/>
+    <strokeWeight value="3.0"/>
+    <fillColor value="{fill}"/>
     <remarks>{label}</remarks>
     <color argb="{stroke}"/>
     <contact callsign="WMD PLOTTER"/>
