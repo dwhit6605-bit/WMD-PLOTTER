@@ -56,40 +56,45 @@ def _build_events(overlay_state: dict, tools: Optional[list] = None) -> list[str
     return events
 
 
-def _make_ssl_ctx(cert_p12_b64: Optional[str], cert_pass: str) -> ssl.SSLContext:
+def _make_ssl_ctx(cert_b64: Optional[str], cert_pass: str) -> ssl.SSLContext:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode    = ssl.CERT_NONE  # TAK servers commonly use self-signed certs
 
-    if cert_p12_b64:
-        try:
-            from cryptography.hazmat.primitives.serialization.pkcs12 import load_key_and_certificates
-            from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
-        except ImportError:
-            raise RuntimeError(
-                "The 'cryptography' package is required for P12 certificate support. "
-                "Run: pip install cryptography"
-            )
-
-        p12_bytes  = base64.b64decode(cert_p12_b64)
-        passphrase = cert_pass.encode() if cert_pass else None
-        privkey, cert, _ = load_key_and_certificates(p12_bytes, passphrase)
-
-        cert_pem = cert.public_bytes(Encoding.PEM)
-        key_pem  = privkey.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
-
-        # ssl.SSLContext.load_cert_chain needs file paths; use temp files
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as cf:
-            cf.write(cert_pem)
-            cert_path = cf.name
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as kf:
-            kf.write(key_pem)
-            key_path = kf.name
-        try:
-            ctx.load_cert_chain(cert_path, key_path)
-        finally:
-            os.unlink(cert_path)
-            os.unlink(key_path)
+    if cert_b64:
+        raw = base64.b64decode(cert_b64)
+        if raw.lstrip().startswith(b"-----BEGIN"):
+            # PEM format — write to temp file and load directly
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as f:
+                f.write(raw)
+                pem_path = f.name
+            try:
+                ctx.load_cert_chain(pem_path)
+            finally:
+                os.unlink(pem_path)
+        else:
+            # P12/PFX binary
+            try:
+                from cryptography.hazmat.primitives.serialization.pkcs12 import load_key_and_certificates
+                from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+            except ImportError:
+                raise RuntimeError(
+                    "The 'cryptography' package is required for P12 certificate support. "
+                    "Run: pip install cryptography"
+                )
+            passphrase = cert_pass.encode() if cert_pass else None
+            privkey, cert, _ = load_key_and_certificates(raw, passphrase)
+            cert_pem = cert.public_bytes(Encoding.PEM)
+            key_pem  = privkey.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as cf:
+                cf.write(cert_pem); cert_path = cf.name
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as kf:
+                kf.write(key_pem);  key_path = kf.name
+            try:
+                ctx.load_cert_chain(cert_path, key_path)
+            finally:
+                os.unlink(cert_path)
+                os.unlink(key_path)
 
     return ctx
 

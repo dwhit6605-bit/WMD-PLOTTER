@@ -26,29 +26,43 @@ from kml_gen import build_combined_kml
 from tak_dp import build_tak_data_package
 
 
-def _pem_tempfiles(cert_p12_b64: str, cert_pass: str) -> tuple[str, str]:
-    """Extract PEM cert + key from base64 P12 into temp files. Caller must delete."""
-    try:
-        from cryptography.hazmat.primitives.serialization.pkcs12 import load_key_and_certificates
-        from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
-    except ImportError:
-        raise RuntimeError("'cryptography' package required — run: pip install cryptography")
+def _load_cert_into_ctx(ctx, cert_b64: str, passphrase: str = "") -> list[str]:
+    """
+    Load a cert (PEM or P12) into an ssl.SSLContext.
+    Returns a list of temp file paths to clean up.
+    PEM: write to one temp file, load directly (cert+key must be in same file).
+    P12: convert to PEM via cryptography, write two temp files.
+    """
+    raw = base64.b64decode(cert_b64)
+    temps: list[str] = []
 
-    p12_bytes  = base64.b64decode(cert_p12_b64)
-    passphrase = cert_pass.encode() if cert_pass else None
-    privkey, cert, _ = load_key_and_certificates(p12_bytes, passphrase)
+    if raw.lstrip().startswith(b"-----BEGIN"):
+        # PEM format — write combined cert+key to a single temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as f:
+            f.write(raw)
+            temps.append(f.name)
+        ctx.load_cert_chain(temps[0])
+    else:
+        # P12/PFX binary — extract cert and key via cryptography
+        try:
+            from cryptography.hazmat.primitives.serialization.pkcs12 import load_key_and_certificates
+            from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+        except ImportError:
+            raise RuntimeError("'cryptography' package required — run: pip install cryptography")
 
-    cert_pem = cert.public_bytes(Encoding.PEM)
-    key_pem  = privkey.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+        pw = passphrase.encode() if passphrase else None
+        privkey, cert, _ = load_key_and_certificates(raw, pw)
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as cf:
-        cf.write(cert_pem)
-        cert_path = cf.name
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as kf:
-        kf.write(key_pem)
-        key_path = kf.name
+        cert_pem = cert.public_bytes(Encoding.PEM)
+        key_pem  = privkey.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
 
-    return cert_path, key_path
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as cf:
+            cf.write(cert_pem); temps.append(cf.name)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as kf:
+            kf.write(key_pem);  temps.append(kf.name)
+        ctx.load_cert_chain(temps[0], temps[1])
+
+    return temps
 
 
 async def push_via_marti(config: dict, overlay_state: dict) -> dict:
@@ -86,7 +100,7 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
     marti_cert_p12 = config.get("marti_cert_p12")
     marti_cert_pass = config.get("marti_cert_pass") or ""
 
-    def _make_ctx(cert_p12_b64: str = None, passphrase: str = "") -> tuple:
+    def _make_ctx(cert_b64: str = None, passphrase: str = "") -> tuple:
         """Return (ssl_context, [temp_paths]) using TLS 1.2 to avoid TLS 1.3 cert alerts."""
         import ssl as _ssl
         ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
@@ -96,11 +110,7 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
             ctx.maximum_version = _ssl.TLSVersion.TLSv1_2
         except AttributeError:
             pass
-        temps = []
-        if cert_p12_b64:
-            cp, kp = _pem_tempfiles(cert_p12_b64, passphrase)
-            ctx.load_cert_chain(cp, kp)
-            temps = [cp, kp]
+        temps = _load_cert_into_ctx(ctx, cert_b64, passphrase) if cert_b64 else []
         return ctx, temps
 
     all_temps = []
