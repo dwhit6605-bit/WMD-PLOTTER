@@ -104,6 +104,7 @@ def _polygon_cot_event(uid: str, label: str, color: str,
     <remarks>{label}</remarks>
     <contact callsign="WMD PLOTTER"/>
     <uid Droid="WMD PLOTTER"/>
+    <marti><dest callsign="All Streaming"/></marti>
   </detail>
 </event>"""
 
@@ -120,6 +121,7 @@ def point_cot_event(lat: float, lon: float, callsign: str = "WMD PLOTTER") -> st
     <contact callsign="{callsign}"/>
     <uid Droid="{callsign}"/>
     <remarks>WMD PLOTTER connectivity test</remarks>
+    <marti><dest callsign="All Streaming"/></marti>
   </detail>
 </event>"""
 
