@@ -83,31 +83,36 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
 
     url = f"https://{host}:{marti_port}/Marti/sync/missionupload"
 
+    params = {"name": filename.replace(".zip", ""), "creatorUid": "WMD-PLOTTER"}
+    files  = {"assetfile": (filename, zip_bytes, "application/zip")}
+
     cert_path = key_path = None
     try:
-        client_kwargs: dict = {"verify": False, "timeout": 30.0}
-        if cert_p12:
-            cert_path, key_path = _pem_tempfiles(cert_p12, cert_pass)
-            client_kwargs["cert"] = (cert_path, key_path)
-
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            resp = await client.post(
-                url,
-                files={"assetfile": (filename, zip_bytes, "application/zip")},
-                params={
-                    "name":       filename.replace(".zip", ""),
-                    "creatorUid": "WMD-PLOTTER",
-                },
-            )
+        # Attempt 1: no client cert — Marti's missionupload often allows this,
+        # and the Marti port (8443) uses a different trust store than CoT (8089).
+        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+            resp = await client.post(url, files=files, params=params)
 
         if resp.status_code in (200, 201):
             return {"success": True, "url": resp.text.strip(), "error": None,
                     "zones": len(active)}
-        else:
-            return {
-                "success": False, "url": None,
-                "error": f"Marti HTTP {resp.status_code}: {resp.text[:300]}",
-            }
+
+        # Attempt 2: retry with client cert if server returned 401/403
+        if resp.status_code in (401, 403) and cert_p12:
+            cert_path, key_path = _pem_tempfiles(cert_p12, cert_pass)
+            async with httpx.AsyncClient(
+                verify=False, timeout=30.0, cert=(cert_path, key_path)
+            ) as client:
+                resp = await client.post(url, files=files, params=params)
+
+            if resp.status_code in (200, 201):
+                return {"success": True, "url": resp.text.strip(), "error": None,
+                        "zones": len(active)}
+
+        return {
+            "success": False, "url": None,
+            "error": f"Marti HTTP {resp.status_code}: {resp.text[:300]}",
+        }
 
     except Exception as exc:
         return {"success": False, "url": None, "error": str(exc)}
