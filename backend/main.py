@@ -1323,6 +1323,17 @@ async def tak_status(user: dict = Depends(current_user)):
 @app.post("/api/tak-push")
 async def tak_push(request: Request, user: dict = Depends(current_user)):
     """Stream all active overlays to the configured TAK server as CoT events."""
+    # Summarise what the server currently holds (for diagnostics)
+    server_tools = {k: len(v.get("zones", [])) for k, v in _overlay_state.items() if v}
+
+    if not any(_overlay_state.values()):
+        return JSONResponse(
+            {"success": False, "sent": 0,
+             "error": "Server has no model data — run a plume/blast/radiation model first, "
+                      "then push. (Model data resets on server restart.)"},
+            status_code=400,
+        )
+
     config = {
         "host":      get_setting("tak_host"),
         "port":      get_setting("tak_port") or "8087",
@@ -1331,6 +1342,7 @@ async def tak_push(request: Request, user: dict = Depends(current_user)):
         "cert_pass": get_setting("tak_cert_pass") or "",
     }
     result = push_cot(config, _overlay_state)
+    result["server_tools"] = server_tools
     return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 
