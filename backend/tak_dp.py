@@ -118,15 +118,24 @@ def build_cot_xml(overlay_state: dict) -> str:
             continue
         src_lat = state.get("source_lat", 0.0)
         src_lon = state.get("source_lon", 0.0)
-        zones   = state.get("zones", [])
 
-        for i, z in enumerate(zones):
+        for i, z in enumerate(state.get("zones", [])):
             lonlat = z.get("lonlat") or z.get("coords", [])
             if not lonlat:
                 continue
             label = z.get("label") or z.get("level", tool)
             color = z.get("color", "#888888")
             uid   = f"wmd-{tool}-{z.get('level','z')}-{i}"
+            events.append(_polygon_cot_event(uid, label, color, lonlat, src_lat, src_lon))
+
+        for i, (level, info) in enumerate(state.get("contours", {}).items()):
+            latlon = info.get("latlon", [])
+            if not latlon:
+                continue
+            lonlat = [[pt[1], pt[0]] for pt in latlon]
+            label  = info.get("label", f"{tool} {level}")
+            color  = info.get("color", "#888888")
+            uid    = f"wmd-{tool}-{level}-{i}"
             events.append(_polygon_cot_event(uid, label, color, lonlat, src_lat, src_lon))
 
     # <events> is the FreeTAK Server / WinTAK bulk-import container.

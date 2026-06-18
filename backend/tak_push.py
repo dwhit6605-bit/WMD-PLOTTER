@@ -27,6 +27,9 @@ def _build_events(overlay_state: dict, tools: Optional[list] = None) -> list[str
             continue
         src_lat = state.get("source_lat", 0.0)
         src_lon = state.get("source_lon", 0.0)
+
+        # Zones-based tools (blast, bleve, erg, dense_gas, fire_smoke, population)
+        # Each zone entry has "lonlat" in [lon, lat] order
         for i, z in enumerate(state.get("zones", [])):
             lonlat = z.get("lonlat") or z.get("coords", [])
             if not lonlat:
@@ -36,6 +39,20 @@ def _build_events(overlay_state: dict, tools: Optional[list] = None) -> list[str
             uid   = f"wmd-{tool}-{z.get('level', 'z')}-{i}"
             xml   = _polygon_cot_event(uid, label, color, lonlat, src_lat, src_lon)
             events.append(f'<?xml version="1.0" encoding="UTF-8"?>\n{xml}')
+
+        # Contours-based tools (plume, radiation)
+        # contours is a dict keyed by level; "latlon" is in [lat, lon] order — flip for CoT
+        for i, (level, info) in enumerate(state.get("contours", {}).items()):
+            latlon = info.get("latlon", [])
+            if not latlon:
+                continue
+            lonlat = [[pt[1], pt[0]] for pt in latlon]
+            label  = info.get("label", f"{tool} {level}")
+            color  = info.get("color", "#888888")
+            uid    = f"wmd-{tool}-{level}-{i}"
+            xml    = _polygon_cot_event(uid, label, color, lonlat, src_lat, src_lon)
+            events.append(f'<?xml version="1.0" encoding="UTF-8"?>\n{xml}')
+
     return events
 
 
