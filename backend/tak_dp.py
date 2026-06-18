@@ -80,29 +80,46 @@ def _cot_time(dt: datetime) -> str:
 
 def _polygon_cot_event(uid: str, label: str, color: str,
                        lonlat_ring: list, center_lat: float, center_lon: float) -> str:
-    now   = datetime.now(timezone.utc)
-    stale = now + timedelta(hours=24)
-    fill  = _hex_to_argb_int(color, 80)
+    now    = datetime.now(timezone.utc)
+    stale  = now + timedelta(hours=24)
+    fill   = _hex_to_argb_int(color, 80)
     stroke = _hex_to_argb_int(color, 220)
+    # hae="0" is required on every vertex — ATAK silently ignores vertices without it
     vertices = "\n        ".join(
-        f'<vertex lat="{pt[1]:.6f}" lon="{pt[0]:.6f}"/>' for pt in lonlat_ring
+        f'<vertex lat="{pt[1]:.6f}" lon="{pt[0]:.6f}" hae="0"/>' for pt in lonlat_ring
     )
-    return f"""<event version="2.0" uid="{uid}" type="u-d-f" how="m-g"
+    return f"""<event version="2.0" uid="{uid}" type="u-d-f" how="h-e"
        time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}">
   <point lat="{center_lat:.6f}" lon="{center_lon:.6f}" hae="9999999.0" ce="9999999.0" le="9999999.0"/>
   <detail>
     <shape>
-      <polyline closed="true" fillColor="{fill}" strokeColor="{stroke}" strokeWeight="3.0" fillStyle="1" strokeStyle="0">
+      <polyline closed="true">
         {vertices}
       </polyline>
     </shape>
     <strokeColor value="{stroke}"/>
     <strokeWeight value="3.0"/>
+    <strokeStyle value="solid"/>
     <fillColor value="{fill}"/>
     <remarks>{label}</remarks>
-    <color argb="{stroke}"/>
     <contact callsign="WMD PLOTTER"/>
     <uid Droid="WMD PLOTTER"/>
+  </detail>
+</event>"""
+
+
+def point_cot_event(lat: float, lon: float, callsign: str = "WMD PLOTTER") -> str:
+    """Simple SA marker (type a-f-G) for connectivity testing."""
+    now   = datetime.now(timezone.utc)
+    stale = now + timedelta(hours=1)
+    uid   = f"wmd-test-{int(now.timestamp())}"
+    return f"""<event version="2.0" uid="{uid}" type="a-f-G" how="h-e"
+       time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}">
+  <point lat="{lat:.6f}" lon="{lon:.6f}" hae="0" ce="9999999.0" le="9999999.0"/>
+  <detail>
+    <contact callsign="{callsign}"/>
+    <uid Droid="{callsign}"/>
+    <remarks>WMD PLOTTER connectivity test</remarks>
   </detail>
 </event>"""
 

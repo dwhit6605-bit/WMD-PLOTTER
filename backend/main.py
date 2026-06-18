@@ -56,7 +56,7 @@ from aegl_db import get_aegl
 from db   import init_db, count_users, create_user, get_user_by_username, \
                  get_user_by_id, update_last_login, list_users, delete_user, update_password, \
                  get_setting, set_setting
-from tak_push import push_cot
+from tak_push import push_cot, push_test_point
 from auth import (
     hash_password, verify_password, create_token, decode_token,
     auth_middleware, current_user, require_admin,
@@ -1343,6 +1343,28 @@ async def tak_push(request: Request, user: dict = Depends(current_user)):
     }
     result = push_cot(config, _overlay_state)
     result["server_tools"] = server_tools
+    return JSONResponse(result, status_code=200 if result["success"] else 502)
+
+
+@app.post("/api/tak-test-point")
+async def tak_test_point(request: Request, user: dict = Depends(require_admin)):
+    """
+    Send a simple SA point marker to the TAK server to verify end-to-end routing.
+    If this appears on ATAK but polygons don't, the issue is shape format.
+    If this doesn't appear either, the issue is connection/group routing.
+    """
+    body = await request.json()
+    lat  = float(body.get("lat", 0.0))
+    lon  = float(body.get("lon", 0.0))
+    config = {
+        "host":      get_setting("tak_host"),
+        "port":      get_setting("tak_port") or "8087",
+        "ssl":       (get_setting("tak_ssl") or "false") == "true",
+        "cert_p12":  get_setting("tak_cert_p12"),
+        "cert_pass": get_setting("tak_cert_pass") or "",
+    }
+    callsign = get_setting("tak_callsign") or "WMD PLOTTER"
+    result = push_test_point(config, lat, lon, callsign)
     return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 

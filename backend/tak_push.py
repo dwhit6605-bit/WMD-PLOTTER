@@ -14,7 +14,7 @@ import tempfile
 import os
 from typing import Optional
 
-from tak_dp import _polygon_cot_event
+from tak_dp import _polygon_cot_event, point_cot_event
 
 
 def _build_events(overlay_state: dict, tools: Optional[list] = None) -> list[str]:
@@ -130,3 +130,36 @@ def push_cot(config: dict, overlay_state: dict, tools: Optional[list] = None) ->
 
     except Exception as exc:
         return {"success": False, "sent": 0, "error": str(exc)}
+
+
+def push_test_point(config: dict, lat: float = 0.0, lon: float = 0.0,
+                    callsign: str = "WMD PLOTTER") -> dict:
+    """
+    Send a single SA point marker (type a-f-G) to the TAK server.
+    Used to verify the full pipeline — connection, auth, and ATAK routing —
+    independently of polygon rendering.
+    """
+    host    = (config.get("host") or "").strip()
+    port    = int(config.get("port") or 8087)
+    use_ssl = bool(config.get("ssl"))
+
+    if not host:
+        return {"success": False, "error": "TAK server host not configured"}
+
+    xml = point_cot_event(lat, lon, callsign)
+    payload = f'<?xml version="1.0" encoding="UTF-8"?>\n{xml}'.encode("utf-8")
+
+    try:
+        raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        raw.settimeout(15)
+        if use_ssl:
+            ctx  = _make_ssl_ctx(config.get("cert_p12"), config.get("cert_pass") or "")
+            sock = ctx.wrap_socket(raw, server_hostname=host)
+        else:
+            sock = raw
+        sock.connect((host, port))
+        sock.sendall(payload)
+        sock.close()
+        return {"success": True, "error": None}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}

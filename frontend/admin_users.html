@@ -369,32 +369,29 @@ async function clearTakCert() {
 
 async function testTakConnection() {
   const statusEl = document.getElementById('tak-status');
-  statusEl.textContent = 'Connecting…';
+  statusEl.textContent = 'Sending test marker…';
   statusEl.className   = 'tak-status';
 
   // Save first so the test uses current form values
   await saveTakConfig();
 
-  // Push an empty-tools request — server returns "no overlays" rather than a socket error
-  // We test the connection by using the test endpoint
-  const r = await fetch('/api/tak-push', {
+  // Send a real SA point marker (type a-f-G) at lat=0,lon=0.
+  // If it shows in ATAK → routing works. If polygons still don't show → shape format issue.
+  // If this also doesn't show → group routing or cert problem.
+  const r = await fetch('/api/tak-test-point', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ tools: ['__test__'] }),
+    body: JSON.stringify({ lat: 0, lon: 0 }),
   });
   const d = await r.json().catch(()=>({}));
 
-  if (d.error && d.error.includes('No active overlays')) {
-    // Socket connected OK, just nothing to send
-    statusEl.textContent = '✓ Connected to TAK server';
-    statusEl.className   = 'tak-status ok';
-  } else if (d.success) {
-    statusEl.textContent = `✓ Connected — ${d.sent} event(s) sent`;
+  if (d.success) {
+    statusEl.textContent = '✓ Test marker sent — look near 0°N 0°E on your ATAK device';
     statusEl.className   = 'tak-status ok';
   } else {
     statusEl.textContent = `✗ ${d.error || 'Connection failed'}`;
     statusEl.className   = 'tak-status err';
   }
-  setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'tak-status'; }, 8000);
+  setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'tak-status'; }, 12000);
 }
 
 init();
