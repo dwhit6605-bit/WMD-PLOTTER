@@ -16,5 +16,10 @@ venv/
 .vscode/
 *.swp
 
+# User database — never commit, contains password hashes
+backend/users.db
+backend/users.db-wal
+backend/users.db-shm
+
 # Claude Code launch config (local only)
 .claude/launch.json

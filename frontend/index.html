@@ -365,6 +365,11 @@ input:checked+.slider:before{transform:translateX(16px)}
     <div id="version-badge" class="version-badge" title="WHITWERX Model Display">v—</div>
     <button id="btn-units" onclick="toggleUnits()" title="Toggle units: US Customary ↔ Metric SI" style="font-size:11px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:4px;padding:3px 10px;letter-spacing:.06em;cursor:pointer;transition:color .2s,border-color .2s;color:var(--muted);font-weight:700;display:flex;align-items:center;gap:4px">📐 <span id="btn-units-lbl">US</span></button>
     <div id="hdr-status" style="font-size:12px;color:var(--muted)">Ready</div>
+    <div id="hdr-user" style="display:none;align-items:center;gap:6px;font-size:11px;color:var(--muted)">
+      <span id="hdr-username" style="color:var(--accent2)"></span>
+      <a id="hdr-admin-link" href="/admin/users" style="display:none;color:var(--muted);text-decoration:none;font-size:10px;border:1px solid var(--border);border-radius:4px;padding:2px 6px" title="Manage users">Admin</a>
+      <button onclick="_doLogout()" style="font-size:10px;background:transparent;border:1px solid var(--border);border-radius:4px;padding:2px 8px;color:var(--muted);cursor:pointer;font-family:inherit" title="Sign out">Sign Out</button>
+    </div>
   </div>
 
   <div id="body">
@@ -3691,6 +3696,24 @@ async function loadVersion() {
 buildToolPicker();
 _updateUnitBtn();
 loadVersion();
+
+// ── Auth: show current user in header, handle logout ─────────────────────────
+(async function _initAuth() {
+  try {
+    const r = await fetch('/auth/me');
+    if (!r.ok) { window.location.href = '/login'; return; }
+    const u = await r.json();
+    const el = document.getElementById('hdr-user');
+    document.getElementById('hdr-username').textContent = u.username;
+    if (u.role === 'admin') document.getElementById('hdr-admin-link').style.display = 'inline-flex';
+    el.style.display = 'flex';
+  } catch { /* offline / non-auth mode — silently skip */ }
+})();
+
+async function _doLogout() {
+  await fetch('/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
 // Run all data-fetch inits in parallel; apply URL params only after every
 // dropdown is populated (avoids the sel.value race condition on cold load).
 Promise.all([

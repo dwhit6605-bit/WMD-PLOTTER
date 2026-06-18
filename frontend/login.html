@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>WMD Plotter — Sign In</title>
+  <link rel="icon" type="image/png" href="/static/icons/icon-192.png"/>
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --border:   #21262d;
+      --text:     #c9d1d9;
+      --muted:    #8b949e;
+      --green:    #00ff88;
+      --accent2:  #79c0ff;
+      --warn:     #f0883e;
+      --red:      #f85149;
+    }
+
+    body {
+      min-height: 100dvh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Courier New', Courier, monospace;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .topbar-logo {
+      width: 32px; height: 32px;
+      background: var(--green);
+      clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 900; color: #000; letter-spacing: -1px;
+      flex-shrink: 0;
+    }
+    .topbar-title { line-height: 1.15; }
+    .topbar-title .brand { font-size: 13px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+    .topbar-title .sub   { font-size: 10px; color: var(--muted); letter-spacing: 0.5px; }
+    .topbar-warn {
+      margin-left: auto;
+      background: rgba(240,136,62,.15);
+      border: 1px solid rgba(240,136,62,.4);
+      color: var(--warn);
+      font-size: 10px; font-weight: 700; letter-spacing: 1px;
+      padding: 3px 8px; border-radius: 4px;
+    }
+
+    /* ── Page body ── */
+    .page {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      gap: 20px;
+    }
+
+    /* ── Card ── */
+    .card {
+      width: 100%;
+      max-width: 380px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 40px rgba(0,0,0,.6);
+    }
+    .card-head {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border);
+      text-align: center;
+    }
+    .card-head h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: 0.5px;
+    }
+    .card-head p {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 4px;
+      letter-spacing: 0.3px;
+    }
+    .card-body { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+
+    /* ── Form ── */
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+    }
+    input[type=text], input[type=password] {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color .15s;
+      width: 100%;
+    }
+    input[type=text]:focus, input[type=password]:focus {
+      border-color: var(--green);
+      box-shadow: 0 0 0 3px rgba(0,255,136,.08);
+    }
+    input::placeholder { color: var(--muted); opacity: .6; }
+
+    /* ── Error / info message ── */
+    .msg {
+      font-size: 12px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      display: none;
+    }
+    .msg.error {
+      background: rgba(248,81,73,.1);
+      border: 1px solid rgba(248,81,73,.3);
+      color: var(--red);
+      display: block;
+    }
+    .msg.info {
+      background: rgba(121,192,255,.1);
+      border: 1px solid rgba(121,192,255,.3);
+      color: var(--accent2);
+      display: block;
+    }
+
+    /* ── Button ── */
+    .btn-primary {
+      width: 100%;
+      padding: 11px;
+      background: var(--green);
+      color: #000;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      border: none;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn-primary:hover  { opacity: .9; }
+    .btn-primary:active { transform: scale(.98); }
+    .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* ── Footer link ── */
+    .card-foot {
+      padding: 14px 24px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .card-foot a {
+      color: var(--accent2);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .card-foot a:hover { text-decoration: underline; }
+
+    /* ── Authorized use note ── */
+    .auth-note {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.5px;
+      text-align: center;
+    }
+    .auth-note strong { color: var(--warn); }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-logo">W</div>
+  <div class="topbar-title">
+    <div class="brand">WHITWERX</div>
+    <div class="sub">MODEL DISPLAY (WMD)</div>
+  </div>
+  <div class="topbar-warn">FOR AUTHORIZED USE ONLY</div>
+</div>
+
+<div class="page">
+  <div class="card">
+    <div class="card-head">
+      <h1>Sign In</h1>
+      <p>WMD Plotter v<span id="ver">—</span></p>
+    </div>
+
+    <div class="card-body">
+      <div class="msg" id="msg"></div>
+
+      <label>
+        Username
+        <input type="text" id="inp-user" placeholder="username" autocomplete="username" spellcheck="false"/>
+      </label>
+
+      <label>
+        Password
+        <input type="password" id="inp-pass" placeholder="••••••••" autocomplete="current-password"/>
+      </label>
+
+      <button class="btn-primary" id="btn-login" onclick="doLogin()">Sign In</button>
+    </div>
+
+    <div class="card-foot" id="reg-link" style="display:none">
+      No account? <a href="/register">Create one</a>
+    </div>
+  </div>
+
+  <div class="auth-note">
+    Access to this system is restricted to <strong>authorized users only</strong>.<br>
+    Unauthorized access is prohibited.
+  </div>
+</div>
+
+<script>
+  // Show "expired session" message if redirected with ?reason=expired
+  const params = new URLSearchParams(location.search);
+  if (params.get('reason') === 'expired') showMsg('Your session expired — please sign in again.', 'info');
+
+  // Fetch version for display
+  fetch('/api/health').then(r => r.json()).then(d => {
+    if (d.version) document.getElementById('ver').textContent = d.version;
+  }).catch(() => {});
+
+  // Check if registration is enabled to show the link
+  fetch('/auth/registration-status').then(r => r.json()).then(d => {
+    if (d.open) document.getElementById('reg-link').style.display = 'block';
+  }).catch(() => {});
+
+  function showMsg(text, type = 'error') {
+    const el = document.getElementById('msg');
+    el.textContent = text;
+    el.className = 'msg ' + type;
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+
+  async function doLogin() {
+    const username = document.getElementById('inp-user').value.trim();
+    const password = document.getElementById('inp-pass').value;
+    const btn = document.getElementById('btn-login');
+
+    if (!username || !password) { showMsg('Enter your username and password.'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
+
+    try {
+      const r = await fetch('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      if (r.ok) {
+        window.location.href = '/';
+      } else {
+        const d = await r.json().catch(() => ({}));
+        showMsg(d.detail || 'Sign in failed.');
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+      }
+    } catch {
+      showMsg('Network error — check your connection.');
+      btn.disabled = false;
+      btn.textContent = 'Sign In';
+    }
+  }
+</script>
+</body>
+</html>

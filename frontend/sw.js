@@ -9,24 +9,28 @@
  * Bump CACHE_VERSION on every deploy to invalidate stale shells.
  */
 
-const CACHE_VERSION = "wmd-v1";
+const CACHE_VERSION = "wmd-v2";
 const CACHE_NAME    = `wmd-plotter-${CACHE_VERSION}`;
 
 // Resources that form the "app shell" — cached on install
+// NOTE: "/" is intentionally excluded — it's auth-protected and must always hit the network
 const APP_SHELL = [
-  "/",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js",
   "https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.14.2/dist/leaflet-geoman.min.css",
   "https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.14.2/dist/leaflet-geoman.min.js",
 ];
 
-// These prefixes always go to the network — never serve stale model data
+// These prefixes always go to the network — never serve stale model or auth data
 const NETWORK_ONLY_PREFIXES = [
   "/api/",
   "/kml/",
   "/export/",
+  "/auth/",
 ];
+
+// Exact paths that must always hit the network (auth-protected HTML pages)
+const NETWORK_ONLY_EXACT = new Set(["/", "/login", "/register", "/admin/users"]);
 
 // ── Install: pre-cache the app shell ─────────────────────────────────────────
 self.addEventListener("install", (event) => {
@@ -59,10 +63,10 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
-  // Always network for API / model endpoints
-  const isNetworkOnly = NETWORK_ONLY_PREFIXES.some((p) =>
-    url.pathname.startsWith(p)
-  );
+  // Always network for API / model endpoints and auth-protected pages
+  const isNetworkOnly =
+    NETWORK_ONLY_EXACT.has(url.pathname) ||
+    NETWORK_ONLY_PREFIXES.some((p) => url.pathname.startsWith(p));
   if (isNetworkOnly) {
     event.respondWith(fetch(event.request));
     return;

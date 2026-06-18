@@ -14,6 +14,9 @@ venv/
 # Secrets — never bake into the image
 backend/.env
 backend/.env.*
+backend/users.db
+backend/users.db-wal
+backend/users.db-shm
 
 # Dev / editor
 .DS_Store

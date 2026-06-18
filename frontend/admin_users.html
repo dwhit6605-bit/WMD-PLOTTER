@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>WMD Plotter — User Management</title>
+  <link rel="icon" type="image/png" href="/static/icons/icon-192.png"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #21262d;
+      --text: #c9d1d9; --muted: #8b949e; --green: #00ff88;
+      --accent2: #79c0ff; --warn: #f0883e; --red: #f85149;
+    }
+    body { min-height: 100dvh; background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; }
+
+    .topbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
+    }
+    .topbar-logo {
+      width: 32px; height: 32px; background: var(--green);
+      clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 900; color: #000;
+    }
+    .topbar-title .brand { font-size: 13px; font-weight: 700; letter-spacing: 1px; }
+    .topbar-title .sub   { font-size: 10px; color: var(--muted); }
+    .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+    .topbar-actions a { color: var(--accent2); font-size: 12px; text-decoration: none; }
+    .topbar-actions a:hover { text-decoration: underline; }
+
+    .main { max-width: 860px; margin: 32px auto; padding: 0 16px; }
+
+    h2 { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 20px; letter-spacing: 0.5px; }
+
+    /* Create user card */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 20px; margin-bottom: 24px;
+    }
+    .card h3 { font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: 0.8px;
+               text-transform: uppercase; margin-bottom: 16px; }
+    .form-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    input[type=text], input[type=password], select {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); font-family: inherit; font-size: 13px; padding: 8px 10px;
+      outline: none; flex: 1; min-width: 140px;
+    }
+    input:focus, select:focus { border-color: var(--green); }
+    select option { background: var(--surface); }
+
+    .btn {
+      padding: 8px 16px; border-radius: 6px; border: none; font-family: inherit;
+      font-size: 12px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;
+      cursor: pointer; transition: opacity .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-green  { background: var(--green);  color: #000; }
+    .btn-red    { background: transparent; border: 1px solid rgba(248,81,73,.4);
+                  color: var(--red); padding: 5px 10px; font-size: 11px; }
+    .btn-red:hover { background: rgba(248,81,73,.1); opacity: 1; }
+
+    .msg { font-size: 12px; padding: 8px 12px; border-radius: 6px; margin-top: 12px; display: none; }
+    .msg.error   { background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.3); color: var(--red); display: block; }
+    .msg.success { background: rgba(0,255,136,.08); border: 1px solid rgba(0,255,136,.3); color: var(--green); display: block; }
+
+    /* Users table */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px 12px; font-size: 10px; font-weight: 700; color: var(--muted);
+         text-transform: uppercase; letter-spacing: 0.8px; border-bottom: 1px solid var(--border); }
+    td { padding: 10px 12px; border-bottom: 1px solid rgba(33,38,45,.6); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+
+    .badge {
+      display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+    }
+    .badge-admin { background: rgba(240,136,62,.15); color: var(--warn); border: 1px solid rgba(240,136,62,.3); }
+    .badge-user  { background: rgba(121,192,255,.1);  color: var(--accent2); border: 1px solid rgba(121,192,255,.25); }
+
+    .muted { color: var(--muted); }
+
+    .empty { text-align: center; padding: 32px; color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-logo">W</div>
+  <div class="topbar-title">
+    <div class="brand">WHITWERX — User Management</div>
+    <div class="sub">WMD Plotter Admin</div>
+  </div>
+  <div class="topbar-actions">
+    <a href="/">← Back to App</a>
+    <a href="#" onclick="doLogout()">Sign Out</a>
+  </div>
+</div>
+
+<div class="main">
+  <h2>User Accounts</h2>
+
+  <!-- Create user -->
+  <div class="card">
+    <h3>Create User</h3>
+    <div class="form-row">
+      <input type="text"     id="new-user" placeholder="Username" spellcheck="false"/>
+      <input type="password" id="new-pass" placeholder="Password (min 8 chars)"/>
+      <select id="new-role">
+        <option value="user">User</option>
+        <option value="admin">Admin</option>
+      </select>
+      <button class="btn btn-green" onclick="createUser()">Create</button>
+    </div>
+    <div class="msg" id="create-msg"></div>
+  </div>
+
+  <!-- User list -->
+  <div class="card" style="padding:0;overflow:hidden">
+    <table>
+      <thead>
+        <tr>
+          <th>Username</th>
+          <th>Role</th>
+          <th>Created</th>
+          <th>Last Login</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="user-list">
+        <tr><td colspan="5" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let _me = null;
+
+async function init() {
+  const r = await fetch('/auth/me');
+  if (!r.ok) { location.href = '/login'; return; }
+  _me = await r.json();
+  loadUsers();
+}
+
+async function loadUsers() {
+  const r = await fetch('/api/admin/users');
+  if (!r.ok) return;
+  const d = await r.json();
+  const tbody = document.getElementById('user-list');
+  if (!d.users.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No users yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = d.users.map(u => `
+    <tr>
+      <td><strong>${esc(u.username)}</strong></td>
+      <td><span class="badge badge-${u.role}">${u.role}</span></td>
+      <td class="muted">${fmt(u.created_at)}</td>
+      <td class="muted">${fmt(u.last_login) || '—'}</td>
+      <td style="text-align:right">
+        ${u.username !== _me?.username ? `<button class="btn btn-red" onclick="deleteUser(${u.id},'${esc(u.username)}')">Delete</button>` : ''}
+      </td>
+    </tr>
+  `).join('');
+}
+
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmt(s) { return s ? new Date(s + 'Z').toLocaleString() : ''; }
+
+function showMsg(id, text, type) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'msg ' + type;
+  setTimeout(() => el.className = 'msg', 4000);
+}
+
+async function createUser() {
+  const username = document.getElementById('new-user').value.trim();
+  const password = document.getElementById('new-pass').value;
+  const role     = document.getElementById('new-role').value;
+  if (!username || !password) { showMsg('create-msg', 'Username and password are required.', 'error'); return; }
+  const r = await fetch('/api/admin/users', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({username, password, role}),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (r.ok) {
+    showMsg('create-msg', `User "${username}" created.`, 'success');
+    document.getElementById('new-user').value = '';
+    document.getElementById('new-pass').value = '';
+    loadUsers();
+  } else {
+    showMsg('create-msg', d.detail || 'Failed to create user.', 'error');
+  }
+}
+
+async function deleteUser(id, name) {
+  if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
+  const r = await fetch(`/api/admin/users/${id}`, {method:'DELETE'});
+  if (r.ok) { loadUsers(); }
+  else { const d = await r.json().catch(()=>({})); alert(d.detail || 'Delete failed.'); }
+}
+
+async function doLogout() {
+  await fetch('/auth/logout', {method:'POST'});
+  location.href = '/login';
+}
+
+init();
+</script>
+</body>
+</html>

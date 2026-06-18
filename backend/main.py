@@ -14,6 +14,8 @@ Endpoints:
 import os
 import sys
 import math
+import secrets
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -22,11 +24,13 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
-from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi import FastAPI, HTTPException, Request, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 # ── local imports ────────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent))
@@ -49,6 +53,13 @@ from nws_forecast import fetch_nws_forecast
 from hifld import fetch_hifld_infra
 from nifc import fetch_nifc_perimeters
 from aegl_db import get_aegl
+from db   import init_db, count_users, create_user, get_user_by_username, \
+                 get_user_by_id, update_last_login, list_users, delete_user, update_password
+from auth import (
+    hash_password, verify_password, create_token, decode_token,
+    auth_middleware, current_user, require_admin,
+    COOKIE_NAME, JWT_EXPIRE_DAYS, ALLOW_REGISTRATION, REGISTRATION_CODE,
+)
 
 APP_VERSION = "2.3.0"
 BUILD_DATE  = "2026-05-27"   # v2.3.0: AEGL table, plume animation, print report, multi-incident
@@ -62,6 +73,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.middleware("http")(auth_middleware)
+
+
+@app.on_event("startup")
+async def startup():
+    init_db()
+    if count_users() == 0:
+        admin_pass = secrets.token_urlsafe(12)
+        create_user("admin", hash_password(admin_pass), role="admin")
+        print("\n" + "=" * 60)
+        print("  INITIAL ADMIN ACCOUNT CREATED")
+        print(f"  Username : admin")
+        print(f"  Password : {admin_pass}")
+        print("  Change this password after first login!")
+        print("=" * 60 + "\n")
 
 # Serve frontend
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -181,6 +208,165 @@ async def web_manifest():
         media_type="application/manifest+json",
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+# ── Auth pages ────────────────────────────────────────────────────────────────
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    # Already logged in? Redirect to app
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
+        try:
+            decode_token(token)
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse(url="/", status_code=302)
+        except Exception:
+            pass
+    return HTMLResponse((FRONTEND_DIR / "login.html").read_text())
+
+
+@app.get("/register", response_class=HTMLResponse)
+async def register_page():
+    return HTMLResponse((FRONTEND_DIR / "register.html").read_text())
+
+
+# ── Auth API ──────────────────────────────────────────────────────────────────
+
+@app.post("/auth/login")
+async def auth_login(request: Request):
+    body = await request.json()
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+
+    user = get_user_by_username(username)
+    if not user or not verify_password(password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    update_last_login(user["id"])
+    token = create_token(user["id"], user["username"], user["role"])
+
+    is_https = request.url.scheme == "https"
+    resp = JSONResponse({"username": user["username"], "role": user["role"]})
+    resp.set_cookie(
+        COOKIE_NAME, token,
+        httponly=True,
+        secure=is_https,
+        samesite="lax",
+        max_age=JWT_EXPIRE_DAYS * 24 * 3600,
+    )
+    return resp
+
+
+@app.post("/auth/logout")
+async def auth_logout():
+    resp = JSONResponse({"status": "logged out"})
+    resp.delete_cookie(COOKIE_NAME)
+    return resp
+
+
+@app.post("/auth/register")
+async def auth_register(request: Request):
+    body = await request.json()
+    username  = (body.get("username") or "").strip()
+    password  = body.get("password") or ""
+    reg_code  = (body.get("registration_code") or "").strip()
+
+    # Determine if the requester is an admin (already logged in)
+    requester = getattr(request.state, "user", None)
+    is_admin  = requester and requester.get("role") == "admin"
+
+    if not is_admin:
+        if not ALLOW_REGISTRATION:
+            raise HTTPException(status_code=403, detail="Registration is disabled. Contact your administrator.")
+        if REGISTRATION_CODE and reg_code != REGISTRATION_CODE:
+            raise HTTPException(status_code=403, detail="Invalid registration code.")
+
+    if not username or len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
+    if len(username) > 32:
+        raise HTTPException(status_code=400, detail="Username must be 32 characters or less.")
+    if not password or len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if get_user_by_username(username):
+        raise HTTPException(status_code=409, detail="That username is already taken.")
+
+    role = "user"
+    user = create_user(username, hash_password(password), role)
+    return JSONResponse({"username": user["username"], "role": user["role"]}, status_code=201)
+
+
+@app.get("/auth/me")
+async def auth_me(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return JSONResponse(user)
+
+
+@app.get("/auth/registration-status")
+async def registration_status(request: Request):
+    """Tells the frontend whether the register page should show the form."""
+    requester = getattr(request.state, "user", None)
+    is_admin  = requester and requester.get("role") == "admin"
+    return JSONResponse({
+        "open":          ALLOW_REGISTRATION or bool(is_admin),
+        "code_required": bool(REGISTRATION_CODE) and not is_admin,
+        "admin_session": bool(is_admin),
+    })
+
+
+# ── Admin: user management ────────────────────────────────────────────────────
+
+@app.get("/admin/users")
+async def admin_users_page(user: dict = Depends(require_admin)):
+    return HTMLResponse((FRONTEND_DIR / "admin_users.html").read_text())
+
+
+@app.get("/api/admin/users")
+async def api_list_users(user: dict = Depends(require_admin)):
+    return JSONResponse({"users": list_users()})
+
+
+@app.post("/api/admin/users")
+async def api_create_user(request: Request, admin: dict = Depends(require_admin)):
+    body = await request.json()
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    role     = body.get("role", "user")
+
+    if not username or len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
+    if not password or len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if role not in ("user", "admin"):
+        raise HTTPException(status_code=400, detail="Role must be 'user' or 'admin'.")
+    if get_user_by_username(username):
+        raise HTTPException(status_code=409, detail="Username already taken.")
+
+    user = create_user(username, hash_password(password), role)
+    return JSONResponse({"username": user["username"], "role": user["role"]}, status_code=201)
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def api_delete_user(user_id: int, admin: dict = Depends(require_admin)):
+    if str(user_id) == str(admin.get("sub")):
+        raise HTTPException(status_code=400, detail="Cannot delete your own account.")
+    if not delete_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found.")
+    return JSONResponse({"status": "deleted"})
+
+
+@app.post("/api/admin/users/{user_id}/password")
+async def api_reset_password(user_id: int, request: Request, admin: dict = Depends(require_admin)):
+    body = await request.json()
+    password = body.get("password") or ""
+    if not password or len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if not get_user_by_id(user_id):
+        raise HTTPException(status_code=404, detail="User not found.")
+    update_password(user_id, hash_password(password))
+    return JSONResponse({"status": "updated"})
 
 
 @app.get("/api/version")
