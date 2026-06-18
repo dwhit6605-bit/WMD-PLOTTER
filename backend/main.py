@@ -1353,6 +1353,21 @@ async def tak_push(request: Request, user: dict = Depends(current_user)):
     return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 
+@app.get("/api/tak-preview")
+async def tak_preview(user: dict = Depends(current_user)):
+    """Return the raw CoT XML that would be sent on the next push — for debugging."""
+    from tak_push import _build_events
+    events = _build_events(_overlay_state)
+    if not events:
+        return JSONResponse({"events": [], "count": 0,
+                             "error": "No active overlays — run a model first"})
+    return JSONResponse({
+        "count": len(events),
+        "events": events,
+        "tools": [k for k, v in _overlay_state.items() if v],
+    })
+
+
 @app.post("/api/tak-push-marti")
 async def tak_push_marti(user: dict = Depends(current_user)):
     """Push overlay state to TAK server via Marti HTTPS data package upload."""
