@@ -181,6 +181,15 @@
       </div>
     </div>
 
+    <div class="tak-row" style="margin-top:12px">
+      <label><span>Marti Username <span style="font-weight:400;text-transform:none">(optional — TAK Server admin login)</span></span>
+        <input type="text" id="tak-marti-user" placeholder="admin" spellcheck="false" autocomplete="off"/>
+      </label>
+      <label style="max-width:220px"><span>Marti Password</span>
+        <input type="password" id="tak-marti-pass" placeholder="(leave blank if not needed)" autocomplete="off"/>
+      </label>
+    </div>
+
     <div class="tak-actions">
       <button class="btn btn-green" onclick="saveTakConfig()">Save Config</button>
       <button class="btn btn-outline" onclick="testTakConnection()">Test Connection</button>
@@ -298,6 +307,8 @@ async function loadTakConfig() {
   document.getElementById('tak-port').value        = d.port || '8087';
   document.getElementById('tak-marti-port').value  = d.marti_port || '8443';
   document.getElementById('tak-callsign').value    = d.callsign || 'WMD PLOTTER';
+  document.getElementById('tak-marti-user').value  = d.marti_user || '';
+  document.getElementById('tak-marti-pass').value  = d.marti_pass || '';
   document.getElementById('tak-ssl').checked    = !!d.ssl;
   toggleCertSection();
   _hasCert = !!d.has_cert;
@@ -341,6 +352,8 @@ async function saveTakConfig() {
     marti_port: parseInt(document.getElementById('tak-marti-port').value) || 8443,
     ssl:        document.getElementById('tak-ssl').checked,
     callsign:   document.getElementById('tak-callsign').value.trim() || 'WMD PLOTTER',
+    marti_user: document.getElementById('tak-marti-user').value.trim(),
+    marti_pass: document.getElementById('tak-marti-pass').value,
   };
   if (_takCertB64) {
     body.cert_p12_b64 = _takCertB64;

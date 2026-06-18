@@ -1295,6 +1295,8 @@ async def get_tak_config(user: dict = Depends(require_admin)):
         "ssl":         (get_setting("tak_ssl") or "false") == "true",
         "callsign":    get_setting("tak_callsign") or "WMD PLOTTER",
         "has_cert":    bool(get_setting("tak_cert_p12")),
+        "marti_user":  get_setting("tak_marti_user") or "",
+        "marti_pass":  get_setting("tak_marti_pass") or "",
     }
 
 
@@ -1307,6 +1309,8 @@ async def save_tak_config(request: Request, user: dict = Depends(require_admin))
     set_setting("tak_marti_port", str(int(body.get("marti_port") or 8443)))
     set_setting("tak_ssl",        "true" if body.get("ssl") else "false")
     set_setting("tak_callsign",   (body.get("callsign") or "WMD PLOTTER").strip())
+    set_setting("tak_marti_user", (body.get("marti_user") or "").strip())
+    set_setting("tak_marti_pass", body.get("marti_pass") or "")
     if body.get("clear_cert"):
         set_setting("tak_cert_p12",  None)
         set_setting("tak_cert_pass", None)
@@ -1363,6 +1367,8 @@ async def tak_push_marti(user: dict = Depends(current_user)):
         "marti_port": get_setting("tak_marti_port") or "8443",
         "cert_p12":   get_setting("tak_cert_p12"),
         "cert_pass":  get_setting("tak_cert_pass") or "",
+        "marti_user": get_setting("tak_marti_user") or "",
+        "marti_pass": get_setting("tak_marti_pass") or "",
     }
     result = await push_via_marti(config, _overlay_state)
     return JSONResponse(result, status_code=200 if result["success"] else 502)

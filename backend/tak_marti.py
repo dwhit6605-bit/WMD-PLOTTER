@@ -83,36 +83,64 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
 
     url = f"https://{host}:{marti_port}/Marti/sync/missionupload"
 
-    params = {"name": filename.replace(".zip", ""), "creatorUid": "WMD-PLOTTER"}
-    files  = {"assetfile": (filename, zip_bytes, "application/zip")}
+    params   = {"name": filename.replace(".zip", ""), "creatorUid": "WMD-PLOTTER"}
+    files    = {"assetfile": (filename, zip_bytes, "application/zip")}
+    marti_user = config.get("marti_user") or ""
+    marti_pass = config.get("marti_pass") or ""
+
+    def _make_ctx(with_cert: bool = False, cert_path: str = None, key_path: str = None):
+        """TLS 1.2 context — avoids TLS 1.3 CERTIFICATE_REQUIRED handshake alert."""
+        import ssl as _ssl
+        ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode    = _ssl.CERT_NONE
+        try:
+            ctx.maximum_version = _ssl.TLSVersion.TLSv1_2
+        except AttributeError:
+            pass  # Python < 3.7 fallback
+        if with_cert and cert_path:
+            ctx.load_cert_chain(cert_path, key_path)
+        return ctx
 
     cert_path = key_path = None
     try:
-        # Attempt 1: no client cert — Marti's missionupload often allows this,
-        # and the Marti port (8443) uses a different trust store than CoT (8089).
-        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
-            resp = await client.post(url, files=files, params=params)
+        # Attempt 1: Basic auth with admin credentials (if configured)
+        if marti_user:
+            async with httpx.AsyncClient(
+                verify=_make_ctx(), timeout=30.0,
+                auth=(marti_user, marti_pass),
+            ) as client:
+                resp = await client.post(url, files=files, params=params)
+            if resp.status_code in (200, 201):
+                return {"success": True, "url": resp.text.strip(), "error": None,
+                        "zones": len(active)}
+            if resp.status_code not in (401, 403):
+                return {"success": False, "url": None,
+                        "error": f"Marti HTTP {resp.status_code}: {resp.text[:300]}"}
 
+        # Attempt 2: no auth (some TAK servers allow anonymous missionupload)
+        async with httpx.AsyncClient(verify=_make_ctx(), timeout=30.0) as client:
+            resp = await client.post(url, files=files, params=params)
         if resp.status_code in (200, 201):
             return {"success": True, "url": resp.text.strip(), "error": None,
                     "zones": len(active)}
 
-        # Attempt 2: retry with client cert if server returned 401/403
-        if resp.status_code in (401, 403) and cert_p12:
+        # Attempt 3: client cert (for servers that use mutual TLS on Marti)
+        if cert_p12 and resp.status_code in (401, 403):
             cert_path, key_path = _pem_tempfiles(cert_p12, cert_pass)
             async with httpx.AsyncClient(
-                verify=False, timeout=30.0, cert=(cert_path, key_path)
+                verify=_make_ctx(True, cert_path, key_path), timeout=30.0
             ) as client:
                 resp = await client.post(url, files=files, params=params)
-
             if resp.status_code in (200, 201):
                 return {"success": True, "url": resp.text.strip(), "error": None,
                         "zones": len(active)}
 
-        return {
-            "success": False, "url": None,
-            "error": f"Marti HTTP {resp.status_code}: {resp.text[:300]}",
-        }
+        hint = ""
+        if resp.status_code in (401, 403):
+            hint = " — add your TAK Server admin username/password in the admin panel"
+        return {"success": False, "url": None,
+                "error": f"Marti HTTP {resp.status_code}{hint}"}
 
     except Exception as exc:
         return {"success": False, "url": None, "error": str(exc)}
