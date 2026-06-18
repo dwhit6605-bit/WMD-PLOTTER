@@ -1322,10 +1322,7 @@ async def tak_status(user: dict = Depends(current_user)):
 
 @app.post("/api/tak-push")
 async def tak_push(request: Request, user: dict = Depends(current_user)):
-    """Stream current active overlays to the configured TAK server as CoT events."""
-    body  = await request.json()
-    tools = body.get("tools")   # list of tool IDs, or None for all active
-
+    """Stream all active overlays to the configured TAK server as CoT events."""
     config = {
         "host":      get_setting("tak_host"),
         "port":      get_setting("tak_port") or "8087",
@@ -1333,9 +1330,7 @@ async def tak_push(request: Request, user: dict = Depends(current_user)):
         "cert_p12":  get_setting("tak_cert_p12"),
         "cert_pass": get_setting("tak_cert_pass") or "",
     }
-
-    state = {k: v for k, v in _overlay_state.items() if not tools or k in tools}
-    result = push_cot(config, state, tools)
+    result = push_cot(config, _overlay_state)
     return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 
