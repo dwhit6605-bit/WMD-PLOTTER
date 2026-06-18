@@ -136,11 +136,17 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
                 return {"success": True, "url": resp.text.strip(), "error": None,
                         "zones": len(active)}
 
-        hint = ""
         if resp.status_code in (401, 403):
-            hint = " — add your TAK Server admin username/password in the admin panel"
+            return {
+                "success": False, "url": None,
+                "error": (
+                    f"Marti HTTP {resp.status_code}: TAK Server requires the admin client "
+                    "certificate (admin.p12) for API access — Basic auth is not accepted. "
+                    "Upload admin.p12 as your certificate in the admin panel, or use TCP CoT push."
+                ),
+            }
         return {"success": False, "url": None,
-                "error": f"Marti HTTP {resp.status_code}{hint}"}
+                "error": f"Marti HTTP {resp.status_code}: {resp.text[:200]}"}
 
     except Exception as exc:
         return {"success": False, "url": None, "error": str(exc)}

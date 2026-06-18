@@ -3374,18 +3374,28 @@ async function downloadCoT() {
 async function pushToTAK() {
   const btn = document.getElementById('btn-tak-push');
   const orig = btn.textContent;
-  btn.textContent = '📡 Pushing…';
   btn.disabled = true;
 
   try {
-    // Primary: Marti HTTPS data package upload (distributes to all connected clients)
-    const r = await fetch(`${API}/api/tak-push-marti`, { method: 'POST' });
-    const d = await r.json().catch(() => ({}));
-    if (d.success) {
-      toast(`✓ Data package sent to TAK server (${d.zones || '?'} overlay${d.zones !== 1 ? 's' : ''})`, 3500);
-    } else {
-      toast(`✗ TAK push failed: ${d.error || 'Unknown error'}`, 5000);
+    // Attempt 1: Marti HTTPS data package (broadest distribution)
+    btn.textContent = '📡 Pushing (HTTP)…';
+    const rm = await fetch(`${API}/api/tak-push-marti`, { method: 'POST' });
+    const dm = await rm.json().catch(() => ({}));
+    if (dm.success) {
+      toast(`✓ Data package sent to TAK server (${dm.zones || '?'} overlay${dm.zones !== 1 ? 's' : ''})`, 3500);
+      return;
     }
+
+    // Attempt 2: TCP CoT streaming (falls back automatically)
+    btn.textContent = '📡 Pushing (CoT)…';
+    const rc = await fetch(`${API}/api/tak-push`, { method: 'POST' });
+    const dc = await rc.json().catch(() => ({}));
+    if (dc.success) {
+      toast(`✓ Pushed ${dc.sent} CoT event${dc.sent !== 1 ? 's' : ''} to TAK server`, 3000);
+      return;
+    }
+
+    toast(`✗ TAK push failed: ${dc.error || dm.error || 'Unknown error'}`, 5000);
   } catch (e) {
     toast(`✗ TAK push error: ${e.message}`, 4000);
   } finally {
