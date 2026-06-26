@@ -176,7 +176,11 @@ async def get_contacts(config: dict) -> list:
     if not host:
         return []
 
-    ctx, temps = _make_ssl_ctx(cert_b64, cert_pass, truststore_b64, truststore_pass)
+    try:
+        ctx, temps = _make_ssl_ctx(cert_b64, cert_pass, truststore_b64, truststore_pass)
+    except Exception:
+        return []
+
     try:
         async with httpx.AsyncClient(verify=ctx, timeout=10.0) as client:
             r = await client.get(
