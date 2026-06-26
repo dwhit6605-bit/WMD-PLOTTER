@@ -3394,7 +3394,8 @@ async function pushToTAK() {
     const rc = await fetch(`${API}/api/tak-push`, { method: 'POST' });
     const dc = await rc.json().catch(() => ({}));
     if (dc.success) {
-      toast(`✓ Pushed ${dc.sent} CoT event${dc.sent !== 1 ? 's' : ''} to TAK server`, 3000);
+      const martiErr = dm.error ? ` (data pkg failed: ${dm.error})` : '';
+      toast(`✓ Pushed ${dc.sent} CoT event${dc.sent !== 1 ? 's' : ''} via TCP${martiErr}`, 6000);
       return;
     }
 
