@@ -1426,7 +1426,12 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
 
 @app.post("/api/tak-test-point")
 async def tak_test_point(request: Request, user: dict = Depends(require_admin)):
-    """Send an SA point marker to a TAK profile to verify end-to-end routing."""
+    """
+    Send an SA point marker to a TAK profile to verify end-to-end routing.
+    Tries HTTP CoT injection (/Marti/api/cot) first — more reliable than raw TCP
+    because the HTTPS response confirms the server processed the event.
+    Falls back to TCP CoT if HTTP fails.
+    """
     body = await request.json()
     lat  = float(body.get("lat", 0.0))
     lon  = float(body.get("lon", 0.0))
@@ -1434,9 +1439,43 @@ async def tak_test_point(request: Request, user: dict = Depends(require_admin)):
     p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile()
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
+
     config   = _profile_to_config(p)
     callsign = p.get("callsign") or "WMD PLOTTER"
-    result   = push_test_point(config, lat, lon, callsign)
+    host     = config["host"]
+    marti_port = int(config.get("marti_port") or 8443)
+
+    from tak_dp import point_cot_event
+    from tak_marti import _make_ssl_ctx
+    cot_xml = f'<?xml version="1.0" encoding="UTF-8"?>\n{point_cot_event(lat, lon, callsign)}'
+
+    # Attempt 1: HTTP CoT injection via Marti API (same cert, same port as data package push)
+    if config.get("cert_p12"):
+        try:
+            ctx, temps = _make_ssl_ctx(config["cert_p12"], config.get("cert_pass") or "")
+            try:
+                async with httpx.AsyncClient(verify=ctx, timeout=10.0) as client:
+                    r = await client.post(
+                        f"https://{host}:{marti_port}/Marti/api/cot",
+                        content=cot_xml.encode("utf-8"),
+                        headers={
+                            "Content-Type": "application/octet-stream",
+                            "X-Content-Type": "application/xml",
+                        },
+                    )
+                if r.status_code in (200, 201, 204):
+                    return JSONResponse({"success": True, "method": "http", "error": None})
+            finally:
+                import os as _os
+                for t in temps:
+                    try: _os.unlink(t)
+                    except OSError: pass
+        except Exception:
+            pass
+
+    # Attempt 2: TCP CoT (with 2-second linger before close)
+    result = push_test_point(config, lat, lon, callsign)
+    result["method"] = "tcp"
     return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 

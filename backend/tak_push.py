@@ -12,6 +12,7 @@ import ssl
 import base64
 import tempfile
 import os
+import time
 from typing import Optional
 
 from tak_dp import _polygon_cot_event, point_cot_event
@@ -99,6 +100,21 @@ def _make_ssl_ctx(cert_b64: Optional[str], cert_pass: str) -> ssl.SSLContext:
     return ctx
 
 
+def _linger(sock, seconds: float) -> None:
+    """Drain any server bytes until timeout, then return. Prevents TCP RST on close."""
+    deadline = time.monotonic() + seconds
+    buf = bytearray(512)
+    try:
+        sock.settimeout(0.05)
+        while time.monotonic() < deadline:
+            try:
+                sock.recv_into(buf)
+            except (TimeoutError, OSError):
+                time.sleep(0.05)
+    except Exception:
+        pass
+
+
 def push_cot(config: dict, overlay_state: dict, tools: Optional[list] = None) -> dict:
     """
     Stream CoT events to a TAK server over TCP or SSL.
@@ -130,6 +146,10 @@ def push_cot(config: dict, overlay_state: dict, tools: Optional[list] = None) ->
         sock.connect((host, port))
         for ev in events:
             sock.sendall(ev.encode("utf-8"))
+        # Linger 2 s before closing — TAK Server reads the TLS stream asynchronously;
+        # closing immediately can send a TCP RST that truncates the record before the
+        # server has read it. (Pattern from TAKPhotoSpotter.)
+        _linger(sock, 2.0)
         sock.close()
         return {"success": True, "sent": len(events), "error": None}
 
@@ -164,6 +184,7 @@ def push_test_point(config: dict, lat: float = 0.0, lon: float = 0.0,
             sock = raw
         sock.connect((host, port))
         sock.sendall(payload)
+        _linger(sock, 2.0)
         sock.close()
         return {"success": True, "error": None}
     except Exception as exc:
