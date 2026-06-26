@@ -83,27 +83,51 @@
 
     .empty { text-align: center; padding: 32px; color: var(--muted); font-size: 13px; }
 
-    /* TAK config */
-    .tak-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; }
-    .tak-row label { font-size: 11px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 120px; }
-    .tak-row label span { letter-spacing: 0.5px; text-transform: uppercase; }
+    /* shared */
     input[type=number] { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
       color: var(--text); font-family: inherit; font-size: 13px; padding: 8px 10px; outline: none; width: 100%; }
     input[type=number]:focus { border-color: var(--green); }
-    .ssl-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; padding: 8px 0; }
-    .ssl-toggle input[type=checkbox] { accent-color: var(--green); width: 15px; height: 15px; cursor: pointer; }
-    .cert-section { margin-top: 8px; display: none; }
-    .cert-section.visible { display: block; }
-    .cert-area { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-      color: var(--text); font-family: inherit; font-size: 11px; padding: 8px; resize: vertical; min-height: 48px; outline: none; }
-    .cert-area:focus { border-color: var(--green); }
+    .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+    .btn-outline:hover { border-color: var(--green); color: var(--green); opacity: 1; }
     .cert-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
       border-radius: 4px; font-size: 11px; background: rgba(0,255,136,.08);
       border: 1px solid rgba(0,255,136,.3); color: var(--green); margin-bottom: 8px; }
-    .tak-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
-    .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--muted); }
-    .btn-outline:hover { border-color: var(--green); color: var(--green); opacity: 1; }
-    .tak-status { font-size: 11px; color: var(--muted); }
+
+    /* TAK profiles */
+    .profile-grid { display: flex; flex-direction: column; gap: 10px; }
+    .profile-card {
+      border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px;
+      position: relative; transition: border-color .15s;
+    }
+    .profile-card.active { border-color: rgba(0,255,136,.5); background: rgba(0,255,136,.03); }
+    .profile-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .profile-name { font-size: 13px; font-weight: 700; color: var(--text); }
+    .badge-active { padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700;
+      background: rgba(0,255,136,.15); color: var(--green); border: 1px solid rgba(0,255,136,.3); letter-spacing: .5px; }
+    .profile-meta { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+    .profile-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .btn-sm { padding: 5px 11px; font-size: 11px; }
+
+    /* Modal */
+    .modal-backdrop {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.65);
+      z-index: 100; align-items: center; justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 24px; width: min(560px, 95vw); max-height: 90vh; overflow-y: auto;
+    }
+    .modal h3 { font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: .8px;
+                text-transform: uppercase; margin-bottom: 18px; }
+    .f-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; }
+    .f-row label { font-size: 11px; color: var(--muted); display: flex; flex-direction: column;
+                   gap: 4px; flex: 1; min-width: 120px; }
+    .f-row label span { letter-spacing: .5px; text-transform: uppercase; }
+    .ssl-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; padding: 6px 0; }
+    .ssl-toggle input { accent-color: var(--green); width: 15px; height: 15px; cursor: pointer; }
+    .modal-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+    .tak-status { font-size: 11px; color: var(--muted); margin-top: 6px; }
     .tak-status.ok  { color: var(--green); }
     .tak-status.err { color: var(--red); }
   </style>
@@ -140,75 +164,77 @@
     <div class="msg" id="create-msg"></div>
   </div>
 
-  <!-- TAK Server Config -->
+  <!-- TAK Server Profiles -->
   <div class="card" id="tak-card">
-    <h3>TAK Server Configuration</h3>
-
-    <div class="tak-row">
-      <label><span>Host / IP</span>
-        <input type="text" id="tak-host" placeholder="192.168.1.50 or tak.example.com" spellcheck="false"/>
-      </label>
-      <label style="max-width:110px"><span>CoT Port</span>
-        <input type="number" id="tak-port" value="8087" min="1" max="65535"/>
-      </label>
-      <label style="max-width:110px"><span>API Port</span>
-        <input type="number" id="tak-marti-port" value="8443" min="1" max="65535" title="Marti HTTPS port (default 8443)"/>
-      </label>
-      <label style="max-width:160px"><span>Callsign</span>
-        <input type="text" id="tak-callsign" placeholder="WMD PLOTTER" spellcheck="false"/>
-      </label>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="margin:0">TAK Server Profiles</h3>
+      <button class="btn btn-green btn-sm" onclick="openModal()">+ Add Profile</button>
     </div>
-
-    <label class="ssl-toggle">
-      <input type="checkbox" id="tak-ssl" onchange="toggleCertSection()"/>
-      Use SSL / TLS
-    </label>
-
-    <div class="cert-section" id="cert-section">
-      <div id="cert-badge-area"></div>
-      <div class="tak-row" style="margin-bottom:8px">
-        <label><span>Client Certificate (P12 file)</span>
-          <input type="file" id="tak-cert-file" accept=".p12,.pfx,.pem"
-                 style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:6px 8px;width:100%;cursor:pointer"
-                 onchange="onCertFile(this)"/>
-        </label>
-        <label style="max-width:180px"><span>P12 Passphrase</span>
-          <input type="password" id="tak-cert-pass" placeholder="(leave blank if none)"/>
-        </label>
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
-        Leave certificate blank for SSL without mutual auth (port 8088). Upload a P12 for full certificate auth (port 8089).
-      </div>
-    </div>
-
-    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-      <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:10px">
-        Marti API Certificate <span style="font-weight:400;text-transform:none;letter-spacing:0">(for data package push — upload admin.p12 from your TAK server)</span>
-      </div>
-      <div id="marti-cert-badge-area"></div>
-      <div class="tak-row" style="margin-bottom:6px">
-        <label><span>Admin Certificate (admin.p12)</span>
-          <input type="file" id="tak-marti-cert-file" accept=".p12,.pfx,.pem"
-                 style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:6px 8px;width:100%;cursor:pointer"
-                 onchange="onMartiCertFile(this)"/>
-        </label>
-        <label style="max-width:200px"><span>Passphrase <span style="font-weight:400">(default: atakatak)</span></span>
-          <input type="password" id="tak-marti-cert-pass" placeholder="atakatak" autocomplete="off"/>
-        </label>
-      </div>
-      <div style="font-size:11px;color:var(--muted)">
-        Find it on your TAK server: <code style="color:var(--accent2)">/opt/tak/certs/files/admin.p12</code>
-      </div>
-    </div>
-
-    <div class="tak-actions">
-      <button class="btn btn-green" onclick="saveTakConfig()">Save Config</button>
-      <button class="btn btn-outline" onclick="testTakConnection()">Test Connection</button>
-      <button class="btn btn-red" id="btn-clear-cert" style="display:none" onclick="clearTakCert()">Remove CoT Cert</button>
-      <button class="btn btn-red" id="btn-clear-marti-cert" style="display:none" onclick="clearMartiCert()">Remove Marti Cert</button>
-      <span class="tak-status" id="tak-status"></span>
+    <div class="profile-grid" id="tak-profiles-list">
+      <div class="muted" style="font-size:12px;padding:12px 0">Loading…</div>
     </div>
     <div class="msg" id="tak-msg"></div>
+  </div>
+
+  <!-- Add / Edit Profile Modal -->
+  <div class="modal-backdrop" id="profile-modal" onclick="closeModal(event)">
+    <div class="modal">
+      <h3 id="modal-title">Add TAK Profile</h3>
+
+      <div class="f-row">
+        <label style="flex:2"><span>Profile Name</span>
+          <input type="text" id="m-name" placeholder="e.g. WHITWERX TAK" spellcheck="false"/>
+        </label>
+      </div>
+      <div class="f-row">
+        <label style="flex:3"><span>Host / IP</span>
+          <input type="text" id="m-host" placeholder="192.168.1.50 or tak.example.com" spellcheck="false"/>
+        </label>
+        <label style="max-width:100px"><span>CoT Port</span>
+          <input type="number" id="m-port" value="8089" min="1" max="65535"/>
+        </label>
+        <label style="max-width:100px"><span>API Port</span>
+          <input type="number" id="m-marti-port" value="8443" min="1" max="65535"/>
+        </label>
+      </div>
+      <div class="f-row">
+        <label style="max-width:200px"><span>Callsign</span>
+          <input type="text" id="m-callsign" placeholder="WMD PLOTTER" spellcheck="false"/>
+        </label>
+      </div>
+
+      <label class="ssl-toggle">
+        <input type="checkbox" id="m-ssl" checked/>
+        Use SSL / TLS
+      </label>
+
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;margin-bottom:10px">
+          Client Certificate
+        </div>
+        <div id="m-cert-badge"></div>
+        <div class="f-row" style="margin-bottom:6px">
+          <label><span>Certificate (.p12 / .pem)</span>
+            <input type="file" id="m-cert-file" accept=".p12,.pfx,.pem"
+                   style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:6px 8px;width:100%;cursor:pointer"
+                   onchange="onModalCertFile(this)"/>
+          </label>
+          <label style="max-width:180px"><span>Passphrase</span>
+            <input type="password" id="m-cert-pass" placeholder="(blank if none)" autocomplete="off"/>
+          </label>
+        </div>
+        <div style="font-size:11px;color:var(--muted)">
+          Same cert used for both CoT streaming (port 8089) and Marti data package push (port 8443).
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-green" onclick="saveProfile()">Save Profile</button>
+        <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-red" id="m-remove-cert-btn" style="display:none" onclick="removeCertFromModal()">Remove Cert</button>
+      </div>
+      <div class="tak-status" id="modal-status"></div>
+    </div>
   </div>
 
   <!-- User list -->
@@ -233,17 +259,18 @@
 <script>
 let _me = null;
 
-let _takCertB64      = null;   // CoT cert (port 8089)
-let _hasCert         = false;
-let _martiCertB64    = null;   // Marti admin cert (port 8443)
-let _hasMartiCert    = false;
+// ── Modal state ───────────────────────────────────────────────────────────────
+let _editingId    = null;   // null = creating new
+let _modalCertB64 = null;   // newly picked cert bytes
+let _modalHasCert = false;  // cert already stored on server
+let _modalClearCert = false;
 
 async function init() {
   const r = await fetch('/auth/me');
   if (!r.ok) { location.href = '/login'; return; }
   _me = await r.json();
   loadUsers();
-  loadTakConfig();
+  loadProfiles();
 }
 
 async function loadUsers() {
@@ -311,158 +338,151 @@ async function doLogout() {
   location.href = '/login';
 }
 
-// ── TAK Server Config ─────────────────────────────────────────────────────────
+// ── TAK Server Profiles ───────────────────────────────────────────────────────
 
-async function loadTakConfig() {
-  const r = await fetch('/api/admin/tak-config');
+async function loadProfiles() {
+  const r = await fetch('/api/admin/tak-profiles');
   if (!r.ok) return;
-  const d = await r.json();
-  document.getElementById('tak-host').value        = d.host || '';
-  document.getElementById('tak-port').value        = d.port || '8087';
-  document.getElementById('tak-marti-port').value  = d.marti_port || '8443';
-  document.getElementById('tak-callsign').value    = d.callsign || 'WMD PLOTTER';
-  document.getElementById('tak-ssl').checked       = !!d.ssl;
-  toggleCertSection();
-  _hasCert      = !!d.has_cert;
-  _hasMartiCert = !!d.has_marti_cert;
-  renderCertBadge();
-  renderMartiCertBadge();
-}
-
-function toggleCertSection() {
-  const ssl = document.getElementById('tak-ssl').checked;
-  document.getElementById('cert-section').classList.toggle('visible', ssl);
-}
-
-function renderCertBadge() {
-  const area = document.getElementById('cert-badge-area');
-  const btn  = document.getElementById('btn-clear-cert');
-  if (_hasCert || _takCertB64) {
-    area.innerHTML = '<div class="cert-badge">🔐 CoT client certificate loaded</div>';
-    btn.style.display = '';
-  } else {
-    area.innerHTML = '';
-    btn.style.display = 'none';
+  const { profiles } = await r.json();
+  const el = document.getElementById('tak-profiles-list');
+  if (!profiles.length) {
+    el.innerHTML = '<div class="muted" style="font-size:12px;padding:12px 0">No profiles yet. Add one to get started.</div>';
+    return;
   }
+  el.innerHTML = profiles.map(p => `
+    <div class="profile-card${p.is_active ? ' active' : ''}" id="pc-${p.id}">
+      <div class="profile-card-header">
+        <span class="profile-name">${esc(p.name)}</span>
+        ${p.is_active ? '<span class="badge-active">ACTIVE</span>' : ''}
+      </div>
+      <div class="profile-meta">${esc(p.host || '(no host)')} &nbsp;·&nbsp; CoT: ${p.port}${p.ssl ? ' SSL' : ''} &nbsp;·&nbsp; API: ${p.marti_port}</div>
+      <div class="profile-meta">${p.has_cert ? '🔐 Certificate loaded' : '<span style="color:var(--warn)">⚠ No certificate</span>'} &nbsp;·&nbsp; ${esc(p.callsign || 'WMD PLOTTER')}</div>
+      <div class="profile-actions">
+        ${!p.is_active ? `<button class="btn btn-green btn-sm" onclick="activateProfile(${p.id})">Set Active</button>` : ''}
+        <button class="btn btn-outline btn-sm" onclick="testProfile(${p.id})">Test</button>
+        <button class="btn btn-outline btn-sm" onclick="editProfile(${p.id})">Edit</button>
+        <button class="btn btn-red btn-sm" onclick="deleteProfile(${p.id}, '${esc(p.name)}')">Delete</button>
+      </div>
+      <div class="tak-status" id="ts-${p.id}"></div>
+    </div>
+  `).join('');
 }
 
-function renderMartiCertBadge() {
-  const area = document.getElementById('marti-cert-badge-area');
-  const btn  = document.getElementById('btn-clear-marti-cert');
-  if (_hasMartiCert || _martiCertB64) {
-    area.innerHTML = '<div class="cert-badge">🔐 Marti admin certificate loaded</div>';
-    if (btn) btn.style.display = '';
-  } else {
-    area.innerHTML = '';
-    if (btn) btn.style.display = 'none';
-  }
+function openModal(p = null) {
+  _editingId     = p ? p.id : null;
+  _modalCertB64  = null;
+  _modalHasCert  = p ? !!p.has_cert : false;
+  _modalClearCert = false;
+
+  document.getElementById('modal-title').textContent = p ? 'Edit Profile' : 'Add TAK Profile';
+  document.getElementById('m-name').value       = p ? p.name       : '';
+  document.getElementById('m-host').value       = p ? p.host       : '';
+  document.getElementById('m-port').value       = p ? p.port       : '8089';
+  document.getElementById('m-marti-port').value = p ? p.marti_port : '8443';
+  document.getElementById('m-callsign').value   = p ? p.callsign   : 'WMD PLOTTER';
+  document.getElementById('m-ssl').checked      = p ? !!p.ssl      : true;
+  document.getElementById('m-cert-file').value  = '';
+  document.getElementById('m-cert-pass').value  = '';
+  document.getElementById('modal-status').textContent = '';
+  renderModalCertBadge();
+  document.getElementById('profile-modal').classList.add('open');
 }
 
-function onCertFile(input) {
+function closeModal(e) {
+  if (e && e.target !== document.getElementById('profile-modal')) return;
+  document.getElementById('profile-modal').classList.remove('open');
+}
+
+function renderModalCertBadge() {
+  const badge = document.getElementById('m-cert-badge');
+  const removeBtn = document.getElementById('m-remove-cert-btn');
+  const hasCert = (_modalHasCert || _modalCertB64) && !_modalClearCert;
+  badge.innerHTML = hasCert ? '<div class="cert-badge">🔐 Certificate loaded</div>' : '';
+  removeBtn.style.display = hasCert ? '' : 'none';
+}
+
+function onModalCertFile(input) {
   const file = input.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
-    const bytes = new Uint8Array(e.target.result);
-    _takCertB64 = btoa(String.fromCharCode(...bytes));
-    _hasCert = false;
-    renderCertBadge();
+    _modalCertB64  = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
+    _modalClearCert = false;
+    renderModalCertBadge();
   };
   reader.readAsArrayBuffer(file);
 }
 
-function onMartiCertFile(input) {
-  const file = input.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    const bytes = new Uint8Array(e.target.result);
-    _martiCertB64 = btoa(String.fromCharCode(...bytes));
-    _hasMartiCert = false;
-    renderMartiCertBadge();
-  };
-  reader.readAsArrayBuffer(file);
+function removeCertFromModal() {
+  _modalCertB64   = null;
+  _modalClearCert = true;
+  document.getElementById('m-cert-file').value = '';
+  renderModalCertBadge();
 }
 
-async function saveTakConfig() {
+async function saveProfile() {
   const body = {
-    host:       document.getElementById('tak-host').value.trim(),
-    port:       parseInt(document.getElementById('tak-port').value) || 8087,
-    marti_port: parseInt(document.getElementById('tak-marti-port').value) || 8443,
-    ssl:        document.getElementById('tak-ssl').checked,
-    callsign:   document.getElementById('tak-callsign').value.trim() || 'WMD PLOTTER',
+    name:       document.getElementById('m-name').value.trim() || 'Unnamed',
+    host:       document.getElementById('m-host').value.trim(),
+    port:       parseInt(document.getElementById('m-port').value) || 8089,
+    marti_port: parseInt(document.getElementById('m-marti-port').value) || 8443,
+    callsign:   document.getElementById('m-callsign').value.trim() || 'WMD PLOTTER',
+    ssl:        document.getElementById('m-ssl').checked,
   };
-  if (_takCertB64) {
-    body.cert_p12_b64 = _takCertB64;
-    body.cert_pass    = document.getElementById('tak-cert-pass').value;
+  if (_modalCertB64) {
+    body.cert_p12_b64 = _modalCertB64;
+    body.cert_pass    = document.getElementById('m-cert-pass').value;
   }
-  if (_martiCertB64) {
-    body.marti_cert_p12_b64 = _martiCertB64;
-    body.marti_cert_pass    = document.getElementById('tak-marti-cert-pass').value;
-  }
-  const r = await fetch('/api/admin/tak-config', {
-    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
-  });
+  if (_modalClearCert) body.clear_cert = true;
+
+  const url    = _editingId ? `/api/admin/tak-profiles/${_editingId}` : '/api/admin/tak-profiles';
+  const method = _editingId ? 'PUT' : 'POST';
+  const r = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (r.ok) {
-    if (_takCertB64)    { _hasCert = true;      _takCertB64   = null; renderCertBadge(); }
-    if (_martiCertB64)  { _hasMartiCert = true; _martiCertB64 = null; renderMartiCertBadge(); }
-    showMsg('tak-msg', 'TAK server configuration saved.', 'success');
+    document.getElementById('profile-modal').classList.remove('open');
+    loadProfiles();
+    showMsg('tak-msg', `Profile ${_editingId ? 'updated' : 'created'}.`, 'success');
   } else {
     const d = await r.json().catch(()=>({}));
-    showMsg('tak-msg', d.detail || 'Save failed.', 'error');
+    document.getElementById('modal-status').textContent = d.detail || 'Save failed.';
+    document.getElementById('modal-status').className = 'tak-status err';
   }
 }
 
-async function clearTakCert() {
-  if (!confirm('Remove the stored CoT client certificate?')) return;
-  const r = await fetch('/api/admin/tak-config', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ clear_cert: true }),
-  });
-  if (r.ok) {
-    _hasCert = false; _takCertB64 = null;
-    document.getElementById('tak-cert-file').value = '';
-    renderCertBadge();
-    showMsg('tak-msg', 'CoT certificate removed.', 'success');
-  }
+async function editProfile(id) {
+  const r = await fetch('/api/admin/tak-profiles');
+  if (!r.ok) return;
+  const { profiles } = await r.json();
+  const p = profiles.find(x => x.id === id);
+  if (p) openModal(p);
 }
 
-async function clearMartiCert() {
-  if (!confirm('Remove the stored Marti admin certificate?')) return;
-  const r = await fetch('/api/admin/tak-config', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ clear_marti_cert: true }),
-  });
-  if (r.ok) {
-    _hasMartiCert = false; _martiCertB64 = null;
-    document.getElementById('tak-marti-cert-file').value = '';
-    renderMartiCertBadge();
-    showMsg('tak-msg', 'Marti certificate removed.', 'success');
-  }
+async function activateProfile(id) {
+  const r = await fetch(`/api/admin/tak-profiles/${id}/activate`, { method: 'POST' });
+  if (r.ok) { loadProfiles(); showMsg('tak-msg', 'Active profile updated.', 'success'); }
 }
 
-async function testTakConnection() {
-  const statusEl = document.getElementById('tak-status');
+async function deleteProfile(id, name) {
+  if (!confirm(`Delete profile "${name}"?`)) return;
+  const r = await fetch(`/api/admin/tak-profiles/${id}`, { method: 'DELETE' });
+  if (r.ok) { loadProfiles(); showMsg('tak-msg', 'Profile deleted.', 'success'); }
+  else { const d = await r.json().catch(()=>({})); showMsg('tak-msg', d.detail || 'Delete failed.', 'error'); }
+}
+
+async function testProfile(id) {
+  const statusEl = document.getElementById(`ts-${id}`);
   statusEl.textContent = 'Sending test marker…';
   statusEl.className   = 'tak-status';
-
-  // Save first so the test uses current form values
-  await saveTakConfig();
-
-  // Send a real SA point marker (type a-f-G) at lat=0,lon=0.
-  // If it shows in ATAK → routing works. If polygons still don't show → shape format issue.
-  // If this also doesn't show → group routing or cert problem.
   const r = await fetch('/api/tak-test-point', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ lat: 0, lon: 0 }),
+    body: JSON.stringify({ lat: 0, lon: 0, profile_id: id }),
   });
   const d = await r.json().catch(()=>({}));
-
   if (d.success) {
-    statusEl.textContent = '✓ Test marker sent — look near 0°N 0°E on your ATAK device';
+    statusEl.textContent = '✓ Test marker sent — look near 0°N 0°E on ATAK';
     statusEl.className   = 'tak-status ok';
   } else {
-    statusEl.textContent = `✗ ${d.error || 'Connection failed'}`;
+    statusEl.textContent = `✗ ${d.error || 'Failed'}`;
     statusEl.className   = 'tak-status err';
   }
   setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'tak-status'; }, 12000);

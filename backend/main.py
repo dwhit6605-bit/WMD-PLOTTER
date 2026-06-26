@@ -55,7 +55,9 @@ from nifc import fetch_nifc_perimeters
 from aegl_db import get_aegl
 from db   import init_db, count_users, create_user, get_user_by_username, \
                  get_user_by_id, update_last_login, list_users, delete_user, update_password, \
-                 get_setting, set_setting
+                 get_setting, set_setting, \
+                 list_tak_profiles, get_tak_profile, get_active_tak_profile, \
+                 upsert_tak_profile, set_tak_profile_cert, set_active_tak_profile, delete_tak_profile
 from tak_push import push_cot, push_test_point
 from tak_marti import push_via_marti
 from auth import (
@@ -1283,76 +1285,107 @@ async def get_cot_xml():
                     headers={"Content-Disposition": 'attachment; filename="wmd_cot.xml"'})
 
 
-# ── TAK Server configuration (admin) ─────────────────────────────────────────
+# ── TAK Server profiles (admin) ───────────────────────────────────────────────
 
-@app.get("/api/admin/tak-config")
-async def get_tak_config(user: dict = Depends(require_admin)):
-    """Return current TAK server config (cert blob omitted, only has_cert flag)."""
+def _profile_to_config(p: dict) -> dict:
     return {
-        "host":           get_setting("tak_host") or "",
-        "port":           get_setting("tak_port") or "8087",
-        "marti_port":     get_setting("tak_marti_port") or "8443",
-        "ssl":            (get_setting("tak_ssl") or "false") == "true",
-        "callsign":       get_setting("tak_callsign") or "WMD PLOTTER",
-        "has_cert":       bool(get_setting("tak_cert_p12")),
-        "has_marti_cert": bool(get_setting("tak_marti_cert_p12")),
+        "host":       p.get("host") or "",
+        "port":       str(p.get("port") or 8089),
+        "marti_port": str(p.get("marti_port") or 8443),
+        "ssl":        bool(p.get("ssl")),
+        "cert_p12":   p.get("cert_p12"),
+        "cert_pass":  p.get("cert_pass") or "",
     }
 
 
-@app.post("/api/admin/tak-config")
-async def save_tak_config(request: Request, user: dict = Depends(require_admin)):
-    """Save TAK server config. Send cert_p12_b64=null and clear_cert=true to remove cert."""
+@app.get("/api/admin/tak-profiles")
+async def api_list_tak_profiles(user: dict = Depends(require_admin)):
+    return {"profiles": list_tak_profiles()}
+
+
+@app.post("/api/admin/tak-profiles")
+async def api_create_tak_profile(request: Request, user: dict = Depends(require_admin)):
     body = await request.json()
-    set_setting("tak_host",       (body.get("host") or "").strip())
-    set_setting("tak_port",       str(int(body.get("port") or 8087)))
-    set_setting("tak_marti_port", str(int(body.get("marti_port") or 8443)))
-    set_setting("tak_ssl",        "true" if body.get("ssl") else "false")
-    set_setting("tak_callsign",   (body.get("callsign") or "WMD PLOTTER").strip())
+    pid = upsert_tak_profile(
+        name       = (body.get("name") or "Unnamed").strip(),
+        host       = (body.get("host") or "").strip(),
+        port       = int(body.get("port") or 8089),
+        marti_port = int(body.get("marti_port") or 8443),
+        ssl        = bool(body.get("ssl", True)),
+        callsign   = (body.get("callsign") or "WMD PLOTTER").strip(),
+    )
+    if body.get("cert_p12_b64"):
+        set_tak_profile_cert(pid, body["cert_p12_b64"], body.get("cert_pass") or "")
+    # Auto-activate if it's the first profile
+    profiles = list_tak_profiles()
+    if len(profiles) == 1:
+        set_active_tak_profile(pid)
+    return {"id": pid, "status": "created"}
+
+
+@app.put("/api/admin/tak-profiles/{profile_id}")
+async def api_update_tak_profile(profile_id: int, request: Request, user: dict = Depends(require_admin)):
+    if not get_tak_profile(profile_id):
+        raise HTTPException(status_code=404, detail="Profile not found")
+    body = await request.json()
+    upsert_tak_profile(
+        name       = (body.get("name") or "Unnamed").strip(),
+        host       = (body.get("host") or "").strip(),
+        port       = int(body.get("port") or 8089),
+        marti_port = int(body.get("marti_port") or 8443),
+        ssl        = bool(body.get("ssl", True)),
+        callsign   = (body.get("callsign") or "WMD PLOTTER").strip(),
+        profile_id = profile_id,
+    )
     if body.get("clear_cert"):
-        set_setting("tak_cert_p12",  None)
-        set_setting("tak_cert_pass", None)
+        set_tak_profile_cert(profile_id, None, None)
     elif body.get("cert_p12_b64"):
-        set_setting("tak_cert_p12",  body["cert_p12_b64"])
-        set_setting("tak_cert_pass", body.get("cert_pass") or "")
-    if body.get("clear_marti_cert"):
-        set_setting("tak_marti_cert_p12",  None)
-        set_setting("tak_marti_cert_pass", None)
-    elif body.get("marti_cert_p12_b64"):
-        set_setting("tak_marti_cert_p12",  body["marti_cert_p12_b64"])
-        set_setting("tak_marti_cert_pass", body.get("marti_cert_pass") or "")
-    return {"status": "saved"}
+        set_tak_profile_cert(profile_id, body["cert_p12_b64"], body.get("cert_pass") or "")
+    return {"status": "updated"}
+
+
+@app.delete("/api/admin/tak-profiles/{profile_id}")
+async def api_delete_tak_profile(profile_id: int, user: dict = Depends(require_admin)):
+    if not delete_tak_profile(profile_id):
+        raise HTTPException(status_code=404, detail="Profile not found")
+    # If we deleted the active profile, activate the first remaining one
+    remaining = list_tak_profiles()
+    if remaining and not any(p["is_active"] for p in remaining):
+        set_active_tak_profile(remaining[0]["id"])
+    return {"status": "deleted"}
+
+
+@app.post("/api/admin/tak-profiles/{profile_id}/activate")
+async def api_activate_tak_profile(profile_id: int, user: dict = Depends(require_admin)):
+    if not get_tak_profile(profile_id):
+        raise HTTPException(status_code=404, detail="Profile not found")
+    set_active_tak_profile(profile_id)
+    return {"status": "activated"}
 
 
 @app.get("/api/tak-status")
 async def tak_status(user: dict = Depends(current_user)):
-    """Return whether TAK server is configured (no sensitive data)."""
-    host = get_setting("tak_host") or ""
-    return {"configured": bool(host), "host": host, "port": get_setting("tak_port") or "8087"}
+    p = get_active_tak_profile()
+    if not p:
+        return {"configured": False, "host": "", "port": "8089"}
+    return {"configured": bool(p.get("host")), "host": p.get("host") or "", "port": str(p.get("port") or 8089),
+            "profile_name": p.get("name") or ""}
 
 
 @app.post("/api/tak-push")
 async def tak_push(request: Request, user: dict = Depends(current_user)):
-    """Stream all active overlays to the configured TAK server as CoT events."""
-    # Summarise what the server currently holds (for diagnostics)
-    server_tools = {k: len(v.get("zones", [])) for k, v in _overlay_state.items() if v}
-
+    """Stream all active overlays to the active TAK server profile as CoT events."""
     if not any(_overlay_state.values()):
         return JSONResponse(
             {"success": False, "sent": 0,
-             "error": "Server has no model data — run a plume/blast/radiation model first, "
-                      "then push. (Model data resets on server restart.)"},
+             "error": "No model data — run a model first, then push."},
             status_code=400,
         )
-
-    config = {
-        "host":      get_setting("tak_host"),
-        "port":      get_setting("tak_port") or "8087",
-        "ssl":       (get_setting("tak_ssl") or "false") == "true",
-        "cert_p12":  get_setting("tak_cert_p12"),
-        "cert_pass": get_setting("tak_cert_pass") or "",
-    }
-    result = push_cot(config, _overlay_state)
-    result["server_tools"] = server_tools
+    p = get_active_tak_profile()
+    if not p or not p.get("host"):
+        return JSONResponse({"success": False, "sent": 0, "error": "No TAK server profile configured"}, status_code=400)
+    result = push_cot(_profile_to_config(p), _overlay_state)
+    result["server_tools"] = {k: len(v.get("zones", [])) for k, v in _overlay_state.items() if v}
     return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 
@@ -1362,8 +1395,7 @@ async def tak_preview(user: dict = Depends(current_user)):
     from tak_push import _build_events
     events = _build_events(_overlay_state)
     if not events:
-        return JSONResponse({"events": [], "count": 0,
-                             "error": "No active overlays — run a model first"})
+        return JSONResponse({"events": [], "count": 0, "error": "No active overlays — run a model first"})
     return JSONResponse({
         "count": len(events),
         "events": events,
@@ -1372,43 +1404,39 @@ async def tak_preview(user: dict = Depends(current_user)):
 
 
 @app.post("/api/tak-push-marti")
-async def tak_push_marti(user: dict = Depends(current_user)):
-    """Push overlay state to TAK server via Marti HTTPS data package upload."""
+async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
+    """Push overlay state to TAK server via Marti HTTPS data package + b-f-t-r notification."""
     if not any(_overlay_state.values()):
         return JSONResponse(
-            {"success": False, "url": None,
-             "error": "No model data — run a plume/blast/radiation model first."},
+            {"success": False, "url": None, "error": "No model data — run a model first."},
             status_code=400,
         )
-    config = {
-        "host":           get_setting("tak_host"),
-        "marti_port":     get_setting("tak_marti_port") or "8443",
-        "marti_cert_p12": get_setting("tak_marti_cert_p12"),
-        "marti_cert_pass": get_setting("tak_marti_cert_pass") or "",
-    }
-    result = await push_via_marti(config, _overlay_state)
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    profile_id = body.get("profile_id")
+    p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile()
+    if not p or not p.get("host"):
+        return JSONResponse({"success": False, "url": None, "error": "No TAK server profile configured"}, status_code=400)
+    result = await push_via_marti(_profile_to_config(p), _overlay_state)
     return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 
 @app.post("/api/tak-test-point")
 async def tak_test_point(request: Request, user: dict = Depends(require_admin)):
-    """
-    Send a simple SA point marker to the TAK server to verify end-to-end routing.
-    If this appears on ATAK but polygons don't, the issue is shape format.
-    If this doesn't appear either, the issue is connection/group routing.
-    """
+    """Send an SA point marker to a TAK profile to verify end-to-end routing."""
     body = await request.json()
     lat  = float(body.get("lat", 0.0))
     lon  = float(body.get("lon", 0.0))
-    config = {
-        "host":      get_setting("tak_host"),
-        "port":      get_setting("tak_port") or "8087",
-        "ssl":       (get_setting("tak_ssl") or "false") == "true",
-        "cert_p12":  get_setting("tak_cert_p12"),
-        "cert_pass": get_setting("tak_cert_pass") or "",
-    }
-    callsign = get_setting("tak_callsign") or "WMD PLOTTER"
-    result = push_test_point(config, lat, lon, callsign)
+    profile_id = body.get("profile_id")
+    p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile()
+    if not p or not p.get("host"):
+        return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
+    config   = _profile_to_config(p)
+    callsign = p.get("callsign") or "WMD PLOTTER"
+    result   = push_test_point(config, lat, lon, callsign)
     return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 
