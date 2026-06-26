@@ -59,7 +59,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  list_tak_profiles, get_tak_profile, get_active_tak_profile, \
                  upsert_tak_profile, set_tak_profile_cert, set_active_tak_profile, delete_tak_profile
 from tak_push import push_cot, push_test_point
-from tak_marti import push_via_marti
+from tak_marti import push_via_marti, push_cot_http
 from auth import (
     hash_password, verify_password, create_token, decode_token,
     auth_middleware, current_user, require_admin,
@@ -1405,10 +1405,14 @@ async def tak_preview(user: dict = Depends(current_user)):
 
 @app.post("/api/tak-push-marti")
 async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
-    """Push overlay state to TAK server via Marti HTTPS data package + b-f-t-r notification."""
+    """
+    Push overlay CoT events to TAK server via Marti HTTPS.
+    Primary: POST each CoT to /Marti/api/cot (confirmed working with device cert).
+    Fallback: KMZ upload + b-f-t-r notification (requires upload permissions).
+    """
     if not any(_overlay_state.values()):
         return JSONResponse(
-            {"success": False, "url": None, "error": "No model data — run a model first."},
+            {"success": False, "error": "No model data — run a model first."},
             status_code=400,
         )
     body = {}
@@ -1419,9 +1423,21 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
     profile_id = body.get("profile_id")
     p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile()
     if not p or not p.get("host"):
-        return JSONResponse({"success": False, "url": None, "error": "No TAK server profile configured"}, status_code=400)
-    result = await push_via_marti(_profile_to_config(p), _overlay_state)
-    return JSONResponse(result, status_code=200 if result["success"] else 502)
+        return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
+    config = _profile_to_config(p)
+
+    # Primary: HTTP CoT injection (same endpoint as working test marker)
+    result = await push_cot_http(config, _overlay_state)
+    if result["success"]:
+        return JSONResponse(result)
+
+    # Fallback: KMZ upload + b-f-t-r (requires Marti upload permissions)
+    result2 = await push_via_marti(config, _overlay_state)
+    if result2.get("success"):
+        return JSONResponse(result2)
+
+    # Return HTTP CoT error (more actionable)
+    return JSONResponse(result, status_code=502)
 
 
 @app.post("/api/tak-test-point")

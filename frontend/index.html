@@ -3382,10 +3382,14 @@ async function pushToTAK() {
     const rm = await fetch(`${API}/api/tak-push-marti`, { method: 'POST' });
     const dm = await rm.json().catch(() => ({}));
     if (dm.success) {
-      const zones = dm.zones || '?';
-      const notified = dm.notified != null ? dm.notified : '?';
-      const note = dm.note ? ` — ${dm.note}` : '';
-      toast(`✓ Data package sent · ${zones} overlay${zones !== 1 ? 's' : ''} · notified ${notified} device${notified !== 1 ? 's' : ''}${note}`, 4000);
+      if (dm.sent != null) {
+        toast(`✓ Pushed ${dm.sent} CoT event${dm.sent !== 1 ? 's' : ''} via Marti HTTP`, 3500);
+      } else {
+        const zones = dm.zones || '?';
+        const notified = dm.notified != null ? dm.notified : '?';
+        const note = dm.note ? ` — ${dm.note}` : '';
+        toast(`✓ KMZ sent · ${zones} overlay${zones !== 1 ? 's' : ''} · notified ${notified} device${notified !== 1 ? 's' : ''}${note}`, 4000);
+      }
       return;
     }
 

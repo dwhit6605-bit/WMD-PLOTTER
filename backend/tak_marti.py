@@ -114,6 +114,75 @@ def _build_file_transfer_cot(
     )
 
 
+async def push_cot_http(config: dict, overlay_state: dict) -> dict:
+    """
+    Push overlay CoT events via POST /Marti/api/cot (HTTP) using the device cert.
+    Same endpoint as the working test marker — bypasses TCP socket issues and
+    /Marti/sync/upload 403 errors entirely.
+    """
+    from tak_push import _build_events
+
+    host       = (config.get("host") or "").strip()
+    marti_port = int(config.get("marti_port") or 8443)
+
+    if not host:
+        return {"success": False, "sent": 0, "error": "TAK server host not configured"}
+
+    export_state = {k: v for k, v in overlay_state.items() if v}
+    if not export_state:
+        return {"success": False, "sent": 0, "error": "No active overlays — run a model first"}
+
+    cert_b64  = config.get("cert_p12") or config.get("marti_cert_p12")
+    cert_pass = (config.get("cert_pass") or "") if config.get("cert_p12") else (config.get("marti_cert_pass") or "atakatak")
+
+    if not cert_b64:
+        return {"success": False, "sent": 0,
+                "error": "No certificate configured — upload your TAK device cert in the admin panel."}
+
+    events = _build_events(export_state)
+    if not events:
+        return {"success": False, "sent": 0, "error": "No CoT events built from overlay state"}
+
+    ctx, temps = _make_ssl_ctx(cert_b64, cert_pass)
+    cot_url = f"https://{host}:{marti_port}/Marti/api/cot"
+    sent = 0
+    errors = []
+
+    try:
+        for cot_xml in events:
+            try:
+                async with httpx.AsyncClient(verify=ctx, timeout=10.0) as client:
+                    r = await client.post(
+                        cot_url,
+                        content=cot_xml.encode("utf-8"),
+                        headers={
+                            "Content-Type": "application/octet-stream",
+                            "X-Content-Type": "application/xml",
+                        },
+                    )
+                if r.status_code in (200, 201, 204):
+                    sent += 1
+                else:
+                    errors.append(f"HTTP {r.status_code}: {r.text[:100]}")
+            except Exception as e:
+                errors.append(str(e))
+    finally:
+        for path in temps:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    if sent == 0:
+        return {"success": False, "sent": 0, "error": errors[0] if errors else "All events failed"}
+    return {
+        "success": True,
+        "sent": sent,
+        "total": len(events),
+        "error": "; ".join(errors) if errors else None,
+    }
+
+
 async def push_via_marti(config: dict, overlay_state: dict) -> dict:
     """
     Build a KMZ from overlay state, upload to Marti, and notify all connected
