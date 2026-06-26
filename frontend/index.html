@@ -3399,12 +3399,12 @@ async function pushToTAK() {
     const rc = await fetch(`${API}/api/tak-push`, { method: 'POST' });
     const dc = await rc.json().catch(() => ({}));
     if (dc.success) {
-      const martiErr = dm.error ? ` (data pkg failed: ${dm.error})` : '';
-      toast(`✓ Pushed ${dc.sent} CoT event${dc.sent !== 1 ? 's' : ''} via TCP${martiErr}`, 6000);
+      const martiErr = dm.error ? `\n(data pkg failed: ${dm.error})` : '';
+      toast(`✓ Pushed ${dc.sent} CoT event${dc.sent !== 1 ? 's' : ''} via TCP${martiErr}`, 8000);
       return;
     }
 
-    toast(`✗ TAK push failed: ${dc.error || dm.error || 'Unknown error'}`, 5000);
+    toast(`✗ TAK push failed:\nMarti: ${dm.error || 'no response'}\nTCP: ${dc.error || 'unknown'}`, 7000);
   } catch (e) {
     toast(`✗ TAK push error: ${e.message}`, 4000);
   } finally {

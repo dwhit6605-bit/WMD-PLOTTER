@@ -1456,51 +1456,54 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
     config = _profile_to_config(p)
 
-    # 1. Build KMZ from current overlay state and cache it for /kml/live.kmz
-    from tak_marti import _build_kmz
-    export_state  = {k: v for k, v in _overlay_state.items() if v}
-    kml_bytes     = build_combined_kml(export_state).encode("utf-8")
-    kmz_bytes     = _build_kmz(kml_bytes)
-    _live_kmz_cache = kmz_bytes
+    try:
+        # 1. Build KMZ from current overlay state and cache it for /kml/live.kmz
+        from tak_marti import _build_kmz
+        export_state  = {k: v for k, v in _overlay_state.items() if v}
+        kml_bytes     = build_combined_kml(export_state).encode("utf-8")
+        kmz_bytes     = _build_kmz(kml_bytes)
+        _live_kmz_cache = kmz_bytes
 
-    sha256       = hashlib.sha256(kmz_bytes).hexdigest()
-    ts           = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    active       = list(export_state.keys())
-    kmz_filename = f"WMD_PLOTTER_{'_'.join(active)}_{ts}.kmz"
+        sha256       = hashlib.sha256(kmz_bytes).hexdigest()
+        ts           = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        active       = list(export_state.keys())
+        kmz_filename = f"WMD_PLOTTER_{'_'.join(active)}_{ts}.kmz"
 
-    # URL ATAK will download the KMZ from.
-    # WMD_PUBLIC_URL in .env overrides the auto-detected base (needed behind nginx
-    # where request.base_url may resolve to an internal address ATAK can't reach).
-    public_base = (os.environ.get("WMD_PUBLIC_URL") or "").rstrip("/")
-    if not public_base:
-        public_base = str(request.base_url).rstrip("/")
-    kmz_url = f"{public_base}/kml/live.kmz"
+        # URL ATAK will download the KMZ from.
+        # WMD_PUBLIC_URL in .env overrides the auto-detected base (needed behind nginx
+        # where request.base_url may resolve to an internal address ATAK can't reach).
+        public_base = (os.environ.get("WMD_PUBLIC_URL") or "").rstrip("/")
+        if not public_base:
+            public_base = str(request.base_url).rstrip("/")
+        kmz_url = f"{public_base}/kml/live.kmz"
 
-    # 2. Query connected clients from Marti (fails gracefully → broadcast)
-    contacts = await get_contacts(config)
+        # 2. Query connected clients from Marti (fails gracefully → broadcast)
+        contacts = await get_contacts(config)
 
-    # 3. Build b-f-t-r events and send via TCP (confirmed-working path)
-    if contacts:
-        bftr_events = [
-            bftr_cot_event(kmz_filename, kmz_url, sha256, len(kmz_bytes), c["uid"])
-            for c in contacts
-        ]
-        note = f"Sending to {len(contacts)} connected client(s)"
-    else:
-        bftr_events = [bftr_cot_event(kmz_filename, kmz_url, sha256, len(kmz_bytes))]
-        note = "No connected clients found via Marti — broadcast sent to All Streaming"
+        # 3. Build b-f-t-r events and send via TCP (confirmed-working path)
+        if contacts:
+            bftr_events = [
+                bftr_cot_event(kmz_filename, kmz_url, sha256, len(kmz_bytes), c["uid"])
+                for c in contacts
+            ]
+            note = f"Sending to {len(contacts)} connected client(s)"
+        else:
+            bftr_events = [bftr_cot_event(kmz_filename, kmz_url, sha256, len(kmz_bytes))]
+            note = "No connected clients found via Marti — broadcast sent to All Streaming"
 
-    result = push_bftr(config, bftr_events)
-    # Rename "sent" → "notified" so the frontend renders the data-package message,
-    # not the generic "Pushed N CoT events" branch.
-    result["notified"] = result.pop("sent", 0)
-    result["zones"]    = len(active)
-    result["contacts"] = len(contacts)
-    result["kmz_url"]  = kmz_url
-    result["note"]     = note
+        result = push_bftr(config, bftr_events)
+        result["notified"] = result.pop("sent", 0)
+        result["zones"]    = len(active)
+        result["contacts"] = len(contacts)
+        result["kmz_url"]  = kmz_url
+        result["note"]     = note
 
-    status = 200 if result["success"] else 502
-    return JSONResponse(result, status_code=status)
+        status = 200 if result["success"] else 502
+        return JSONResponse(result, status_code=status)
+
+    except Exception as exc:
+        logger.exception("tak-push-marti error")
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
 
 
 @app.post("/api/tak-test-point")
