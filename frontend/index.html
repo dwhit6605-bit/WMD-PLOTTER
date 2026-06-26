@@ -862,12 +862,10 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div class="section-hdr">📤 Export Active Overlays</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:8px" id="export-summary">No overlays computed yet.</div>
         <div class="export-grid">
-          <button class="btn btn-ghost" id="btn-kml-dl" onclick="downloadKML()" disabled>⬇ Download KML</button>
+          <button class="btn btn-ghost" id="btn-kml-dl" onclick="downloadKML()" disabled>⬇ KML File</button>
           <button class="btn btn-ghost" id="btn-kml-net" onclick="copyNetworkLink()" disabled>🔗 Network Link</button>
-          <button class="btn btn-ghost" id="btn-tak-dp" onclick="downloadTAKDP()" disabled style="grid-column:1/-1;background:rgba(0,120,200,0.12);border-color:rgba(0,120,200,0.4);color:#5bb8ff">📦 TAK Data Package (.zip)</button>
-          <button class="btn btn-ghost" id="btn-tak-push" onclick="pushToTAK()" disabled style="grid-column:1/-1;background:rgba(220,50,50,0.10);border-color:rgba(220,80,80,0.4);color:#ff7070;font-size:11px;display:none">📡 Push to TAK Server</button>
-          <button class="btn btn-ghost" onclick="printReport()" style="grid-column:1/-1;font-size:11px;margin-top:2px">🖨 Print / Save PDF Incident Report</button>
-          <button class="btn btn-ghost" id="btn-share-url" onclick="shareScenarioURL()" style="grid-column:1/-1;font-size:11px;margin-top:2px;border-color:rgba(0,255,136,0.3);color:var(--green)">🔗 Copy Share Link</button>
+          <button class="btn btn-ghost" onclick="printReport()" style="grid-column:1/-1;font-size:11px">🖨 Print / Save PDF</button>
+          <button class="btn btn-ghost" id="btn-share-url" onclick="shareScenarioURL()" style="grid-column:1/-1;font-size:11px;border-color:rgba(0,255,136,0.3);color:var(--green)">🔗 Copy Share Link</button>
         </div>
         <div id="share-url-bar" style="display:none;margin-top:8px;position:relative">
           <input type="text" id="inp-share-url" readonly onclick="this.select()"
@@ -877,6 +875,24 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div id="export-url" style="display:none;margin-top:8px">
           <input type="text" id="inp-export-url" readonly onclick="this.select()" style="font-size:11px;cursor:pointer"/>
           <div style="font-size:10px;color:var(--muted);margin-top:3px">Open Google Earth → Add → Network Link → paste URL</div>
+        </div>
+      </div>
+
+      <!-- TAK PUSH -->
+      <div class="section" id="tak-push-section" style="display:none">
+        <div class="section-hdr" style="display:flex;align-items:center;justify-content:space-between">
+          <span>📡 TAK Server</span>
+          <span id="tak-profile-badge" style="font-size:10px;font-weight:400;color:var(--muted);background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:10px;padding:2px 8px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <button class="btn btn-ghost" id="btn-tak-push" onclick="pushToTAK()" disabled
+                  style="background:rgba(0,200,100,0.12);border-color:rgba(0,200,100,0.45);color:#3ddc84;font-size:13px;font-weight:700;padding:10px">
+            📡 Push to TAK Server
+          </button>
+          <button class="btn btn-ghost" id="btn-tak-dp" onclick="downloadTAKDP()" disabled
+                  style="font-size:11px;color:var(--muted);border-color:rgba(255,255,255,0.1)">
+            📦 Download Data Package (.zip)
+          </button>
         </div>
       </div>
 
@@ -3240,8 +3256,7 @@ function _refreshExportUI() {
   document.getElementById('btn-kml-dl').disabled  = !hasAny;
   document.getElementById('btn-kml-net').disabled = !hasAny;
   document.getElementById('btn-tak-dp').disabled  = !hasAny;
-  const pushBtn = document.getElementById('btn-tak-push');
-  if (pushBtn.style.display !== 'none') pushBtn.disabled = !hasAny;
+  document.getElementById('btn-tak-push').disabled = !hasAny;
   document.getElementById('export-summary').textContent = hasAny ? `Exporting: ${active.join(' + ')}` : 'No overlays computed yet.';
 }
 
@@ -3741,12 +3756,13 @@ loadVersion();
     if (u.role === 'admin') document.getElementById('hdr-admin-link').style.display = 'inline-flex';
     el.style.display = 'flex';
 
-    // Show "Push to TAK Server" button only if a TAK server is configured
+    // Show TAK push section only if a profile is configured
     const ts = await fetch('/api/tak-status').then(r => r.ok ? r.json() : null).catch(() => null);
     if (ts?.configured) {
-      const pushBtn = document.getElementById('btn-tak-push');
-      pushBtn.style.display = '';
-      pushBtn.title = `Push to ${ts.host}:${ts.port}`;
+      document.getElementById('tak-push-section').style.display = '';
+      const badge = document.getElementById('tak-profile-badge');
+      badge.textContent = ts.profile_name || ts.host;
+      badge.title = `${ts.host}:${ts.port}`;
     }
   } catch { /* offline / non-auth mode — silently skip */ }
 })();
