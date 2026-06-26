@@ -37,25 +37,33 @@ def init_db() -> None:
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS tak_profiles (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            name            TEXT    NOT NULL,
-            host            TEXT    NOT NULL DEFAULT '',
-            port            INTEGER NOT NULL DEFAULT 8089,
-            marti_port      INTEGER NOT NULL DEFAULT 8443,
-            ssl             INTEGER NOT NULL DEFAULT 1,
-            callsign        TEXT    NOT NULL DEFAULT 'WMD PLOTTER',
-            cert_p12        TEXT,
-            cert_pass       TEXT,
-            admin_cert_p12  TEXT,
-            admin_cert_pass TEXT,
-            is_active       INTEGER NOT NULL DEFAULT 0,
-            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            name             TEXT    NOT NULL,
+            host             TEXT    NOT NULL DEFAULT '',
+            port             INTEGER NOT NULL DEFAULT 8089,
+            marti_port       INTEGER NOT NULL DEFAULT 8443,
+            ssl              INTEGER NOT NULL DEFAULT 1,
+            callsign         TEXT    NOT NULL DEFAULT 'WMD PLOTTER',
+            cert_p12         TEXT,
+            cert_pass        TEXT,
+            truststore_p12   TEXT,
+            truststore_pass  TEXT,
+            is_active        INTEGER NOT NULL DEFAULT 0,
+            created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
         )
     """)
-    # Add admin cert columns to existing databases (idempotent)
-    for col, typedef in [("admin_cert_p12", "TEXT"), ("admin_cert_pass", "TEXT")]:
+    # Add truststore columns to existing databases (idempotent); also rename
+    # admin_cert_* → truststore_* if the old column names exist.
+    for old, new, typedef in [
+        ("admin_cert_p12",  "truststore_p12",  "TEXT"),
+        ("admin_cert_pass", "truststore_pass", "TEXT"),
+    ]:
         try:
-            conn.execute(f"ALTER TABLE tak_profiles ADD COLUMN {col} {typedef}")
+            conn.execute(f"ALTER TABLE tak_profiles RENAME COLUMN {old} TO {new}")
+        except Exception:
+            pass
+        try:
+            conn.execute(f"ALTER TABLE tak_profiles ADD COLUMN {new} {typedef}")
         except Exception:
             pass  # column already exists
     conn.commit()
@@ -121,7 +129,7 @@ def list_tak_profiles() -> list:
     rows = conn.execute(
         "SELECT id, name, host, port, marti_port, ssl, callsign, is_active, created_at,"
         " (cert_p12 IS NOT NULL) AS has_cert,"
-        " (admin_cert_p12 IS NOT NULL) AS has_admin_cert"
+        " (truststore_p12 IS NOT NULL) AS has_truststore"
         " FROM tak_profiles ORDER BY id"
     ).fetchall()
     conn.close()
@@ -177,11 +185,11 @@ def set_tak_profile_cert(profile_id: int, cert_p12: Optional[str], cert_pass: Op
     conn.close()
 
 
-def set_tak_profile_admin_cert(profile_id: int, cert_p12: Optional[str], cert_pass: Optional[str]) -> None:
+def set_tak_profile_truststore(profile_id: int, truststore_p12: Optional[str], truststore_pass: Optional[str]) -> None:
     conn = _connect()
     conn.execute(
-        "UPDATE tak_profiles SET admin_cert_p12=?, admin_cert_pass=? WHERE id=?",
-        (cert_p12, cert_pass, profile_id),
+        "UPDATE tak_profiles SET truststore_p12=?, truststore_pass=? WHERE id=?",
+        (truststore_p12, truststore_pass, profile_id),
     )
     conn.commit()
     conn.close()

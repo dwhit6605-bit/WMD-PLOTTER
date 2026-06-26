@@ -228,23 +228,23 @@
 
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;margin-bottom:6px">
-          Admin Certificate <span style="font-weight:400;text-transform:none;letter-spacing:0">(Marti REST API · port 8443)</span>
+          Truststore / Root CA <span style="font-weight:400;text-transform:none;letter-spacing:0">(verifies TAK server · Marti API)</span>
         </div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
-          <code style="font-size:10px">/opt/tak/certs/files/admin.p12</code> — required for data package push
+          From your TAK data package: <code style="font-size:10px">truststore-root.p12</code> — passphrase is usually <code style="font-size:10px">atakatak</code>
         </div>
-        <div id="m-admin-cert-badge"></div>
+        <div id="m-truststore-badge"></div>
         <div class="f-row" style="margin-bottom:6px">
-          <label><span>Admin Certificate (.p12 / .pem)</span>
-            <input type="file" id="m-admin-cert-file" accept=".p12,.pfx,.pem"
+          <label><span>Truststore (.p12 / .pem)</span>
+            <input type="file" id="m-truststore-file" accept=".p12,.pfx,.pem"
                    style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:6px 8px;width:100%;cursor:pointer"
-                   onchange="onModalAdminCertFile(this)"/>
+                   onchange="onModalTruststoreFile(this)"/>
           </label>
           <label style="max-width:180px"><span>Passphrase</span>
-            <input type="password" id="m-admin-cert-pass" placeholder="(usually 'atakatak')" autocomplete="off"/>
+            <input type="password" id="m-truststore-pass" placeholder="atakatak" autocomplete="off"/>
           </label>
         </div>
-        <button class="btn btn-red" id="m-remove-admin-cert-btn" style="display:none;margin-bottom:4px" onclick="removeAdminCertFromModal()">Remove Admin Cert</button>
+        <button class="btn btn-red" id="m-remove-truststore-btn" style="display:none;margin-bottom:4px" onclick="removeTruststoreFromModal()">Remove Truststore</button>
       </div>
 
       <div class="modal-actions">
@@ -278,13 +278,13 @@
 let _me = null;
 
 // ── Modal state ───────────────────────────────────────────────────────────────
-let _editingId         = null;
-let _modalCertB64      = null;
-let _modalHasCert      = false;
-let _modalClearCert    = false;
-let _modalAdminCertB64 = null;
-let _modalHasAdminCert = false;
-let _modalClearAdmin   = false;
+let _editingId            = null;
+let _modalCertB64         = null;
+let _modalHasCert         = false;
+let _modalClearCert       = false;
+let _modalTruststoreB64   = null;
+let _modalHasTruststore   = false;
+let _modalClearTruststore = false;
 
 async function init() {
   const r = await fetch('/auth/me');
@@ -380,7 +380,7 @@ async function loadProfiles() {
       <div class="profile-meta">
         ${p.has_cert ? '🔐 Device cert' : '<span style="color:var(--warn)">⚠ No device cert</span>'}
         &nbsp;·&nbsp;
-        ${p.has_admin_cert ? '🔑 Admin cert' : '<span style="color:var(--warn)">⚠ No admin cert</span>'}
+        ${p.has_truststore ? '🔑 Truststore' : '<span style="color:var(--warn)">⚠ No truststore</span>'}
         &nbsp;·&nbsp; ${esc(p.callsign || 'WMD PLOTTER')}
       </div>
       <div class="profile-actions">
@@ -395,28 +395,28 @@ async function loadProfiles() {
 }
 
 function openModal(p = null) {
-  _editingId         = p ? p.id : null;
-  _modalCertB64      = null;
-  _modalHasCert      = p ? !!p.has_cert : false;
-  _modalClearCert    = false;
-  _modalAdminCertB64 = null;
-  _modalHasAdminCert = p ? !!p.has_admin_cert : false;
-  _modalClearAdmin   = false;
+  _editingId            = p ? p.id : null;
+  _modalCertB64         = null;
+  _modalHasCert         = p ? !!p.has_cert : false;
+  _modalClearCert       = false;
+  _modalTruststoreB64   = null;
+  _modalHasTruststore   = p ? !!p.has_truststore : false;
+  _modalClearTruststore = false;
 
-  document.getElementById('modal-title').textContent = p ? 'Edit Profile' : 'Add TAK Profile';
-  document.getElementById('m-name').value            = p ? p.name       : '';
-  document.getElementById('m-host').value            = p ? p.host       : '';
-  document.getElementById('m-port').value            = p ? p.port       : '8089';
-  document.getElementById('m-marti-port').value      = p ? p.marti_port : '8443';
-  document.getElementById('m-callsign').value        = p ? p.callsign   : 'WMD PLOTTER';
-  document.getElementById('m-ssl').checked           = p ? !!p.ssl      : true;
-  document.getElementById('m-cert-file').value       = '';
-  document.getElementById('m-cert-pass').value       = '';
-  document.getElementById('m-admin-cert-file').value = '';
-  document.getElementById('m-admin-cert-pass').value = '';
-  document.getElementById('modal-status').textContent = '';
+  document.getElementById('modal-title').textContent   = p ? 'Edit Profile' : 'Add TAK Profile';
+  document.getElementById('m-name').value              = p ? p.name       : '';
+  document.getElementById('m-host').value              = p ? p.host       : '';
+  document.getElementById('m-port').value              = p ? p.port       : '8089';
+  document.getElementById('m-marti-port').value        = p ? p.marti_port : '8443';
+  document.getElementById('m-callsign').value          = p ? p.callsign   : 'WMD PLOTTER';
+  document.getElementById('m-ssl').checked             = p ? !!p.ssl      : true;
+  document.getElementById('m-cert-file').value         = '';
+  document.getElementById('m-cert-pass').value         = '';
+  document.getElementById('m-truststore-file').value   = '';
+  document.getElementById('m-truststore-pass').value   = '';
+  document.getElementById('modal-status').textContent  = '';
   renderModalCertBadge();
-  renderModalAdminCertBadge();
+  renderModalTruststoreBadge();
   document.getElementById('profile-modal').classList.add('open');
 }
 
@@ -433,12 +433,12 @@ function renderModalCertBadge() {
   removeBtn.style.display = hasCert ? '' : 'none';
 }
 
-function renderModalAdminCertBadge() {
-  const badge     = document.getElementById('m-admin-cert-badge');
-  const removeBtn = document.getElementById('m-remove-admin-cert-btn');
-  const hasCert   = (_modalHasAdminCert || _modalAdminCertB64) && !_modalClearAdmin;
-  badge.innerHTML = hasCert ? '<div class="cert-badge">🔐 Admin cert loaded</div>' : '';
-  removeBtn.style.display = hasCert ? '' : 'none';
+function renderModalTruststoreBadge() {
+  const badge     = document.getElementById('m-truststore-badge');
+  const removeBtn = document.getElementById('m-remove-truststore-btn');
+  const has       = (_modalHasTruststore || _modalTruststoreB64) && !_modalClearTruststore;
+  badge.innerHTML = has ? '<div class="cert-badge">🔑 Truststore loaded</div>' : '';
+  removeBtn.style.display = has ? '' : 'none';
 }
 
 function onModalCertFile(input) {
@@ -453,14 +453,14 @@ function onModalCertFile(input) {
   reader.readAsArrayBuffer(file);
 }
 
-function onModalAdminCertFile(input) {
+function onModalTruststoreFile(input) {
   const file = input.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
-    _modalAdminCertB64 = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
-    _modalClearAdmin   = false;
-    renderModalAdminCertBadge();
+    _modalTruststoreB64   = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
+    _modalClearTruststore = false;
+    renderModalTruststoreBadge();
   };
   reader.readAsArrayBuffer(file);
 }
@@ -472,11 +472,11 @@ function removeCertFromModal() {
   renderModalCertBadge();
 }
 
-function removeAdminCertFromModal() {
-  _modalAdminCertB64 = null;
-  _modalClearAdmin   = true;
-  document.getElementById('m-admin-cert-file').value = '';
-  renderModalAdminCertBadge();
+function removeTruststoreFromModal() {
+  _modalTruststoreB64   = null;
+  _modalClearTruststore = true;
+  document.getElementById('m-truststore-file').value = '';
+  renderModalTruststoreBadge();
 }
 
 async function saveProfile() {
@@ -493,11 +493,11 @@ async function saveProfile() {
     body.cert_pass    = document.getElementById('m-cert-pass').value;
   }
   if (_modalClearCert) body.clear_cert = true;
-  if (_modalAdminCertB64) {
-    body.admin_cert_p12_b64 = _modalAdminCertB64;
-    body.admin_cert_pass    = document.getElementById('m-admin-cert-pass').value;
+  if (_modalTruststoreB64) {
+    body.truststore_p12_b64 = _modalTruststoreB64;
+    body.truststore_pass    = document.getElementById('m-truststore-pass').value;
   }
-  if (_modalClearAdmin) body.clear_admin_cert = true;
+  if (_modalClearTruststore) body.clear_truststore = true;
 
   const url    = _editingId ? `/api/admin/tak-profiles/${_editingId}` : '/api/admin/tak-profiles';
   const method = _editingId ? 'PUT' : 'POST';

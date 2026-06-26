@@ -31,50 +31,97 @@ import httpx
 from kml_gen import build_combined_kml
 
 
-def _make_ssl_ctx(cert_b64: Optional[str], cert_pass: str = "") -> tuple[ssl.SSLContext, list[str]]:
+def _p12_to_pem_cert_key(raw: bytes, pw: Optional[bytes]) -> tuple[bytes, bytes]:
+    """Extract (cert_pem, key_pem) from a P12 client cert."""
+    from cryptography.hazmat.primitives.serialization.pkcs12 import load_key_and_certificates
+    from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+    privkey, cert, _ = load_key_and_certificates(raw, pw)
+    return (
+        cert.public_bytes(Encoding.PEM),
+        privkey.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()),
+    )
+
+
+def _p12_to_ca_pem(raw: bytes, pw: Optional[bytes]) -> bytes:
+    """Extract all CA/trust certificates from a truststore P12 as concatenated PEM."""
+    from cryptography.hazmat.primitives.serialization.pkcs12 import load_pkcs12
+    from cryptography.hazmat.primitives.serialization import Encoding
+    p12 = load_pkcs12(raw, pw)
+    parts: list[bytes] = []
+    if p12.cert:
+        parts.append(p12.cert.certificate.public_bytes(Encoding.PEM))
+    for extra in (p12.additional_certs or []):
+        parts.append(extra.certificate.public_bytes(Encoding.PEM))
+    if not parts:
+        raise ValueError("No certificates found in truststore P12")
+    return b"\n".join(parts)
+
+
+def _make_ssl_ctx(
+    cert_b64: Optional[str],
+    cert_pass: str = "",
+    truststore_b64: Optional[str] = None,
+    truststore_pass: str = "",
+) -> tuple[ssl.SSLContext, list[str]]:
     """
-    Build an SSLContext from a PEM or P12 cert.
-    Forces TLS 1.2 to avoid TLS 1.3 certificate-required alert on port 8443.
+    Build an SSLContext matching TAKPhotoSpotter's connection setup:
+      - client cert  → mutual TLS auth (same as TCP CoT port 8089)
+      - truststore   → verify the TAK server's certificate (if provided)
+
+    Forces TLS 1.2 to avoid TLS 1.3 CERTIFICATE_REQUIRED alert on port 8443.
     Returns (ctx, [temp_paths_to_cleanup]).
     """
+    try:
+        from cryptography.hazmat.primitives.serialization.pkcs12 import load_pkcs12  # noqa
+    except ImportError:
+        raise RuntimeError("'cryptography' package required — run: pip install cryptography")
+
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
     try:
         ctx.maximum_version = ssl.TLSVersion.TLSv1_2
     except AttributeError:
         pass
 
+    temps: list[str] = []
+
+    # ── Truststore: verify the TAK server's TLS certificate ───────────────────
+    if truststore_b64:
+        raw_ts = base64.b64decode(truststore_b64)
+        pw_ts  = truststore_pass.encode() if truststore_pass else None
+        if raw_ts.lstrip().startswith(b"-----BEGIN"):
+            ca_pem = raw_ts
+        else:
+            ca_pem = _p12_to_ca_pem(raw_ts, pw_ts)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as f:
+            f.write(ca_pem)
+            temps.append(f.name)
+        ctx.load_verify_locations(f.name)
+        ctx.verify_mode = ssl.CERT_REQUIRED
+    else:
+        ctx.verify_mode = ssl.CERT_NONE
+
+    # ── Client cert: prove our identity to the TAK server ─────────────────────
     if not cert_b64:
-        return ctx, []
+        return ctx, temps
 
     raw = base64.b64decode(cert_b64)
-    temps: list[str] = []
+    pw  = cert_pass.encode() if cert_pass else None
 
     if raw.lstrip().startswith(b"-----BEGIN"):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as f:
             f.write(raw)
             temps.append(f.name)
-        ctx.load_cert_chain(temps[0])
+        ctx.load_cert_chain(temps[-1])
     else:
-        try:
-            from cryptography.hazmat.primitives.serialization.pkcs12 import load_key_and_certificates
-            from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
-        except ImportError:
-            raise RuntimeError("'cryptography' package required — run: pip install cryptography")
-
-        pw = cert_pass.encode() if cert_pass else None
-        privkey, cert, _ = load_key_and_certificates(raw, pw)
-        cert_pem = cert.public_bytes(Encoding.PEM)
-        key_pem = privkey.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
-
+        cert_pem, key_pem = _p12_to_pem_cert_key(raw, pw)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as cf:
             cf.write(cert_pem)
             temps.append(cf.name)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as kf:
             kf.write(key_pem)
             temps.append(kf.name)
-        ctx.load_cert_chain(temps[0], temps[1])
+        ctx.load_cert_chain(temps[-2], temps[-1])
 
     return ctx, temps
 
@@ -132,22 +179,20 @@ async def push_cot_http(config: dict, overlay_state: dict) -> dict:
     if not export_state:
         return {"success": False, "sent": 0, "error": "No active overlays — run a model first"}
 
-    # Prefer admin cert for Marti REST API; fall back to device cert
-    if config.get("admin_cert_p12"):
-        cert_b64  = config["admin_cert_p12"]
-        cert_pass = config.get("admin_cert_pass") or ""
-    elif config.get("cert_p12"):
-        cert_b64  = config["cert_p12"]
-        cert_pass = config.get("cert_pass") or ""
-    else:
+    cert_b64        = config.get("cert_p12")
+    cert_pass       = config.get("cert_pass") or ""
+    truststore_b64  = config.get("truststore_p12")
+    truststore_pass = config.get("truststore_pass") or ""
+
+    if not cert_b64:
         return {"success": False, "sent": 0,
-                "error": "No certificate configured — upload your TAK device or admin cert in the admin panel."}
+                "error": "No certificate configured — upload your TAK device cert in the admin panel."}
 
     events = _build_events(export_state)
     if not events:
         return {"success": False, "sent": 0, "error": "No CoT events built from overlay state"}
 
-    ctx, temps = _make_ssl_ctx(cert_b64, cert_pass)
+    ctx, temps = _make_ssl_ctx(cert_b64, cert_pass, truststore_b64, truststore_pass)
     cot_url = f"https://{host}:{marti_port}/Marti/api/cot"
     sent = 0
     errors = []
@@ -213,20 +258,18 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
     tool_tag = "_".join(active)
     kmz_filename = f"WMD_PLOTTER_{tool_tag}_{ts}.kmz"
 
-    # Prefer admin cert for Marti REST API; fall back to device cert
-    if config.get("admin_cert_p12"):
-        cert_b64  = config["admin_cert_p12"]
-        cert_pass = config.get("admin_cert_pass") or ""
-    elif config.get("cert_p12"):
-        cert_b64  = config["cert_p12"]
-        cert_pass = config.get("cert_pass") or ""
-    else:
+    cert_b64        = config.get("cert_p12")
+    cert_pass       = config.get("cert_pass") or ""
+    truststore_b64  = config.get("truststore_p12")
+    truststore_pass = config.get("truststore_pass") or ""
+
+    if not cert_b64:
         return {
             "success": False, "url": None,
-            "error": "No certificate configured — upload your TAK device or admin cert in the admin panel.",
+            "error": "No certificate configured — upload your TAK device cert in the admin panel.",
         }
 
-    ctx, temps = _make_ssl_ctx(cert_b64, cert_pass)
+    ctx, temps = _make_ssl_ctx(cert_b64, cert_pass, truststore_b64, truststore_pass)
     try:
         # Step 1: Upload KMZ to /Marti/sync/upload (same endpoint as photo upload)
         name_enc   = urllib.parse.quote(kmz_filename)
