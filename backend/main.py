@@ -790,7 +790,7 @@ async def export_tak_data_package(tools: Optional[str] = Query(default=None)):
 
     active = list(export_state.keys())
     kml_bytes = build_combined_kml(export_state).encode("utf-8")
-    zip_bytes, filename = build_tak_data_package(kml_bytes, active)
+    zip_bytes, filename, _uid = build_tak_data_package(kml_bytes, active)
     return Response(
         content=zip_bytes,
         media_type="application/zip",
@@ -1457,19 +1457,20 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
     config = _profile_to_config(p)
 
     try:
-        # 1. Build KMZ from current overlay state and cache it for /kml/live.kmz
-        from tak_marti import _build_kmz
+        # 1. Build a proper TAK Mission Package (MANIFEST/manifest.xml + KML).
+        # The manifest includes onReceiveImport="true" which tells ATAK to
+        # auto-import on receipt. A bare KMZ (doc.kml only) lacks this and
+        # ATAK reports "data package download failed" even after downloading.
         export_state  = {k: v for k, v in _overlay_state.items() if v}
         kml_bytes     = build_combined_kml(export_state).encode("utf-8")
-        kmz_bytes     = _build_kmz(kml_bytes)
-        _live_kmz_cache = kmz_bytes
+        active        = list(export_state.keys())
 
-        sha256       = hashlib.sha256(kmz_bytes).hexdigest()
-        ts           = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        active       = list(export_state.keys())
-        kmz_filename = f"WMD_PLOTTER_{'_'.join(active)}_{ts}.kmz"
+        dp_bytes, dp_filename, _pkg_uid = build_tak_data_package(kml_bytes, active)
+        _live_kmz_cache = dp_bytes  # served at /kml/live.kmz
 
-        # URL ATAK will download the KMZ from.
+        sha256 = hashlib.sha256(dp_bytes).hexdigest()
+
+        # URL ATAK will download the package from.
         # WMD_PUBLIC_URL in .env overrides the auto-detected base (needed behind nginx
         # where request.base_url may resolve to an internal address ATAK can't reach).
         public_base = (os.environ.get("WMD_PUBLIC_URL") or "").rstrip("/")
@@ -1483,12 +1484,12 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
         # 3. Build b-f-t-r events and send via TCP (confirmed-working path)
         if contacts:
             bftr_events = [
-                bftr_cot_event(kmz_filename, kmz_url, sha256, len(kmz_bytes), c["uid"])
+                bftr_cot_event(dp_filename, kmz_url, sha256, len(dp_bytes), c["uid"])
                 for c in contacts
             ]
             note = f"Sending to {len(contacts)} connected client(s)"
         else:
-            bftr_events = [bftr_cot_event(kmz_filename, kmz_url, sha256, len(kmz_bytes))]
+            bftr_events = [bftr_cot_event(dp_filename, kmz_url, sha256, len(dp_bytes))]
             note = "No connected clients found via Marti — broadcast sent to All Streaming"
 
         result = push_bftr(config, bftr_events)
