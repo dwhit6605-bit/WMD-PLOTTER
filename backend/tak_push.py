@@ -13,6 +13,7 @@ import base64
 import tempfile
 import os
 import time
+import threading
 from typing import Optional
 
 from tak_dp import _polygon_cot_event, point_cot_event
@@ -38,8 +39,7 @@ def _build_events(overlay_state: dict, tools: Optional[list] = None) -> list[str
             label = z.get("label") or z.get("level", tool)
             color = z.get("color", "#888888")
             uid   = f"wmd-{tool}-{z.get('level', 'z')}-{i}"
-            xml   = _polygon_cot_event(uid, label, color, lonlat, src_lat, src_lon)
-            events.append(f'<?xml version="1.0" encoding="UTF-8"?>\n{xml}')
+            events.append(_polygon_cot_event(uid, label, color, lonlat, src_lat, src_lon))
 
         # Contours-based tools (plume, radiation)
         # contours is a dict keyed by level; "latlon" is in [lat, lon] order — flip for CoT
@@ -51,8 +51,7 @@ def _build_events(overlay_state: dict, tools: Optional[list] = None) -> list[str
             label  = info.get("label", f"{tool} {level}")
             color  = info.get("color", "#888888")
             uid    = f"wmd-{tool}-{level}-{i}"
-            xml    = _polygon_cot_event(uid, label, color, lonlat, src_lat, src_lon)
-            events.append(f'<?xml version="1.0" encoding="UTF-8"?>\n{xml}')
+            events.append(_polygon_cot_event(uid, label, color, lonlat, src_lat, src_lon))
 
     return events
 
@@ -115,15 +114,42 @@ def _linger(sock, seconds: float) -> None:
         pass
 
 
+def _send_one_event(host: str, port: int, use_ssl: bool,
+                    cert_p12: Optional[str], cert_pass: str,
+                    cot_xml: str, results: list, idx: int) -> None:
+    """
+    Send a single CoT event on its own TLS connection + 2 s linger.
+    Mirrors TAKPhotoSpotter's per-event socket approach so the server's
+    XML parser sees one clean <?xml...?><event> document per connection.
+    """
+    payload = f'<?xml version="1.0" encoding="UTF-8"?>\n{cot_xml}'.encode("utf-8")
+    try:
+        raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        raw.settimeout(15)
+        if use_ssl:
+            ctx  = _make_ssl_ctx(cert_p12, cert_pass)
+            sock = ctx.wrap_socket(raw, server_hostname=host)
+        else:
+            sock = raw
+        sock.connect((host, port))
+        sock.sendall(payload)
+        _linger(sock, 2.0)
+        sock.close()
+        results[idx] = True
+    except Exception as exc:
+        results[idx] = str(exc)
+
+
 def push_cot(config: dict, overlay_state: dict, tools: Optional[list] = None) -> dict:
     """
-    Stream CoT events to a TAK server over TCP or SSL.
-    Returns {"success": bool, "sent": int, "error": str | None}
+    Send each CoT event on its own parallel TLS connection (TAKPhotoSpotter pattern).
+    Sending multiple events on a single connection caused the server's streaming XML
+    parser to see concatenated <?xml?> declarations and discard events after the first.
     """
     host      = (config.get("host") or "").strip()
     port      = int(config.get("port") or 8087)
     use_ssl   = bool(config.get("ssl"))
-    cert_p12  = config.get("cert_p12")    # base64-encoded P12 bytes
+    cert_p12  = config.get("cert_p12")
     cert_pass = config.get("cert_pass") or ""
 
     if not host:
@@ -133,28 +159,25 @@ def push_cot(config: dict, overlay_state: dict, tools: Optional[list] = None) ->
     if not events:
         return {"success": False, "sent": 0, "error": "No active overlays to push"}
 
-    try:
-        raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        raw.settimeout(15)
+    results = [None] * len(events)
+    threads = [
+        threading.Thread(
+            target=_send_one_event,
+            args=(host, port, use_ssl, cert_p12, cert_pass, ev, results, i),
+            daemon=True,
+        )
+        for i, ev in enumerate(events)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
 
-        if use_ssl:
-            ctx  = _make_ssl_ctx(cert_p12, cert_pass)
-            sock = ctx.wrap_socket(raw, server_hostname=host)
-        else:
-            sock = raw
-
-        sock.connect((host, port))
-        for ev in events:
-            sock.sendall(ev.encode("utf-8"))
-        # Linger 2 s before closing — TAK Server reads the TLS stream asynchronously;
-        # closing immediately can send a TCP RST that truncates the record before the
-        # server has read it. (Pattern from TAKPhotoSpotter.)
-        _linger(sock, 2.0)
-        sock.close()
-        return {"success": True, "sent": len(events), "error": None}
-
-    except Exception as exc:
-        return {"success": False, "sent": 0, "error": str(exc)}
+    sent   = sum(1 for r in results if r is True)
+    errors = [r for r in results if isinstance(r, str)]
+    if sent == 0:
+        return {"success": False, "sent": 0, "error": errors[0] if errors else "All sends failed"}
+    return {"success": True, "sent": sent, "error": errors[0] if errors else None}
 
 
 def push_test_point(config: dict, lat: float = 0.0, lon: float = 0.0,

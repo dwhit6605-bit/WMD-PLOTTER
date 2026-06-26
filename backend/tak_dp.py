@@ -88,19 +88,21 @@ def _polygon_cot_event(uid: str, label: str, color: str,
     vertices = "\n        ".join(
         f'<vertex lat="{pt[1]:.6f}" lon="{pt[0]:.6f}" hae="0"/>' for pt in lonlat_ring
     )
-    return f"""<event version="2.0" uid="{uid}" type="u-d-f" how="h-e"
+    return f"""<event version="2.0" uid="{uid}" type="u-d-f" how="h-e" access="Undefined"
        time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}">
-  <point lat="{center_lat:.6f}" lon="{center_lon:.6f}" hae="9999999.0" ce="9999999.0" le="9999999.0"/>
+  <point lat="{center_lat:.6f}" lon="{center_lon:.6f}" hae="0.0" ce="9999999.0" le="9999999.0"/>
   <detail>
     <shape>
       <polyline closed="true">
         {vertices}
       </polyline>
     </shape>
+    <color value="{stroke}"/>
     <strokeColor value="{stroke}"/>
     <strokeWeight value="3.0"/>
     <strokeStyle value="solid"/>
     <fillColor value="{fill}"/>
+    <archive/>
     <remarks>{label}</remarks>
     <contact callsign="WMD PLOTTER"/>
     <uid Droid="WMD PLOTTER"/>
