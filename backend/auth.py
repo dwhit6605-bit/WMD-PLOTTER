@@ -70,7 +70,7 @@ _PUBLIC_EXACT = {
     # Auth actions that work without a cookie
     "/auth/login", "/auth/logout", "/auth/register", "/auth/registration-status",
 }
-_PUBLIC_PREFIXES = ("/static/icons/",)
+_PUBLIC_PREFIXES = ("/static/icons/", "/kml/")
 _PUBLIC_API      = {"/api/health"}
 
 
