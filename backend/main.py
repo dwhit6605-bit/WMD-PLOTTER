@@ -14,6 +14,7 @@ Endpoints:
 import os
 import sys
 import math
+import hashlib
 import secrets
 import logging
 from datetime import datetime, timezone
@@ -43,7 +44,7 @@ from blast import EXPLOSIVES, compute_blast_zones
 from radiation import RADIONUCLIDES, get_radionuclide, compute_radiation_contours
 from bleve import FUELS, compute_bleve_zones
 from population import estimate_population_impact
-from tak_dp import build_tak_data_package, build_cot_xml
+from tak_dp import build_tak_data_package, build_cot_xml, bftr_cot_event
 from erg import search_erg, get_erg_entry, compute_erg_zones
 from dense_gas import compute_dense_gas_zones, list_dense_gases, get_dense_gas
 from probit import compute_probit_zones
@@ -58,8 +59,8 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  get_setting, set_setting, \
                  list_tak_profiles, get_tak_profile, get_active_tak_profile, \
                  upsert_tak_profile, set_tak_profile_cert, set_tak_profile_truststore, set_active_tak_profile, delete_tak_profile
-from tak_push import push_cot, push_test_point
-from tak_marti import push_via_marti, push_cot_http
+from tak_push import push_cot, push_test_point, push_bftr
+from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
     hash_password, verify_password, create_token, decode_token,
     auth_middleware, current_user, require_admin,
@@ -103,6 +104,8 @@ if FRONTEND_DIR.exists():
 # ── Shared overlay state (all tools write here; KML endpoints read it) ───────
 # Adding a new tool: store its result under a new key and add a folder
 # builder to kml_gen._FOLDER_BUILDERS. Nothing else needs to change.
+_live_kmz_cache: Optional[bytes] = None  # served at /kml/live.kmz for b-f-t-r downloads
+
 _overlay_state: dict = {
     "plume": {},
     "blast": {},
@@ -702,6 +705,21 @@ async def live_kml():
         content=build_combined_kml(_overlay_state),
         media_type="application/vnd.google-earth.kml+xml",
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/kml/live.kmz")
+async def live_kmz():
+    """Serve the most recently pushed KMZ so ATAK can download it via b-f-t-r."""
+    if _live_kmz_cache is None:
+        raise HTTPException(status_code=404, detail="No KMZ generated yet — push to TAK first.")
+    return Response(
+        content=_live_kmz_cache,
+        media_type="application/vnd.google-earth.kmz",
+        headers={
+            "Content-Disposition": 'attachment; filename="wmd_plotter_live.kmz"',
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
     )
 
 
@@ -1414,10 +1432,14 @@ async def tak_preview(user: dict = Depends(current_user)):
 @app.post("/api/tak-push-marti")
 async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
     """
-    Push overlay CoT events to TAK server via Marti HTTPS.
-    Primary: POST each CoT to /Marti/api/cot (confirmed working with device cert).
-    Fallback: KMZ upload + b-f-t-r notification (requires upload permissions).
+    Build a KMZ data package, serve it at /kml/live.kmz, query connected users
+    from Marti, then send each a b-f-t-r CoT via TCP so ATAK auto-downloads it.
+
+    No Marti upload needed — ATAK fetches the KMZ directly from this server.
+    Falls back to broadcast b-f-t-r if contacts query fails (403, etc.).
     """
+    global _live_kmz_cache
+
     if not any(_overlay_state.values()):
         return JSONResponse(
             {"success": False, "error": "No model data — run a model first."},
@@ -1434,18 +1456,43 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
     config = _profile_to_config(p)
 
-    # Primary: HTTP CoT injection (same endpoint as working test marker)
-    result = await push_cot_http(config, _overlay_state)
-    if result["success"]:
-        return JSONResponse(result)
+    # 1. Build KMZ from current overlay state and cache it for /kml/live.kmz
+    from tak_marti import _build_kmz
+    export_state  = {k: v for k, v in _overlay_state.items() if v}
+    kml_bytes     = build_combined_kml(export_state).encode("utf-8")
+    kmz_bytes     = _build_kmz(kml_bytes)
+    _live_kmz_cache = kmz_bytes
 
-    # Fallback: KMZ upload + b-f-t-r (requires Marti upload permissions)
-    result2 = await push_via_marti(config, _overlay_state)
-    if result2.get("success"):
-        return JSONResponse(result2)
+    sha256       = hashlib.sha256(kmz_bytes).hexdigest()
+    ts           = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    active       = list(export_state.keys())
+    kmz_filename = f"WMD_PLOTTER_{'_'.join(active)}_{ts}.kmz"
 
-    # Return HTTP CoT error (more actionable)
-    return JSONResponse(result, status_code=502)
+    # URL ATAK will download the KMZ from (this server)
+    base_url = str(request.base_url).rstrip("/")
+    kmz_url  = f"{base_url}/kml/live.kmz"
+
+    # 2. Query connected clients from Marti (fails gracefully → broadcast)
+    contacts = await get_contacts(config)
+
+    # 3. Build b-f-t-r events and send via TCP (confirmed-working path)
+    if contacts:
+        bftr_events = [
+            bftr_cot_event(kmz_filename, kmz_url, sha256, len(kmz_bytes), c["uid"])
+            for c in contacts
+        ]
+        note = f"Sending to {len(contacts)} connected client(s)"
+    else:
+        bftr_events = [bftr_cot_event(kmz_filename, kmz_url, sha256, len(kmz_bytes))]
+        note = "No connected clients found via Marti — broadcast sent to All Streaming"
+
+    result = push_bftr(config, bftr_events)
+    result["contacts"]   = len(contacts)
+    result["kmz_url"]    = kmz_url
+    result["note"]       = note
+
+    status = 200 if result["success"] else 502
+    return JSONResponse(result, status_code=status)
 
 
 @app.post("/api/tak-test-point")

@@ -14,6 +14,7 @@ import io
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 
 _MANIFEST_TEMPLATE = """\
@@ -124,6 +125,30 @@ def point_cot_event(lat: float, lon: float, callsign: str = "WMD PLOTTER") -> st
     <uid Droid="{callsign}"/>
     <remarks>WMD PLOTTER connectivity test</remarks>
     <marti><dest callsign="All Streaming"/></marti>
+  </detail>
+</event>"""
+
+
+def bftr_cot_event(filename: str, url: str, sha256: str, size_bytes: int,
+                   contact_uid: Optional[str] = None) -> str:
+    """
+    Build a b-f-t-r (file transfer request) CoT event.
+    ATAK receives this and auto-downloads the file at `url`.
+    If contact_uid is None, sends to "All Streaming" (broadcast).
+    """
+    now = datetime.now(timezone.utc)
+    stale = now + timedelta(hours=1)
+    uid_suffix = contact_uid or "broadcast"
+    marti_dest = (f'<dest uid="{contact_uid}"/>' if contact_uid
+                  else '<dest callsign="All Streaming"/>')
+    return f"""<event version="2.0" uid="wmd-bftr-{int(now.timestamp())}-{uid_suffix}" type="b-f-t-r"
+       time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}" how="h-g-i-g-o">
+  <point lat="0.0" lon="0.0" hae="0.0" ce="9999999.0" le="9999999.0"/>
+  <detail>
+    <fileshare filename="{filename}" senderUrl="{url}" sha256="{sha256}"
+               sizeInBytes="{size_bytes}" senderUid="WMD-PLOTTER"
+               senderCallsign="WMD PLOTTER" name="{filename}"/>
+    <marti>{marti_dest}</marti>
   </detail>
 </event>"""
 

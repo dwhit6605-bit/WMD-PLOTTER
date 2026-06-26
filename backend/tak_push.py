@@ -180,6 +180,47 @@ def push_cot(config: dict, overlay_state: dict, tools: Optional[list] = None) ->
     return {"success": True, "sent": sent, "error": errors[0] if errors else None}
 
 
+def push_bftr(config: dict, bftr_events: list) -> dict:
+    """
+    Send b-f-t-r CoT events via TCP — same confirmed-working path as SA markers.
+    Each event delivered on its own parallel TLS connection.
+    bftr_events: list of raw CoT XML strings (no <?xml?> wrapper — added per-connection).
+    """
+    host      = (config.get("host") or "").strip()
+    port      = int(config.get("port") or 8089)
+    use_ssl   = bool(config.get("ssl"))
+    cert_p12  = config.get("cert_p12")
+    cert_pass = config.get("cert_pass") or ""
+
+    if not host:
+        return {"success": False, "sent": 0, "error": "TAK server host not configured"}
+    if not bftr_events:
+        return {"success": False, "sent": 0, "error": "No b-f-t-r events to send"}
+
+    results = [None] * len(bftr_events)
+    threads = [
+        threading.Thread(
+            target=_send_one_event,
+            args=(host, port, use_ssl, cert_p12, cert_pass, ev, results, i),
+            daemon=True,
+        )
+        for i, ev in enumerate(bftr_events)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+
+    sent   = sum(1 for r in results if r is True)
+    errors = [r for r in results if isinstance(r, str)]
+    return {
+        "success": sent > 0,
+        "sent": sent,
+        "total": len(bftr_events),
+        "error": "; ".join(errors) if errors and sent == 0 else None,
+    }
+
+
 def push_test_point(config: dict, lat: float = 0.0, lon: float = 0.0,
                     callsign: str = "WMD PLOTTER") -> dict:
     """

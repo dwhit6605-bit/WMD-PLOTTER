@@ -161,6 +161,46 @@ def _build_file_transfer_cot(
     )
 
 
+async def get_contacts(config: dict) -> list:
+    """
+    Fetch connected clients from /Marti/api/contacts/all.
+    Returns a list of {uid, callsign} dicts, or [] if unavailable (403, network error, etc.).
+    """
+    host            = (config.get("host") or "").strip()
+    marti_port      = int(config.get("marti_port") or 8443)
+    cert_b64        = config.get("cert_p12")
+    cert_pass       = config.get("cert_pass") or ""
+    truststore_b64  = config.get("truststore_p12")
+    truststore_pass = config.get("truststore_pass") or ""
+
+    if not host:
+        return []
+
+    ctx, temps = _make_ssl_ctx(cert_b64, cert_pass, truststore_b64, truststore_pass)
+    try:
+        async with httpx.AsyncClient(verify=ctx, timeout=10.0) as client:
+            r = await client.get(
+                f"https://{host}:{marti_port}/Marti/api/contacts/all",
+                headers={"Accept": "application/json"},
+            )
+        if r.status_code == 200:
+            data = r.json()
+            return [
+                {"uid": c.get("uid", "").strip(), "callsign": c.get("callsign", "").strip()}
+                for c in (data if isinstance(data, list) else [])
+                if c.get("uid", "").strip()
+            ]
+        return []
+    except Exception:
+        return []
+    finally:
+        for path in temps:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
 async def push_cot_http(config: dict, overlay_state: dict) -> dict:
     """
     Push overlay CoT events via POST /Marti/api/cot (HTTP) using the device cert.
