@@ -865,7 +865,6 @@ input:checked+.slider:before{transform:translateX(16px)}
           <button class="btn btn-ghost" id="btn-kml-dl" onclick="downloadKML()" disabled>⬇ Download KML</button>
           <button class="btn btn-ghost" id="btn-kml-net" onclick="copyNetworkLink()" disabled>🔗 Network Link</button>
           <button class="btn btn-ghost" id="btn-tak-dp" onclick="downloadTAKDP()" disabled style="grid-column:1/-1;background:rgba(0,120,200,0.12);border-color:rgba(0,120,200,0.4);color:#5bb8ff">📦 TAK Data Package (.zip)</button>
-          <button class="btn btn-ghost" id="btn-cot-xml" onclick="downloadCoT()" disabled style="grid-column:1/-1;background:rgba(0,160,120,0.10);border-color:rgba(0,160,120,0.35);color:#4dd9b0;font-size:11px">📡 CoT XML — ATAK / FreeTAKServer / WinTAK</button>
           <button class="btn btn-ghost" id="btn-tak-push" onclick="pushToTAK()" disabled style="grid-column:1/-1;background:rgba(220,50,50,0.10);border-color:rgba(220,80,80,0.4);color:#ff7070;font-size:11px;display:none">📡 Push to TAK Server</button>
           <button class="btn btn-ghost" onclick="printReport()" style="grid-column:1/-1;font-size:11px;margin-top:2px">🖨 Print / Save PDF Incident Report</button>
           <button class="btn btn-ghost" id="btn-share-url" onclick="shareScenarioURL()" style="grid-column:1/-1;font-size:11px;margin-top:2px;border-color:rgba(0,255,136,0.3);color:var(--green)">🔗 Copy Share Link</button>
@@ -3241,7 +3240,6 @@ function _refreshExportUI() {
   document.getElementById('btn-kml-dl').disabled  = !hasAny;
   document.getElementById('btn-kml-net').disabled = !hasAny;
   document.getElementById('btn-tak-dp').disabled  = !hasAny;
-  document.getElementById('btn-cot-xml').disabled = !hasAny;
   const pushBtn = document.getElementById('btn-tak-push');
   if (pushBtn.style.display !== 'none') pushBtn.disabled = !hasAny;
   document.getElementById('export-summary').textContent = hasAny ? `Exporting: ${active.join(' + ')}` : 'No overlays computed yet.';
@@ -3360,16 +3358,6 @@ async function downloadTAKDP() {
   toast('TAK Data Package downloaded — import via ATAK Files menu', 2500);
 }
 
-async function downloadCoT() {
-  const r = await fetch(`${API}/api/cot`);
-  if (!r.ok) { toast('No overlays to export yet', 2000); return; }
-  const blob = await r.blob();
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `wmd_cot_${Date.now()}.xml`;
-  a.click();
-  toast('CoT XML downloaded — import into ATAK / FreeTAKServer / WinTAK', 3000);
-}
 
 async function pushToTAK() {
   const btn = document.getElementById('btn-tak-push');

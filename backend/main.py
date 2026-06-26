@@ -44,7 +44,7 @@ from blast import EXPLOSIVES, compute_blast_zones
 from radiation import RADIONUCLIDES, get_radionuclide, compute_radiation_contours
 from bleve import FUELS, compute_bleve_zones
 from population import estimate_population_impact
-from tak_dp import build_tak_data_package, build_cot_xml, bftr_cot_event
+from tak_dp import build_tak_data_package, bftr_cot_event
 from erg import search_erg, get_erg_entry, compute_erg_zones
 from dense_gas import compute_dense_gas_zones, list_dense_gases, get_dense_gas
 from probit import compute_probit_zones
@@ -1289,18 +1289,6 @@ async def run_probit(req: ProbitRequest):
 
 
 # ── CoT XML (ATAK streaming) ──────────────────────────────────────────────────
-
-@app.get("/api/cot")
-async def get_cot_xml():
-    """
-    Return Cursor-on-Target (CoT) XML for all active overlays.
-    Feed into WinTAK / iTAK / FreeTAKServer or stream over UDP 239.2.3.1:6969.
-    """
-    if not any(_overlay_state.values()):
-        raise HTTPException(status_code=404, detail="No overlays computed yet.")
-    xml = build_cot_xml(_overlay_state)
-    return Response(content=xml, media_type="application/xml",
-                    headers={"Content-Disposition": 'attachment; filename="wmd_cot.xml"'})
 
 
 # ── TAK Server profiles (admin) ───────────────────────────────────────────────
