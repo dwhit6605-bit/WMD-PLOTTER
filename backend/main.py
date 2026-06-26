@@ -13,13 +13,14 @@ Endpoints:
 
 import os
 import sys
+import json
 import math
 import hashlib
 import secrets
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # Load .env from backend directory (FIRMS_MAP_KEY, etc.) — never committed to git
 from dotenv import load_dotenv
@@ -58,7 +59,8 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  get_user_by_id, update_last_login, list_users, delete_user, update_password, \
                  get_setting, set_setting, \
                  list_tak_profiles, get_tak_profile, get_active_tak_profile, \
-                 upsert_tak_profile, set_tak_profile_cert, set_tak_profile_truststore, set_active_tak_profile, delete_tak_profile
+                 upsert_tak_profile, set_tak_profile_cert, set_tak_profile_truststore, set_active_tak_profile, delete_tak_profile, \
+                 save_scenario, list_scenarios, get_scenario, delete_scenario
 from tak_push import push_cot, push_test_point, push_bftr
 from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
@@ -384,6 +386,73 @@ async def get_version():
         "build_date": BUILD_DATE,
         "name": "WHITWERX Model Display (WMD)",
     })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scenarios — per-user run history
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SaveScenarioRequest(BaseModel):
+    name: str
+    tool: str
+    lat: float
+    lon: float
+    response: Any   # full API response from the compute endpoint
+
+
+@app.post("/api/scenarios")
+async def api_save_scenario(req: SaveScenarioRequest, user: dict = Depends(current_user)):
+    user_id = int(user["sub"])
+    state = _overlay_state.get(req.tool, {})
+    try:
+        sid = save_scenario(
+            user_id=user_id,
+            name=req.name[:200],
+            tool=req.tool,
+            lat=req.lat,
+            lon=req.lon,
+            state_json=json.dumps(state),
+            response_json=json.dumps(req.response),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return JSONResponse({"id": sid})
+
+
+@app.get("/api/scenarios")
+async def api_list_scenarios(user: dict = Depends(current_user)):
+    user_id = int(user["sub"])
+    rows = list_scenarios(user_id)
+    return JSONResponse({"scenarios": rows})
+
+
+@app.post("/api/scenarios/{scenario_id}/load")
+async def api_load_scenario(scenario_id: int, user: dict = Depends(current_user)):
+    user_id = int(user["sub"])
+    row = get_scenario(scenario_id, user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Scenario not found.")
+    try:
+        state = json.loads(row["state_json"])
+        response = json.loads(row["response_json"])
+    except Exception:
+        raise HTTPException(status_code=500, detail="Corrupt scenario data.")
+    global _overlay_state
+    _overlay_state[row["tool"]] = state
+    return JSONResponse({
+        "tool": row["tool"],
+        "lat": row["lat"],
+        "lon": row["lon"],
+        "response": response,
+    })
+
+
+@app.delete("/api/scenarios/{scenario_id}")
+async def api_delete_scenario(scenario_id: int, user: dict = Depends(current_user)):
+    user_id = int(user["sub"])
+    if not delete_scenario(scenario_id, user_id):
+        raise HTTPException(status_code=404, detail="Scenario not found.")
+    return JSONResponse({"status": "deleted"})
 
 
 @app.get("/api/chemicals")

@@ -36,6 +36,22 @@ def init_db() -> None:
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS scenarios (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER NOT NULL,
+            name          TEXT    NOT NULL,
+            tool          TEXT    NOT NULL,
+            lat           REAL    NOT NULL DEFAULT 0.0,
+            lon           REAL    NOT NULL DEFAULT 0.0,
+            state_json    TEXT    NOT NULL DEFAULT '{}',
+            response_json TEXT    NOT NULL DEFAULT '{}',
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_scenarios_user ON scenarios(user_id, created_at DESC)"
+    )
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS tak_profiles (
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             name             TEXT    NOT NULL,
@@ -283,3 +299,50 @@ def update_password(user_id: int, password_hash: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+# ── Scenarios ─────────────────────────────────────────────────────────────────
+
+def save_scenario(user_id: int, name: str, tool: str, lat: float, lon: float,
+                  state_json: str, response_json: str) -> int:
+    conn = _connect()
+    cur = conn.execute(
+        """INSERT INTO scenarios (user_id, name, tool, lat, lon, state_json, response_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, name, tool, lat, lon, state_json, response_json),
+    )
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+
+def list_scenarios(user_id: int, limit: int = 50) -> list:
+    conn = _connect()
+    rows = conn.execute(
+        """SELECT id, name, tool, lat, lon, created_at
+           FROM scenarios WHERE user_id=? ORDER BY created_at DESC LIMIT ?""",
+        (user_id, limit),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_scenario(scenario_id: int, user_id: int) -> Optional[dict]:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT * FROM scenarios WHERE id=? AND user_id=?", (scenario_id, user_id)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_scenario(scenario_id: int, user_id: int) -> bool:
+    conn = _connect()
+    cur = conn.execute(
+        "DELETE FROM scenarios WHERE id=? AND user_id=?", (scenario_id, user_id)
+    )
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted

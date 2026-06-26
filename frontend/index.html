@@ -1021,7 +1021,7 @@ let ergLatLon = null;
 const ergLayers = [];
 const _activeOverlays = { plume: false, blast: false, radiation: false, bleve: false, erg: false, dense_gas: false, fire_smoke: false };
 const activePanels = new Set();
-let timeline = JSON.parse(localStorage.getItem('wmd_timeline') || '[]');
+let timeline = [];  // populated from server on panel open
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Multi-incident slot management (A / B / C)
@@ -3172,28 +3172,55 @@ function calculateShelterEvac() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Incident Timeline
 // ─────────────────────────────────────────────────────────────────────────────
-function addTimelineEntry(toolType, summary, data, lat, lon) {
-  const entry = { id:Date.now(), toolType, summary, data, lat, lon, timestamp:new Date().toISOString() };
-  timeline.unshift(entry);
-  if (timeline.length>50) timeline = timeline.slice(0,50);
-  localStorage.setItem('wmd_timeline', JSON.stringify(timeline));
-  if (activePanels.has('timeline')) renderTimeline();
+async function addTimelineEntry(toolType, summary, data, lat, lon) {
+  try {
+    const r = await fetch('/api/scenarios', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name: summary, tool: toolType, lat, lon, response: data }),
+    });
+    if (r.ok) {
+      const { id } = await r.json();
+      timeline.unshift({ id, toolType, name: summary, lat, lon, created_at: new Date().toISOString() });
+      if (activePanels.has('timeline')) _renderTimelineLocal();
+    }
+  } catch(e) {
+    // non-fatal — run succeeded even if save fails
+    console.warn('Scenario save failed:', e);
+  }
 }
 
-function renderTimeline() {
+async function renderTimeline() {
+  const el = document.getElementById('timeline-list');
+  el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:16px">Loading…</div>';
+  try {
+    const r = await fetch('/api/scenarios');
+    if (!r.ok) throw new Error(r.status);
+    const { scenarios } = await r.json();
+    timeline = scenarios.map(s => ({
+      id: s.id, toolType: s.tool, name: s.name, lat: s.lat, lon: s.lon, created_at: s.created_at
+    }));
+  } catch(e) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:16px">Could not load scenarios.</div>';
+    return;
+  }
+  _renderTimelineLocal();
+}
+
+function _renderTimelineLocal() {
   const el = document.getElementById('timeline-list');
   if (!timeline.length) {
     el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:16px">No scenarios logged yet.<br/>Run a model to start logging.</div>';
     return;
   }
-  const ICONS = { plume:'☣', blast:'💥', radiation:'☢', bleve:'🔥' };
-  el.innerHTML = timeline.map((entry,idx)=>`
+  const ICONS = { plume:'☣', blast:'💥', radiation:'☢', bleve:'🔥', erg:'🧪', dense_gas:'🌫', fire_smoke:'🔥', bleve:'🔥' };
+  el.innerHTML = timeline.map((entry, idx) => `
     <div class="tl-item">
       <div class="tl-header">
         <span class="tl-icon">${ICONS[entry.toolType]||'📍'}</span>
-        <span style="flex:1;font-weight:700;font-size:11px">${entry.summary}</span>
+        <span style="flex:1;font-weight:700;font-size:11px">${entry.name}</span>
       </div>
-      <div class="tl-time">${new Date(entry.timestamp).toLocaleString()}</div>
+      <div class="tl-time">${new Date(entry.created_at).toLocaleString()}</div>
       <div class="tl-actions">
         <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px;margin-top:0" onclick="replayTimelineEntry(${idx})">▶ Replay on Map</button>
         <button class="btn btn-danger" style="font-size:10px;padding:3px 8px;margin-top:0" onclick="removeTimelineEntry(${idx})">Remove</button>
@@ -3201,48 +3228,54 @@ function renderTimeline() {
     </div>`).join('');
 }
 
-function replayTimelineEntry(idx) {
+async function replayTimelineEntry(idx) {
   const entry = timeline[idx];
   if (!entry) return;
-  const data = entry.data;
   try {
-    if (entry.toolType==='plume') {
+    const r = await fetch(`/api/scenarios/${entry.id}/load`, { method: 'POST' });
+    if (!r.ok) throw new Error(await r.text());
+    const { tool, lat, lon, response: data } = await r.json();
+    if (tool === 'plume') {
       lastPlumeData = data; renderPlumeOnMap(data); renderResults(data); enableExport('plume');
-    } else if (entry.toolType==='blast') {
+    } else if (tool === 'blast') {
       lastBlastData = data; renderBlastOnMap(data); renderBlastResults(data); enableExport('blast');
-    } else if (entry.toolType==='radiation') {
+    } else if (tool === 'radiation') {
       lastRadData = data; renderRadiationOnMap(data); renderRadiationResults(data); enableExport('radiation');
-    } else if (entry.toolType==='bleve') {
+    } else if (tool === 'bleve') {
       lastBleveData = data; renderBleveOnMap(data); renderBleveResults(data); enableExport('bleve');
-    } else if (entry.toolType==='erg') {
+    } else if (tool === 'erg') {
       lastERGData = data; renderERGOnMap(data); enableExport('erg');
     }
-    map.setView([entry.lat,entry.lon], 12);
-    toast(`Replaying: ${entry.summary}`, 2000);
-  } catch(e) { toast(`Replay failed: ${e.message}`, 3000); }
+    map.setView([lat, lon], 12);
+    toast(`Loaded: ${entry.name}`, 2000);
+  } catch(e) { toast(`Load failed: ${e.message}`, 3000); }
 }
 
-function removeTimelineEntry(idx) {
-  timeline.splice(idx,1);
-  localStorage.setItem('wmd_timeline', JSON.stringify(timeline));
-  renderTimeline();
+async function removeTimelineEntry(idx) {
+  const entry = timeline[idx];
+  if (!entry) return;
+  try {
+    await fetch(`/api/scenarios/${entry.id}`, { method: 'DELETE' });
+  } catch(e) { /* best effort */ }
+  timeline.splice(idx, 1);
+  _renderTimelineLocal();
 }
 
-function clearTimeline() {
-  if (!confirm('Clear all timeline entries?')) return;
+async function clearTimeline() {
+  if (!confirm('Delete all saved scenarios for your account?')) return;
+  await Promise.all(timeline.map(e => fetch(`/api/scenarios/${e.id}`, { method: 'DELETE' }).catch(() => {})));
   timeline = [];
-  localStorage.removeItem('wmd_timeline');
-  renderTimeline();
+  _renderTimelineLocal();
 }
 
 function exportTimeline() {
-  if (!timeline.length) { toast('No timeline entries to export', 2000); return; }
+  if (!timeline.length) { toast('No scenarios to export', 2000); return; }
   const blob = new Blob([JSON.stringify(timeline, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `wmd_timeline_${Date.now()}.json`;
+  a.download = `wmd_scenarios_${Date.now()}.json`;
   a.click();
-  toast('Timeline exported as JSON', 2000);
+  toast('Scenario list exported as JSON', 2000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
