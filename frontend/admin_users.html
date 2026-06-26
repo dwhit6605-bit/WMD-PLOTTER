@@ -210,7 +210,7 @@
 
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;margin-bottom:10px">
-          Client Certificate
+          Device Certificate <span style="font-weight:400;text-transform:none;letter-spacing:0">(TCP CoT · port 8089)</span>
         </div>
         <div id="m-cert-badge"></div>
         <div class="f-row" style="margin-bottom:6px">
@@ -223,15 +223,33 @@
             <input type="password" id="m-cert-pass" placeholder="(blank if none)" autocomplete="off"/>
           </label>
         </div>
-        <div style="font-size:11px;color:var(--muted)">
-          Same cert used for both CoT streaming (port 8089) and Marti data package push (port 8443).
+        <button class="btn btn-red" id="m-remove-cert-btn" style="display:none;margin-bottom:4px" onclick="removeCertFromModal()">Remove Device Cert</button>
+      </div>
+
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;margin-bottom:6px">
+          Admin Certificate <span style="font-weight:400;text-transform:none;letter-spacing:0">(Marti REST API · port 8443)</span>
         </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+          <code style="font-size:10px">/opt/tak/certs/files/admin.p12</code> — required for data package push
+        </div>
+        <div id="m-admin-cert-badge"></div>
+        <div class="f-row" style="margin-bottom:6px">
+          <label><span>Admin Certificate (.p12 / .pem)</span>
+            <input type="file" id="m-admin-cert-file" accept=".p12,.pfx,.pem"
+                   style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:6px 8px;width:100%;cursor:pointer"
+                   onchange="onModalAdminCertFile(this)"/>
+          </label>
+          <label style="max-width:180px"><span>Passphrase</span>
+            <input type="password" id="m-admin-cert-pass" placeholder="(usually 'atakatak')" autocomplete="off"/>
+          </label>
+        </div>
+        <button class="btn btn-red" id="m-remove-admin-cert-btn" style="display:none;margin-bottom:4px" onclick="removeAdminCertFromModal()">Remove Admin Cert</button>
       </div>
 
       <div class="modal-actions">
         <button class="btn btn-green" onclick="saveProfile()">Save Profile</button>
         <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-red" id="m-remove-cert-btn" style="display:none" onclick="removeCertFromModal()">Remove Cert</button>
       </div>
       <div class="tak-status" id="modal-status"></div>
     </div>
@@ -260,10 +278,13 @@
 let _me = null;
 
 // ── Modal state ───────────────────────────────────────────────────────────────
-let _editingId    = null;   // null = creating new
-let _modalCertB64 = null;   // newly picked cert bytes
-let _modalHasCert = false;  // cert already stored on server
-let _modalClearCert = false;
+let _editingId         = null;
+let _modalCertB64      = null;
+let _modalHasCert      = false;
+let _modalClearCert    = false;
+let _modalAdminCertB64 = null;
+let _modalHasAdminCert = false;
+let _modalClearAdmin   = false;
 
 async function init() {
   const r = await fetch('/auth/me');
@@ -356,7 +377,12 @@ async function loadProfiles() {
         ${p.is_active ? '<span class="badge-active">ACTIVE</span>' : ''}
       </div>
       <div class="profile-meta">${esc(p.host || '(no host)')} &nbsp;·&nbsp; CoT: ${p.port}${p.ssl ? ' SSL' : ''} &nbsp;·&nbsp; API: ${p.marti_port}</div>
-      <div class="profile-meta">${p.has_cert ? '🔐 Certificate loaded' : '<span style="color:var(--warn)">⚠ No certificate</span>'} &nbsp;·&nbsp; ${esc(p.callsign || 'WMD PLOTTER')}</div>
+      <div class="profile-meta">
+        ${p.has_cert ? '🔐 Device cert' : '<span style="color:var(--warn)">⚠ No device cert</span>'}
+        &nbsp;·&nbsp;
+        ${p.has_admin_cert ? '🔑 Admin cert' : '<span style="color:var(--warn)">⚠ No admin cert</span>'}
+        &nbsp;·&nbsp; ${esc(p.callsign || 'WMD PLOTTER')}
+      </div>
       <div class="profile-actions">
         ${!p.is_active ? `<button class="btn btn-green btn-sm" onclick="activateProfile(${p.id})">Set Active</button>` : ''}
         <button class="btn btn-outline btn-sm" onclick="testProfile(${p.id})">Test</button>
@@ -369,22 +395,28 @@ async function loadProfiles() {
 }
 
 function openModal(p = null) {
-  _editingId     = p ? p.id : null;
-  _modalCertB64  = null;
-  _modalHasCert  = p ? !!p.has_cert : false;
-  _modalClearCert = false;
+  _editingId         = p ? p.id : null;
+  _modalCertB64      = null;
+  _modalHasCert      = p ? !!p.has_cert : false;
+  _modalClearCert    = false;
+  _modalAdminCertB64 = null;
+  _modalHasAdminCert = p ? !!p.has_admin_cert : false;
+  _modalClearAdmin   = false;
 
   document.getElementById('modal-title').textContent = p ? 'Edit Profile' : 'Add TAK Profile';
-  document.getElementById('m-name').value       = p ? p.name       : '';
-  document.getElementById('m-host').value       = p ? p.host       : '';
-  document.getElementById('m-port').value       = p ? p.port       : '8089';
-  document.getElementById('m-marti-port').value = p ? p.marti_port : '8443';
-  document.getElementById('m-callsign').value   = p ? p.callsign   : 'WMD PLOTTER';
-  document.getElementById('m-ssl').checked      = p ? !!p.ssl      : true;
-  document.getElementById('m-cert-file').value  = '';
-  document.getElementById('m-cert-pass').value  = '';
+  document.getElementById('m-name').value            = p ? p.name       : '';
+  document.getElementById('m-host').value            = p ? p.host       : '';
+  document.getElementById('m-port').value            = p ? p.port       : '8089';
+  document.getElementById('m-marti-port').value      = p ? p.marti_port : '8443';
+  document.getElementById('m-callsign').value        = p ? p.callsign   : 'WMD PLOTTER';
+  document.getElementById('m-ssl').checked           = p ? !!p.ssl      : true;
+  document.getElementById('m-cert-file').value       = '';
+  document.getElementById('m-cert-pass').value       = '';
+  document.getElementById('m-admin-cert-file').value = '';
+  document.getElementById('m-admin-cert-pass').value = '';
   document.getElementById('modal-status').textContent = '';
   renderModalCertBadge();
+  renderModalAdminCertBadge();
   document.getElementById('profile-modal').classList.add('open');
 }
 
@@ -394,10 +426,18 @@ function closeModal(e) {
 }
 
 function renderModalCertBadge() {
-  const badge = document.getElementById('m-cert-badge');
+  const badge     = document.getElementById('m-cert-badge');
   const removeBtn = document.getElementById('m-remove-cert-btn');
-  const hasCert = (_modalHasCert || _modalCertB64) && !_modalClearCert;
-  badge.innerHTML = hasCert ? '<div class="cert-badge">🔐 Certificate loaded</div>' : '';
+  const hasCert   = (_modalHasCert || _modalCertB64) && !_modalClearCert;
+  badge.innerHTML = hasCert ? '<div class="cert-badge">🔐 Device cert loaded</div>' : '';
+  removeBtn.style.display = hasCert ? '' : 'none';
+}
+
+function renderModalAdminCertBadge() {
+  const badge     = document.getElementById('m-admin-cert-badge');
+  const removeBtn = document.getElementById('m-remove-admin-cert-btn');
+  const hasCert   = (_modalHasAdminCert || _modalAdminCertB64) && !_modalClearAdmin;
+  badge.innerHTML = hasCert ? '<div class="cert-badge">🔐 Admin cert loaded</div>' : '';
   removeBtn.style.display = hasCert ? '' : 'none';
 }
 
@@ -406,9 +446,21 @@ function onModalCertFile(input) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
-    _modalCertB64  = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
+    _modalCertB64   = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
     _modalClearCert = false;
     renderModalCertBadge();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function onModalAdminCertFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    _modalAdminCertB64 = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
+    _modalClearAdmin   = false;
+    renderModalAdminCertBadge();
   };
   reader.readAsArrayBuffer(file);
 }
@@ -418,6 +470,13 @@ function removeCertFromModal() {
   _modalClearCert = true;
   document.getElementById('m-cert-file').value = '';
   renderModalCertBadge();
+}
+
+function removeAdminCertFromModal() {
+  _modalAdminCertB64 = null;
+  _modalClearAdmin   = true;
+  document.getElementById('m-admin-cert-file').value = '';
+  renderModalAdminCertBadge();
 }
 
 async function saveProfile() {
@@ -434,6 +493,11 @@ async function saveProfile() {
     body.cert_pass    = document.getElementById('m-cert-pass').value;
   }
   if (_modalClearCert) body.clear_cert = true;
+  if (_modalAdminCertB64) {
+    body.admin_cert_p12_b64 = _modalAdminCertB64;
+    body.admin_cert_pass    = document.getElementById('m-admin-cert-pass').value;
+  }
+  if (_modalClearAdmin) body.clear_admin_cert = true;
 
   const url    = _editingId ? `/api/admin/tak-profiles/${_editingId}` : '/api/admin/tak-profiles';
   const method = _editingId ? 'PUT' : 'POST';

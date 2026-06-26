@@ -57,7 +57,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  get_user_by_id, update_last_login, list_users, delete_user, update_password, \
                  get_setting, set_setting, \
                  list_tak_profiles, get_tak_profile, get_active_tak_profile, \
-                 upsert_tak_profile, set_tak_profile_cert, set_active_tak_profile, delete_tak_profile
+                 upsert_tak_profile, set_tak_profile_cert, set_tak_profile_admin_cert, set_active_tak_profile, delete_tak_profile
 from tak_push import push_cot, push_test_point
 from tak_marti import push_via_marti, push_cot_http
 from auth import (
@@ -1289,12 +1289,14 @@ async def get_cot_xml():
 
 def _profile_to_config(p: dict) -> dict:
     return {
-        "host":       p.get("host") or "",
-        "port":       str(p.get("port") or 8089),
-        "marti_port": str(p.get("marti_port") or 8443),
-        "ssl":        bool(p.get("ssl")),
-        "cert_p12":   p.get("cert_p12"),
-        "cert_pass":  p.get("cert_pass") or "",
+        "host":            p.get("host") or "",
+        "port":            str(p.get("port") or 8089),
+        "marti_port":      str(p.get("marti_port") or 8443),
+        "ssl":             bool(p.get("ssl")),
+        "cert_p12":        p.get("cert_p12"),
+        "cert_pass":       p.get("cert_pass") or "",
+        "admin_cert_p12":  p.get("admin_cert_p12"),
+        "admin_cert_pass": p.get("admin_cert_pass") or "",
     }
 
 
@@ -1316,6 +1318,8 @@ async def api_create_tak_profile(request: Request, user: dict = Depends(require_
     )
     if body.get("cert_p12_b64"):
         set_tak_profile_cert(pid, body["cert_p12_b64"], body.get("cert_pass") or "")
+    if body.get("admin_cert_p12_b64"):
+        set_tak_profile_admin_cert(pid, body["admin_cert_p12_b64"], body.get("admin_cert_pass") or "")
     # Auto-activate if it's the first profile
     profiles = list_tak_profiles()
     if len(profiles) == 1:
@@ -1341,6 +1345,10 @@ async def api_update_tak_profile(profile_id: int, request: Request, user: dict =
         set_tak_profile_cert(profile_id, None, None)
     elif body.get("cert_p12_b64"):
         set_tak_profile_cert(profile_id, body["cert_p12_b64"], body.get("cert_pass") or "")
+    if body.get("clear_admin_cert"):
+        set_tak_profile_admin_cert(profile_id, None, None)
+    elif body.get("admin_cert_p12_b64"):
+        set_tak_profile_admin_cert(profile_id, body["admin_cert_p12_b64"], body.get("admin_cert_pass") or "")
     return {"status": "updated"}
 
 

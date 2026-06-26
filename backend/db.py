@@ -37,19 +37,27 @@ def init_db() -> None:
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS tak_profiles (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            name       TEXT    NOT NULL,
-            host       TEXT    NOT NULL DEFAULT '',
-            port       INTEGER NOT NULL DEFAULT 8089,
-            marti_port INTEGER NOT NULL DEFAULT 8443,
-            ssl        INTEGER NOT NULL DEFAULT 1,
-            callsign   TEXT    NOT NULL DEFAULT 'WMD PLOTTER',
-            cert_p12   TEXT,
-            cert_pass  TEXT,
-            is_active  INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT    NOT NULL,
+            host            TEXT    NOT NULL DEFAULT '',
+            port            INTEGER NOT NULL DEFAULT 8089,
+            marti_port      INTEGER NOT NULL DEFAULT 8443,
+            ssl             INTEGER NOT NULL DEFAULT 1,
+            callsign        TEXT    NOT NULL DEFAULT 'WMD PLOTTER',
+            cert_p12        TEXT,
+            cert_pass       TEXT,
+            admin_cert_p12  TEXT,
+            admin_cert_pass TEXT,
+            is_active       INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
         )
     """)
+    # Add admin cert columns to existing databases (idempotent)
+    for col, typedef in [("admin_cert_p12", "TEXT"), ("admin_cert_pass", "TEXT")]:
+        try:
+            conn.execute(f"ALTER TABLE tak_profiles ADD COLUMN {col} {typedef}")
+        except Exception:
+            pass  # column already exists
     conn.commit()
     _migrate_tak_settings(conn)
     conn.close()
@@ -112,7 +120,9 @@ def list_tak_profiles() -> list:
     conn = _connect()
     rows = conn.execute(
         "SELECT id, name, host, port, marti_port, ssl, callsign, is_active, created_at,"
-        " (cert_p12 IS NOT NULL) AS has_cert FROM tak_profiles ORDER BY id"
+        " (cert_p12 IS NOT NULL) AS has_cert,"
+        " (admin_cert_p12 IS NOT NULL) AS has_admin_cert"
+        " FROM tak_profiles ORDER BY id"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -161,6 +171,16 @@ def set_tak_profile_cert(profile_id: int, cert_p12: Optional[str], cert_pass: Op
     conn = _connect()
     conn.execute(
         "UPDATE tak_profiles SET cert_p12=?, cert_pass=? WHERE id=?",
+        (cert_p12, cert_pass, profile_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_tak_profile_admin_cert(profile_id: int, cert_p12: Optional[str], cert_pass: Optional[str]) -> None:
+    conn = _connect()
+    conn.execute(
+        "UPDATE tak_profiles SET admin_cert_p12=?, admin_cert_pass=? WHERE id=?",
         (cert_p12, cert_pass, profile_id),
     )
     conn.commit()

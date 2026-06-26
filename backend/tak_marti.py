@@ -132,12 +132,16 @@ async def push_cot_http(config: dict, overlay_state: dict) -> dict:
     if not export_state:
         return {"success": False, "sent": 0, "error": "No active overlays — run a model first"}
 
-    cert_b64  = config.get("cert_p12") or config.get("marti_cert_p12")
-    cert_pass = (config.get("cert_pass") or "") if config.get("cert_p12") else (config.get("marti_cert_pass") or "atakatak")
-
-    if not cert_b64:
+    # Prefer admin cert for Marti REST API; fall back to device cert
+    if config.get("admin_cert_p12"):
+        cert_b64  = config["admin_cert_p12"]
+        cert_pass = config.get("admin_cert_pass") or ""
+    elif config.get("cert_p12"):
+        cert_b64  = config["cert_p12"]
+        cert_pass = config.get("cert_pass") or ""
+    else:
         return {"success": False, "sent": 0,
-                "error": "No certificate configured — upload your TAK device cert in the admin panel."}
+                "error": "No certificate configured — upload your TAK device or admin cert in the admin panel."}
 
     events = _build_events(export_state)
     if not events:
@@ -209,13 +213,17 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
     tool_tag = "_".join(active)
     kmz_filename = f"WMD_PLOTTER_{tool_tag}_{ts}.kmz"
 
-    cert_b64  = config.get("cert_p12") or config.get("marti_cert_p12")
-    cert_pass = (config.get("cert_pass") or "") if config.get("cert_p12") else (config.get("marti_cert_pass") or "atakatak")
-
-    if not cert_b64:
+    # Prefer admin cert for Marti REST API; fall back to device cert
+    if config.get("admin_cert_p12"):
+        cert_b64  = config["admin_cert_p12"]
+        cert_pass = config.get("admin_cert_pass") or ""
+    elif config.get("cert_p12"):
+        cert_b64  = config["cert_p12"]
+        cert_pass = config.get("cert_pass") or ""
+    else:
         return {
             "success": False, "url": None,
-            "error": "No certificate configured — upload your TAK device cert in the admin panel.",
+            "error": "No certificate configured — upload your TAK device or admin cert in the admin panel.",
         }
 
     ctx, temps = _make_ssl_ctx(cert_b64, cert_pass)
