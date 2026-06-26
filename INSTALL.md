@@ -228,6 +228,11 @@ Add the following (replace values with your own keys):
 # FIRMS active fire data (NASA EOSDIS)
 # Free key — get one at: https://firms.modaps.eosdis.nasa.gov/api/area/
 FIRMS_MAP_KEY=your_firms_key_here
+
+# Public URL of this server — required for TAK data package push.
+# ATAK devices download the KMZ from this URL when you push a data package.
+# Must be reachable by field devices (use your domain, not localhost).
+WMD_PUBLIC_URL=https://wmd.whitwerx.net
 ```
 
 Save the file (`Ctrl+O`, `Enter`, `Ctrl+X`), then restart the service:

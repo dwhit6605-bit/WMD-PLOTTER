@@ -1468,9 +1468,13 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
     active       = list(export_state.keys())
     kmz_filename = f"WMD_PLOTTER_{'_'.join(active)}_{ts}.kmz"
 
-    # URL ATAK will download the KMZ from (this server)
-    base_url = str(request.base_url).rstrip("/")
-    kmz_url  = f"{base_url}/kml/live.kmz"
+    # URL ATAK will download the KMZ from.
+    # WMD_PUBLIC_URL in .env overrides the auto-detected base (needed behind nginx
+    # where request.base_url may resolve to an internal address ATAK can't reach).
+    public_base = (os.environ.get("WMD_PUBLIC_URL") or "").rstrip("/")
+    if not public_base:
+        public_base = str(request.base_url).rstrip("/")
+    kmz_url = f"{public_base}/kml/live.kmz"
 
     # 2. Query connected clients from Marti (fails gracefully → broadcast)
     contacts = await get_contacts(config)
@@ -1487,9 +1491,13 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
         note = "No connected clients found via Marti — broadcast sent to All Streaming"
 
     result = push_bftr(config, bftr_events)
-    result["contacts"]   = len(contacts)
-    result["kmz_url"]    = kmz_url
-    result["note"]       = note
+    # Rename "sent" → "notified" so the frontend renders the data-package message,
+    # not the generic "Pushed N CoT events" branch.
+    result["notified"] = result.pop("sent", 0)
+    result["zones"]    = len(active)
+    result["contacts"] = len(contacts)
+    result["kmz_url"]  = kmz_url
+    result["note"]     = note
 
     status = 200 if result["success"] else 502
     return JSONResponse(result, status_code=status)
