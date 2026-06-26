@@ -36,11 +36,11 @@ _MANIFEST_TEMPLATE = """\
 """
 
 
-def build_tak_data_package(kml_bytes: bytes, active_tools: list[str]) -> tuple[bytes, str]:
+def build_tak_data_package(kml_bytes: bytes, active_tools: list[str]) -> tuple[bytes, str, str]:
     """
     Wrap KML bytes in a TAK Data Package ZIP.
 
-    Returns (zip_bytes, suggested_filename).
+    Returns (zip_bytes, suggested_filename, pkg_uid).
     """
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     tool_tag = "_".join(active_tools) if active_tools else "scenario"
@@ -61,7 +61,7 @@ def build_tak_data_package(kml_bytes: bytes, active_tools: list[str]) -> tuple[b
         zf.writestr(f"files/{kml_filename}", kml_bytes)
     buf.seek(0)
 
-    return buf.read(), f"{pkg_name}.zip"
+    return buf.read(), f"{pkg_name}.zip", pkg_uid
 
 
 # ── CoT XML ───────────────────────────────────────────────────────────────────

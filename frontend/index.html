@@ -3382,7 +3382,10 @@ async function pushToTAK() {
     const rm = await fetch(`${API}/api/tak-push-marti`, { method: 'POST' });
     const dm = await rm.json().catch(() => ({}));
     if (dm.success) {
-      toast(`✓ Data package sent to TAK server (${dm.zones || '?'} overlay${dm.zones !== 1 ? 's' : ''})`, 3500);
+      const zones = dm.zones || '?';
+      const notified = dm.notified != null ? dm.notified : '?';
+      const note = dm.note ? ` — ${dm.note}` : '';
+      toast(`✓ Data package sent · ${zones} overlay${zones !== 1 ? 's' : ''} · notified ${notified} device${notified !== 1 ? 's' : ''}${note}`, 4000);
       return;
     }
 
