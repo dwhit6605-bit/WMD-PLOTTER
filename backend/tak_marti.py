@@ -1,25 +1,27 @@
 """
-TAK Server Marti REST API — data package push.
+TAK Server Marti REST API — KMZ push.
 
-Methodology mirrors TAKPhotoSpotter (confirmed working):
-  1. Upload KML zip to /Marti/sync/missionupload with correct params
-     (filename, keyword=missionpackage, tool=public, creatorUid)
-  2. Extract content URL from response body
-  3. Compute SHA-256 of zip bytes
-  4. Fetch all connected clients from /Marti/api/contacts/all
-  5. POST a b-f-t-r file-transfer CoT to /Marti/api/cot for each client
-     — this is what actually triggers ATAK to download the package
+Flow (mirrors TAKPhotoSpotter photo upload, confirmed working):
+  1. Build KMZ (ZIP containing doc.kml)
+  2. POST to /Marti/sync/upload?name=<filename>.kmz
+     — server returns JSON with "Hash" field
+  3. Build content URL: https://{host}:8443/Marti/sync/content?hash={hash}
+  4. Fetch connected clients from /Marti/api/contacts/all
+  5. POST b-f-t-r file-transfer CoT to /Marti/api/cot for each client
+     — ATAK auto-downloads and imports the KMZ on receipt
 
 Auth: device cert (same P12 used for TCP CoT on port 8089).
-      Falls back to marti_cert_p12 (admin.p12) if device cert not set.
 """
 
 import hashlib
+import io
 import json
 import os
+import re
 import base64
 import ssl
 import tempfile
+import zipfile
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -27,13 +29,13 @@ from typing import Optional
 import httpx
 
 from kml_gen import build_combined_kml
-from tak_dp import build_tak_data_package
 
 
 def _make_ssl_ctx(cert_b64: Optional[str], cert_pass: str = "") -> tuple[ssl.SSLContext, list[str]]:
     """
-    Build an SSLContext. Returns (ctx, [temp_paths_to_cleanup]).
+    Build an SSLContext from a PEM or P12 cert.
     Forces TLS 1.2 to avoid TLS 1.3 certificate-required alert on port 8443.
+    Returns (ctx, [temp_paths_to_cleanup]).
     """
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
@@ -77,9 +79,17 @@ def _make_ssl_ctx(cert_b64: Optional[str], cert_pass: str = "") -> tuple[ssl.SSL
     return ctx, temps
 
 
+def _build_kmz(kml_bytes: bytes) -> bytes:
+    """Wrap KML bytes in a KMZ (ZIP containing doc.kml)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("doc.kml", kml_bytes)
+    buf.seek(0)
+    return buf.read()
+
+
 def _build_file_transfer_cot(
-    pkg_uid: str,
-    zip_filename: str,
+    kmz_filename: str,
     content_url: str,
     sha256: str,
     size: int,
@@ -87,6 +97,7 @@ def _build_file_transfer_cot(
 ) -> str:
     now = datetime.now(timezone.utc)
     stale = now + timedelta(hours=1)
+    pkg_uid = f"wmd-{int(now.timestamp())}"
     def fmt(dt): return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     return (
         "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n"
@@ -94,9 +105,9 @@ def _build_file_transfer_cot(
         f"time='{fmt(now)}' start='{fmt(now)}' stale='{fmt(stale)}' how='h-g-i-g-o'>\n"
         "  <point lat='0.0' lon='0.0' hae='0.0' ce='9999999.0' le='9999999.0'/>\n"
         "  <detail>\n"
-        f"    <fileshare filename='{zip_filename}' senderUrl='{content_url}' "
+        f"    <fileshare filename='{kmz_filename}' senderUrl='{content_url}' "
         f"senderUid='WMD-PLOTTER' senderCallsign='WMD PLOTTER' "
-        f"sha256='{sha256}' sizeInBytes='{size}' name='{zip_filename}'/>\n"
+        f"sha256='{sha256}' sizeInBytes='{size}' name='{kmz_filename}'/>\n"
         f"    <marti><dest uid='{contact_uid}'/></marti>\n"
         "  </detail>\n"
         "</event>"
@@ -105,16 +116,10 @@ def _build_file_transfer_cot(
 
 async def push_via_marti(config: dict, overlay_state: dict) -> dict:
     """
-    Upload a KML data package to Marti, then send a b-f-t-r file-transfer
-    notification CoT to every connected client so they auto-download it.
+    Build a KMZ from overlay state, upload to Marti, and notify all connected
+    clients with a b-f-t-r CoT so they auto-download and import it.
 
-    config keys used:
-      host            — TAK server hostname
-      marti_port      — Marti HTTPS port (default 8443)
-      cert_p12        — base64 device cert (preferred — same cert used for TCP CoT)
-      cert_pass       — device cert passphrase
-      marti_cert_p12  — base64 admin.p12 (fallback if device cert absent)
-      marti_cert_pass — admin.p12 passphrase (default: atakatak)
+    config keys: host, marti_port, cert_p12, cert_pass
     """
     host       = (config.get("host") or "").strip()
     marti_port = int(config.get("marti_port") or 8443)
@@ -126,54 +131,65 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
     if not export_state:
         return {"success": False, "url": None, "error": "No active overlays — run a model first"}
 
-    active = list(export_state.keys())
+    active    = list(export_state.keys())
     kml_bytes = build_combined_kml(export_state).encode("utf-8")
-    zip_bytes, zip_filename, pkg_uid = build_tak_data_package(kml_bytes, active)
+    kmz_bytes = _build_kmz(kml_bytes)
+    sha256    = hashlib.sha256(kmz_bytes).hexdigest()
 
-    sha256 = hashlib.sha256(zip_bytes).hexdigest()
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    tool_tag = "_".join(active)
+    kmz_filename = f"WMD_PLOTTER_{tool_tag}_{ts}.kmz"
 
-    # Prefer device cert; fall back to admin/marti cert
     cert_b64  = config.get("cert_p12") or config.get("marti_cert_p12")
     cert_pass = (config.get("cert_pass") or "") if config.get("cert_p12") else (config.get("marti_cert_pass") or "atakatak")
 
     if not cert_b64:
         return {
             "success": False, "url": None,
-            "error": (
-                "No certificate configured. Upload your TAK device cert (.p12 or .pem) "
-                "in the admin panel under 'TAK Push Certificate'."
-            ),
+            "error": "No certificate configured — upload your TAK device cert in the admin panel.",
         }
 
     ctx, temps = _make_ssl_ctx(cert_b64, cert_pass)
     try:
-        filename_enc = urllib.parse.quote(zip_filename)
-        upload_url = (
-            f"https://{host}:{marti_port}/Marti/sync/missionupload"
-            f"?filename={filename_enc}&keyword=missionpackage&tool=public&creatorUid=WMD-PLOTTER"
-        )
+        # Step 1: Upload KMZ to /Marti/sync/upload (same endpoint as photo upload)
+        name_enc   = urllib.parse.quote(kmz_filename)
+        upload_url = f"https://{host}:{marti_port}/Marti/sync/upload?name={name_enc}"
 
-        # Step 1: Upload the ZIP
         async with httpx.AsyncClient(verify=ctx, timeout=30.0) as client:
             resp = await client.post(
                 upload_url,
-                files={"assetfile": (zip_filename, zip_bytes, "application/x-zip-compressed")},
+                content=kmz_bytes,
+                headers={
+                    "Content-Type": "application/vnd.google-earth.kmz",
+                    "Content-Disposition": f'attachment; filename="{kmz_filename}"',
+                },
             )
 
         if resp.status_code not in (200, 201):
             return {
                 "success": False, "url": None,
-                "error": f"Marti upload HTTP {resp.status_code}: {resp.text[:300]}",
+                "error": f"KMZ upload HTTP {resp.status_code}: {resp.text[:300]}",
             }
 
-        content_url = resp.text.strip()
+        # Server returns JSON with "Hash" field — build content URL from it
+        body_text = resp.text.strip()
+        hash_match = re.search(r'"Hash"\s*:\s*"([a-fA-F0-9]+)"', body_text)
+        if hash_match:
+            server_hash = hash_match.group(1)
+            content_url = f"https://{host}:{marti_port}/Marti/sync/content?hash={server_hash}"
+        else:
+            # Some server versions return the URL directly
+            content_url = body_text if body_text.startswith("http") else \
+                f"https://{host}:{marti_port}/Marti/sync/content?hash={sha256}"
 
         # Step 2: Fetch connected clients
-        contacts_url = f"https://{host}:{marti_port}/Marti/api/contacts/all"
         contacts: list[dict] = []
         try:
             async with httpx.AsyncClient(verify=ctx, timeout=10.0) as client:
-                cr = await client.get(contacts_url, headers={"Accept": "application/json"})
+                cr = await client.get(
+                    f"https://{host}:{marti_port}/Marti/api/contacts/all",
+                    headers={"Accept": "application/json"},
+                )
             if cr.status_code == 200:
                 data = cr.json()
                 contacts = [
@@ -186,23 +202,21 @@ async def push_via_marti(config: dict, overlay_state: dict) -> dict:
 
         if not contacts:
             return {
-                "success": True, "url": content_url,
-                "error": None, "zones": len(active), "notified": 0,
-                "note": "Package uploaded but no connected clients found — they will see it next time they connect.",
+                "success": True, "url": content_url, "error": None,
+                "zones": len(active), "notified": 0,
+                "note": "KMZ uploaded but no connected clients found to notify.",
             }
 
         # Step 3: POST b-f-t-r CoT to each client via /Marti/api/cot
-        # TAK Server accepts CoT via HTTP — same cert, same port 8443
-        cot_url = f"https://{host}:{marti_port}/Marti/api/cot"
+        cot_url  = f"https://{host}:{marti_port}/Marti/api/cot"
         notified = 0
-        errors = []
+        errors   = []
         for contact in contacts:
             cot = _build_file_transfer_cot(
-                pkg_uid=pkg_uid,
-                zip_filename=zip_filename,
+                kmz_filename=kmz_filename,
                 content_url=content_url,
                 sha256=sha256,
-                size=len(zip_bytes),
+                size=len(kmz_bytes),
                 contact_uid=contact["uid"],
             )
             try:
