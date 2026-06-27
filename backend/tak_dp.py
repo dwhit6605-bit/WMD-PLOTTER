@@ -129,6 +129,40 @@ def point_cot_event(lat: float, lon: float, callsign: str = "WMD PLOTTER") -> st
 </event>"""
 
 
+_TOOL_HAZARD_LABEL = {
+    "plume":      "CHEM",
+    "radiation":  "RAD",
+    "blast":      "BLAST",
+    "bleve":      "BLEVE",
+    "erg":        "HAZMAT",
+    "dense_gas":  "DGAS",
+    "fire_smoke": "FIRE",
+}
+
+
+def incident_sa_cot_event(lat: float, lon: float, tool: str,
+                           agent_name: str = "", callsign: str = "WMD PLOTTER") -> str:
+    """SA marker (type a-h-G, red) at the incident origin for hazard SA in ATAK."""
+    hazard = _TOOL_HAZARD_LABEL.get(tool, "HAZMAT")
+    label  = f"WMD-{hazard}"
+    if agent_name:
+        label += f"/{agent_name[:14]}"
+    now   = datetime.now(timezone.utc)
+    stale = now + timedelta(hours=8)
+    uid   = f"wmd-incident-{tool}-{int(now.timestamp())}"
+    return f"""<event version="2.0" uid="{uid}" type="a-h-G" how="h-e"
+       time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}">
+  <point lat="{lat:.6f}" lon="{lon:.6f}" hae="0" ce="9999999.0" le="9999999.0"/>
+  <detail>
+    <contact callsign="{label}"/>
+    <uid Droid="{label}"/>
+    <remarks>WMD PLOTTER — {hazard} incident origin</remarks>
+    <archive/>
+    <marti><dest callsign="All Streaming"/></marti>
+  </detail>
+</event>"""
+
+
 def bftr_cot_event(filename: str, url: str, sha256: str, size_bytes: int,
                    contact_uid: Optional[str] = None) -> str:
     """

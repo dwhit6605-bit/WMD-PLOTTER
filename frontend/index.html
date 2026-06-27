@@ -855,6 +855,19 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div id="timeline-list"></div>
       </div>
 
+      <!-- OPERATIONAL ZONES -->
+      <div class="section tool-panel" id="panel-opzones" style="display:none">
+        <div class="section-hdr">🚨 Operational Zones</div>
+        <div id="opzones-status" style="font-size:11px;color:var(--muted);margin-bottom:8px">
+          Run a hazard model, then click Compute to generate ICS hot / warm / cold zones.
+        </div>
+        <div id="opzones-results"></div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn btn-ghost" style="flex:1;font-size:11px" onclick="computeOperationalZones()">⟳ Compute Zones</button>
+          <button class="btn btn-ghost" style="flex:1;font-size:11px;color:var(--muted)" onclick="clearOpZones()">✕ Clear</button>
+        </div>
+      </div>
+
       <!-- ANNOTATE -->
       <div class="section" id="section-annotate">
         <div class="section-hdr">✏️ Draw / Annotate</div>
@@ -1170,6 +1183,7 @@ const TOOLS = [
   { id:'live_data',  icon:'📡', label:'Live Data Feeds',  desc:'FIRMS · NIFC · NWS Forecast',      needsWeather:false, isModel:false },
   { id:'shelter',    icon:'🏠', label:'Shelter / Evac',    desc:'Protective action guidance',       needsWeather:false, isModel:false },
   { id:'timeline',   icon:'📅', label:'Incident Timeline', desc:'CBRN scenario log & replay',       needsWeather:false, isModel:false },
+  { id:'opzones',   icon:'🚨', label:'Operational Zones', desc:'Hot / warm / cold ICS zone planning', needsWeather:false, isModel:false },
 ];
 
 const INFRA_TYPES = {
@@ -1591,6 +1605,7 @@ function activateTool(id) {
   if (id === 'live_data')  { /* user initiates each feed manually */ }
   if (id === 'shelter')    calculateShelterEvac();
   if (id === 'timeline')   renderTimeline();
+  if (id === 'opzones')   computeOperationalZones();
   if (id === 'population') { /* user clicks estimate button */ }
   if (id === 'dense_gas')  { loadDenseGases(); }
   if (id === 'fire_smoke') { loadFireTypes(); }
@@ -2287,6 +2302,164 @@ ${popBlock}
   const win  = window.open(url, '_blank');
   if (!win) toast('Pop-up blocked — allow pop-ups for this site', 4000);
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Operational Zones — ICS Hot / Warm / Cold
+// ─────────────────────────────────────────────────────────────────────────────
+let _opZoneLayers = [];
+let _opZoneCPMarker = null;
+
+function _offsetLatLon(lat, lon, bearingDeg, distanceM) {
+  const R    = 6371000;
+  const brng = bearingDeg * Math.PI / 180;
+  const lat1 = lat * Math.PI / 180;
+  const lon1 = lon * Math.PI / 180;
+  const lat2 = Math.asin(Math.sin(lat1)*Math.cos(distanceM/R) +
+                         Math.cos(lat1)*Math.sin(distanceM/R)*Math.cos(brng));
+  const lon2 = lon1 + Math.atan2(Math.sin(brng)*Math.sin(distanceM/R)*Math.cos(lat1),
+                                  Math.cos(distanceM/R) - Math.sin(lat1)*Math.sin(lat2));
+  return [lat2*180/Math.PI, lon2*180/Math.PI];
+}
+
+function clearOpZones() {
+  _opZoneLayers.forEach(l => map.removeLayer(l));
+  _opZoneLayers = [];
+  if (_opZoneCPMarker) { map.removeLayer(_opZoneCPMarker); _opZoneCPMarker = null; }
+}
+
+function computeOperationalZones() {
+  clearOpZones();
+  const el     = document.getElementById('opzones-results');
+  const status = document.getElementById('opzones-status');
+
+  let model = null;
+  let hotFeat = null, warmFeat = null, coldFeat = null;
+  let srcLat = null, srcLon = null, windFrom = null;
+  let outerRadiusM = 500;
+
+  // Priority: plume > radiation > blast
+  if (lastPlumeData) {
+    model = 'Chemical Plume';
+    const feats = lastPlumeData.geojson.features.filter(f => f.properties.type === 'plume_contour');
+    hotFeat  = feats.find(f => f.properties.level === 'high');
+    warmFeat = feats.find(f => f.properties.level === 'medium');
+    coldFeat = feats.find(f => f.properties.level === 'low');
+    srcLat   = incidentLatLon?.lat;
+    srcLon   = incidentLatLon?.lon;
+    windFrom = lastPlumeData.model?.wind_dir_from_deg ?? wxData?.wind_dir_from_deg ?? null;
+    const outerSt = lastPlumeData.stats?.low ?? lastPlumeData.stats?.medium ?? lastPlumeData.stats?.high ?? {};
+    outerRadiusM = Math.max(500, (outerSt.max_downwind_km ?? 1) * 600);
+  } else if (lastRadData) {
+    model = 'Radiation (RDD)';
+    const feats = lastRadData.geojson.features.filter(f => f.properties.type === 'rad_contour');
+    hotFeat  = feats.find(f => f.properties.level === 'high');
+    warmFeat = feats.find(f => f.properties.level === 'medium');
+    coldFeat = feats.find(f => f.properties.level === 'low');
+    srcLat   = incidentLatLon?.lat;
+    srcLon   = incidentLatLon?.lon;
+    windFrom = lastRadData.model?.wind_dir_from_deg ?? wxData?.wind_dir_from_deg ?? null;
+    const outerSt = lastRadData.stats?.low ?? lastRadData.stats?.medium ?? lastRadData.stats?.high ?? {};
+    outerRadiusM = Math.max(500, (outerSt.max_downwind_km ?? outerSt.radius_km ?? 1) * 600);
+  } else if (lastBlastData) {
+    model = 'Blast Zones';
+    const feats = lastBlastData.geojson.features
+      .filter(f => f.properties.type === 'blast_zone')
+      .sort((a, b) => a.properties.radius_km - b.properties.radius_km);
+    hotFeat  = feats[0] ?? null;
+    warmFeat = feats.length >= 3 ? feats[Math.floor(feats.length / 2)] : feats[1] ?? null;
+    coldFeat = feats[feats.length - 1] ?? null;
+    srcLat   = blastLatLon?.lat ?? incidentLatLon?.lat;
+    srcLon   = blastLatLon?.lon ?? incidentLatLon?.lon;
+    windFrom = wxData?.wind_dir_from_deg ?? null;
+    outerRadiusM = Math.max(500, (coldFeat?.properties.radius_km ?? 1) * 1500);
+  }
+
+  if (!model || srcLat == null || srcLon == null) {
+    status.textContent = 'Run a hazard model first, then click Compute.';
+    el.innerHTML = '';
+    return;
+  }
+  status.textContent = '';
+
+  const _ZONES = [
+    { feat: hotFeat,  label: 'HOT ZONE (Exclusion)', color: '#FF3B3B', dash: null   },
+    { feat: warmFeat, label: 'WARM ZONE (Decon)',     color: '#FF8C00', dash: '6 4' },
+    { feat: coldFeat, label: 'COLD ZONE (Support)',   color: '#FFD700', dash: '8 5' },
+  ];
+
+  const summary = [];
+  for (const z of _ZONES) {
+    if (!z.feat) continue;
+    const p   = z.feat.properties;
+    const lyr = L.geoJSON(z.feat, {
+      style: { color: z.color, weight: 2.5, fillColor: z.color, fillOpacity: 0.18,
+               opacity: 0.85, dashArray: z.dash },
+    }).addTo(map);
+    lyr.bindPopup(
+      `<b style="color:${z.color}">${z.label}</b><br/>${p.label || p.full_label || ''}<br/>` +
+      (p.max_downwind_km ? `Downwind: ${fmtKm(p.max_downwind_km)}<br/>` : '') +
+      (p.radius_km       ? `Radius: ${fmtKm(p.radius_km, 3)}<br/>` : '')
+    );
+    _opZoneLayers.push(lyr);
+    summary.push({
+      label: z.label, color: z.color,
+      dist:     p.max_downwind_km ? `${fmtKm(p.max_downwind_km)} downwind`
+              : p.radius_km       ? `${fmtKm(p.radius_km, 3)} radius` : '—',
+      sublabel: p.label || p.full_label || p.level || '',
+    });
+  }
+
+  // Command Post — upwind (bearing = wind_from_deg = direction wind is coming FROM)
+  const cpBearing = windFrom ?? 0;
+  const cpDistM   = outerRadiusM + 200;
+  const [cpLat, cpLon] = _offsetLatLon(srcLat, srcLon, cpBearing, cpDistM);
+  const cpIcon = L.divIcon({
+    className: '',
+    html: `<div style="background:#1a8dff;color:#fff;font-weight:900;font-size:10px;padding:2px 6px;
+                       border-radius:4px;border:2px solid #fff;white-space:nowrap;
+                       box-shadow:0 1px 6px #0006">⭐ WMD-CP</div>`,
+    iconAnchor: [32, 10],
+  });
+  _opZoneCPMarker = L.marker([cpLat, cpLon], { icon: cpIcon }).addTo(map);
+  _opZoneCPMarker.bindPopup(
+    `<b>Command Post (CP)</b><br/>` +
+    `${(cpDistM / 1000).toFixed(2)} km upwind` +
+    (windFrom != null ? ` · bearing ${windFrom.toFixed(0)}° from incident` : '') +
+    `<br/>${cpLat.toFixed(5)}°, ${cpLon.toFixed(5)}°`
+  );
+
+  el.innerHTML = `
+    <div style="font-size:10px;color:var(--muted);margin-bottom:6px">
+      Source: ${model}${windFrom != null ? ` · Wind from ${windFrom.toFixed(0)}°` : ''}
+    </div>
+    ${summary.map(z => `
+      <div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,.06)">
+        <div class="result-row">
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px">
+            <span style="width:10px;height:10px;border-radius:2px;background:${z.color};
+                         display:inline-block;flex-shrink:0"></span>
+            <b>${z.label}</b>
+          </span>
+          <span style="font-size:11px;color:var(--fg)">${z.dist}</span>
+        </div>
+        <div style="font-size:10px;color:var(--muted);padding:1px 0 2px 15px">${z.sublabel}</div>
+      </div>
+    `).join('')}
+    <div style="padding:4px 0;margin-top:4px">
+      <div class="result-row">
+        <span style="display:flex;align-items:center;gap:5px;font-size:11px">
+          <span style="width:10px;height:10px;border-radius:2px;background:#1a8dff;
+                       display:inline-block;flex-shrink:0"></span>
+          <b>Command Post</b>
+        </span>
+        <span style="font-size:11px;color:var(--fg)">${(cpDistM / 1000).toFixed(2)} km upwind</span>
+      </div>
+      <div style="font-size:10px;color:var(--muted);padding:1px 0 0 15px">
+        ${cpLat.toFixed(5)}°, ${cpLon.toFixed(5)}°
+        ${windFrom != null ? ` · ${windFrom.toFixed(0)}° bearing` : ''}
+      </div>
+    </div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

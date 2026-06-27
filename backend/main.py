@@ -45,7 +45,7 @@ from blast import EXPLOSIVES, compute_blast_zones
 from radiation import RADIONUCLIDES, get_radionuclide, compute_radiation_contours
 from bleve import FUELS, compute_bleve_zones
 from population import estimate_population_impact
-from tak_dp import build_tak_data_package, bftr_cot_event
+from tak_dp import build_tak_data_package, bftr_cot_event, incident_sa_cot_event
 from erg import search_erg, get_erg_entry, compute_erg_zones
 from dense_gas import compute_dense_gas_zones, list_dense_gases, get_dense_gas
 from probit import compute_probit_zones
@@ -1632,9 +1632,21 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
             bftr_events = [bftr_cot_event(dp_filename, kmz_url, sha256, len(dp_bytes))]
             note = "No connected clients found via Marti — broadcast sent to All Streaming"
 
-        result = push_bftr(config, bftr_events)
+        # SA markers: one per active tool, placed at the incident origin (red/hostile marker in ATAK)
+        _AGENT_KEYS = ("chemical_name", "explosive_name", "fuel_name", "name")
+        sa_events = []
+        for tool, state in export_state.items():
+            src_lat = state.get("source_lat")
+            src_lon = state.get("source_lon")
+            if src_lat is None or src_lon is None:
+                continue
+            agent = next((state.get(k, "") for k in _AGENT_KEYS if state.get(k)), "")
+            sa_events.append(incident_sa_cot_event(src_lat, src_lon, tool, agent))
+
+        result = push_bftr(config, bftr_events + sa_events)
         result["notified"] = result.pop("sent", 0)
         result["zones"]    = len(active)
+        result["sa_markers"] = len(sa_events)
         result["contacts"] = len(contacts)
         result["kmz_url"]  = kmz_url
         result["note"]     = note
