@@ -3113,8 +3113,13 @@ function renderPopulationResults(data) {
       <span><span class="threshold-dot" style="background:${z.color};border:1px solid #fff4"></span>${z.label}</span>
       <span style="font-family:monospace;font-weight:700">~${z.pop_estimate.toLocaleString()}</span>
     </div>`).join('');
-  document.getElementById('pop-results').innerHTML = rows+`
-    <div style="margin-top:8px;font-size:10px;color:var(--muted);line-height:1.5">
+  const fallbackBanner = data.is_fallback
+    ? `<div style="margin-top:6px;padding:5px 8px;background:rgba(255,165,0,0.12);border:1px solid rgba(255,165,0,0.35);border-radius:5px;font-size:10px;color:#ffa500;line-height:1.4">
+        ⚠ ${data.fallback_reason || 'Using 100 people/km² generic estimate'}
+       </div>`
+    : '';
+  document.getElementById('pop-results').innerHTML = rows + fallbackBanner + `
+    <div style="margin-top:6px;font-size:10px;color:var(--muted);line-height:1.5">
       ${data.county_name} · pop density ${useImperial?(data.pop_density_per_km2*2.58999).toFixed(0)+'/mi²':data.pop_density_per_km2.toFixed(0)+'/km²'}<br/>
       ${data.accuracy_note}<br/>
       Source: ${data.data_source}
