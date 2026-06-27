@@ -533,7 +533,17 @@ input:checked+.slider:before{transform:translateX(16px)}
       <div class="section" id="results-section" style="display:none">
         <div class="section-hdr">📊 Plume Results</div>
         <div id="results-content"></div>
-        <button class="btn btn-ghost btn-full" style="margin-top:6px;font-size:11px" onclick="startPlumeAnimation()">🎬 Animate Plume Over Time</button>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="btn btn-ghost" style="flex:1;font-size:11px" onclick="startPlumeAnimation()">🎬 Animate</button>
+          <button class="btn btn-ghost" id="btn-forecast-plume" style="flex:1;font-size:11px" onclick="fetchForecastPlume()">🌬 Forecast</button>
+        </div>
+      </div>
+
+      <!-- PLUME FORECAST -->
+      <div class="section" id="forecast-section" style="display:none">
+        <div class="section-hdr">🌬 Wind Forecast Plumes</div>
+        <div id="forecast-status" style="font-size:11px;color:var(--muted);margin-bottom:6px"></div>
+        <div id="forecast-legend"></div>
       </div>
 
       <!-- PLUME ANIMATION -->
@@ -864,6 +874,7 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div class="export-grid">
           <button class="btn btn-ghost" id="btn-kml-dl" onclick="downloadKML()" disabled>⬇ KML File</button>
           <button class="btn btn-ghost" id="btn-kml-net" onclick="copyNetworkLink()" disabled>🔗 Network Link</button>
+          <button class="btn btn-ghost" onclick="generateSitRep()" style="grid-column:1/-1;font-size:11px;background:rgba(0,150,255,0.08);border-color:rgba(0,150,255,0.35);color:#58a6ff">📋 Generate SitRep</button>
           <button class="btn btn-ghost" onclick="printReport()" style="grid-column:1/-1;font-size:11px">🖨 Print / Save PDF</button>
           <button class="btn btn-ghost" id="btn-share-url" onclick="shareScenarioURL()" style="grid-column:1/-1;font-size:11px;border-color:rgba(0,255,136,0.3);color:var(--green)">🔗 Copy Share Link</button>
         </div>
@@ -1966,6 +1977,307 @@ function _animStop(clearLayers=true) {
 }
 
 function stopAnimation() { _animStop(); if(_animFrames) _renderAnimFrame(0); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Forecast Plume
+// ─────────────────────────────────────────────────────────────────────────────
+let forecastData = null;
+const _forecastLayers = {};  // { '1': L.LayerGroup, '2': L.LayerGroup, ... }
+
+const _FORECAST_OPACITY = { 1: 0.55, 2: 0.40, 4: 0.28, 6: 0.18 };
+const _FORECAST_DASH    = { 1: '6,4', 2: '8,5', 4: '10,6', 6: '12,8' };
+
+async function fetchForecastPlume() {
+  if (!incidentLatLon || !selectedChem) { toast('Run the plume model first', 2000); return; }
+  const btn = document.getElementById('btn-forecast-plume');
+  const sec = document.getElementById('forecast-section');
+  const status = document.getElementById('forecast-status');
+  btn.disabled = true; btn.textContent = '⟳ Fetching…';
+  sec.style.display = 'block';
+  status.textContent = '⟳ Fetching NWS hourly forecast…';
+
+  const useManual = document.getElementById('chk-manual-wx').checked;
+  const body = {
+    lat: incidentLatLon.lat, lon: incidentLatLon.lon,
+    chemical_id: selectedChem.id,
+    use_aegl: document.getElementById('chk-aegl').checked,
+    release_rate_kg_min: parseFloat(document.getElementById('sl-rate').value),
+    release_height_m:    parseFloat(document.getElementById('sl-height').value),
+    manual_weather: false,  // always use NWS forecast, not manual wx
+  };
+
+  try {
+    const r = await fetch(`${API}/api/plume/forecast`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(()=>({detail:r.statusText}));
+      throw new Error(err.detail || r.statusText);
+    }
+    forecastData = await r.json();
+    _renderForecastLayers();
+  } catch(e) {
+    status.textContent = `⚠ ${e.message}`;
+    toast(`Forecast failed: ${e.message}`, 4000);
+  } finally {
+    btn.disabled = false; btn.textContent = '🌬 Forecast';
+  }
+}
+
+function _renderForecastLayers() {
+  if (!forecastData) return;
+  // Clear existing
+  Object.values(_forecastLayers).forEach(lg => map.removeLayer(lg));
+  Object.keys(_forecastLayers).forEach(k => delete _forecastLayers[k]);
+
+  const status = document.getElementById('forecast-status');
+  const legend = document.getElementById('forecast-legend');
+
+  if (!forecastData.periods || !forecastData.periods.length) {
+    status.textContent = 'No forecast periods returned.';
+    return;
+  }
+
+  const legendItems = [];
+  forecastData.periods.forEach(period => {
+    const h = period.hour_offset;
+    const opacity = _FORECAST_OPACITY[h] || 0.25;
+    const dash = _FORECAST_DASH[h] || '8,6';
+    const layerGroup = L.layerGroup();
+
+    period.geojson.features.forEach(feat => {
+      const color = feat.properties.color || '#aaaaaa';
+      L.geoJSON(feat, {
+        style: {
+          color, weight: 2, opacity: opacity + 0.2,
+          fillColor: color, fillOpacity: opacity * 0.5,
+          dashArray: dash,
+        },
+      }).bindTooltip(
+        `+${h}h: ${feat.properties.label}<br/>${period.wind_dir_label} ${period.wind_speed_mph} mph · PG-${period.stability_class}`,
+        { sticky: true, className: 'leaflet-tooltip' }
+      ).addTo(layerGroup);
+    });
+
+    layerGroup.addTo(map);
+    _forecastLayers[h] = layerGroup;
+
+    const timeLabel = new Date(period.start_time).toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
+    legendItems.push(`
+      <label style="display:flex;align-items:center;gap:8px;font-size:11px;cursor:pointer;padding:3px 0">
+        <input type="checkbox" checked onchange="toggleForecastLayer(${h}, this.checked)"
+               style="accent-color:var(--accent2)"/>
+        <span style="border-bottom:2px dashed #aaa;width:18px;flex-shrink:0"></span>
+        <span>+${h}h · ${timeLabel} · ${period.wind_dir_label} ${period.wind_speed_mph} mph · PG-${period.stability_class}</span>
+      </label>`);
+  });
+
+  status.textContent = `${forecastData.periods.length} forecast plumes · ${forecastData.chemical}`;
+  legend.innerHTML = legendItems.join('') +
+    `<button class="btn btn-ghost" style="font-size:10px;margin-top:6px;padding:3px 8px" onclick="clearForecastLayers()">✕ Clear Forecast</button>`;
+}
+
+function toggleForecastLayer(hour, visible) {
+  const lg = _forecastLayers[hour];
+  if (!lg) return;
+  if (visible) lg.addTo(map); else map.removeLayer(lg);
+}
+
+function clearForecastLayers() {
+  Object.values(_forecastLayers).forEach(lg => map.removeLayer(lg));
+  Object.keys(_forecastLayers).forEach(k => delete _forecastLayers[k]);
+  forecastData = null;
+  document.getElementById('forecast-section').style.display = 'none';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SitRep Generator
+// ─────────────────────────────────────────────────────────────────────────────
+function generateSitRep() {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  const now = new Date();
+  const dtg = now.toLocaleString('en-US', { dateStyle:'full', timeStyle:'medium', hour12:false });
+  const slot = String.fromCharCode(65 + (_activeSlot||0));
+
+  // ── Collect active hazards ──
+  const hazards = [];
+  if (lastPlumeData && selectedChem) {
+    const m = lastPlumeData.model;
+    hazards.push({
+      icon: '☣', type: 'Chemical Plume', model: 'Gaussian P-G (Pasquill-Gifford)',
+      agent: `${selectedChem.name} (${selectedChem.formula || ''})`,
+      params: `${(m.Q_gs / 1000 * 60).toFixed(2)} kg/min · H=${m.H_m}m`,
+      zones: Object.entries(lastPlumeData.stats).map(([lvl,s]) => ({
+        color: lvl==='high'?'#f85149':lvl==='medium'?'#FF8C00':'#FFD700',
+        label: s.label,
+        downwind: s.has_contour ? `${(s.max_downwind_km*3280.84).toFixed(0)} ft (${s.max_downwind_km.toFixed(2)} km)` : '—',
+        width: s.has_contour ? `${(s.max_width_km*3280.84).toFixed(0)} ft` : '—',
+      })),
+    });
+  }
+  if (lastBlastData) {
+    const expName = explosives?.find(e=>e.id===lastBlastData.explosive_id)?.name || lastBlastData.explosive_id;
+    hazards.push({
+      icon: '💥', type: 'Blast Analysis', model: 'Brode (1955) / Hopkinson-Cranz',
+      agent: expName,
+      params: `${lastBlastData.weight_kg.toFixed(1)} kg · ${lastBlastData.W_tnt_kg} kg TNT equiv`,
+      zones: Object.values(lastBlastData.stats||{}).reverse().map(s => ({
+        color: s.color, label: s.full_label||s.label,
+        downwind: `r = ${(s.radius_km*3280.84).toFixed(0)} ft (${s.radius_km.toFixed(3)} km)`,
+        width: '—',
+      })),
+    });
+  }
+  if (lastRadData) {
+    const m = lastRadData.model;
+    const rName = radionuclides?.find(x=>x.id===m?.radionuclide_id)?.name || m?.radionuclide_id || '';
+    const ciMin = (m?.Q_ci_s||0)*60;
+    hazards.push({
+      icon: '☢', type: 'Radiological Dispersal', model: 'EPA FGR-12 cloudshine',
+      agent: rName,
+      params: `${ciMin.toFixed(4)} Ci/min · H=${m?.H_m||0}m`,
+      zones: Object.entries(lastRadData.stats||{}).filter(([,s])=>s.has_contour).map(([lvl,s])=>({
+        color: s.color, label: s.label,
+        downwind: `${(s.max_downwind_km*3280.84).toFixed(0)} ft (${s.max_downwind_km.toFixed(2)} km)`,
+        width: `${(s.max_width_km*3280.84).toFixed(0)} ft`,
+      })),
+    });
+  }
+  if (lastBleveData) {
+    const fName = fuels?.find(f=>f.id===lastBleveData.fuel_id)?.name || lastBleveData.fuel_id;
+    hazards.push({
+      icon: '🔥', type: 'BLEVE / Fireball', model: 'Roberts (1982)',
+      agent: fName,
+      params: `${lastBleveData.mass_kg?.toFixed(0)||'?'} kg`,
+      zones: (lastBleveData.zones||[]).map(z=>({
+        color: z.color||'#FF6600', label: z.label||z.level,
+        downwind: `r = ${z.radius_m?.toFixed(0)||'?'} ft`,
+        width: '—',
+      })),
+    });
+  }
+
+  // ── Weather block ──
+  const wx = wxData || {};
+  const wxBlock = wx.wind_speed_mph != null ? `
+    <tr><td>Wind Speed</td><td>${wx.wind_speed_mph} mph (${(wx.wind_speed_ms||0).toFixed(1)} m/s)</td></tr>
+    <tr><td>Wind Direction</td><td>FROM ${wx.wind_dir_label||''} (${wx.wind_dir_from_deg||0}°)</td></tr>
+    <tr><td>Stability Class</td><td>Pasquill-Gifford ${wx.stability_class||'D'} — ${wx.stability_desc||''}</td></tr>
+    <tr><td>Temperature</td><td>${wx.temp_f??'—'}°F / ${wx.temp_c??'—'}°C</td></tr>
+    <tr><td>Source</td><td>${wx.source||'Unknown'}</td></tr>` : '<tr><td colspan="2">Weather data not available</td></tr>';
+
+  // ── Population block ──
+  let popBlock = '';
+  if (_lastPopResult) {
+    const p = _lastPopResult;
+    popBlock = `
+    <h3>POPULATION EXPOSURE ESTIMATE</h3>
+    <p style="font-size:11px;color:#666;margin:0 0 6px">Source: ${p.data_source} · Density: ${p.pop_density_per_km2} /km²</p>
+    <table><tr><th>Zone</th><th>Estimated Exposure</th></tr>
+    ${p.zones.map(z=>`<tr><td><span style="display:inline-block;width:10px;height:10px;background:${z.color};border-radius:2px;margin-right:4px;vertical-align:middle"></span>${z.label}</td><td>~${z.pop_estimate.toLocaleString()} persons</td></tr>`).join('')}
+    </table>
+    ${p.is_fallback?`<p style="color:#996600;font-size:10px">⚠ ${p.fallback_reason}</p>`:''}`;
+  }
+
+  // ── Forecast block ──
+  let fcBlock = '';
+  if (forecastData?.periods?.length) {
+    const rows = forecastData.periods.map(p => {
+      const t = new Date(p.start_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+      return `<tr><td>+${p.hour_offset}h (${t})</td><td>${p.wind_dir_label} ${p.wind_speed_mph} mph</td><td>PG-${p.stability_class}</td><td>${p.short_forecast}</td></tr>`;
+    }).join('');
+    fcBlock = `
+    <h3>FORECAST WIND (NWS HOURLY)</h3>
+    <table>
+      <tr><th>Time Offset</th><th>Wind</th><th>Stability</th><th>Conditions</th></tr>
+      ${rows}
+    </table>`;
+  }
+
+  // ── Hazard zone tables ──
+  const hazardBlocks = hazards.map(h => `
+    <h3>${h.icon} ${h.type.toUpperCase()}</h3>
+    <p style="margin:2px 0 6px;font-size:11px"><b>Agent/Material:</b> ${h.agent} &nbsp;·&nbsp; <b>Release:</b> ${h.params} &nbsp;·&nbsp; <b>Model:</b> ${h.model}</p>
+    <table>
+      <tr><th>Zone</th><th>Max Downwind</th><th>Max Width</th></tr>
+      ${h.zones.map(z=>`<tr><td><span style="display:inline-block;width:10px;height:10px;background:${z.color};border-radius:2px;margin-right:4px;vertical-align:middle"></span>${z.label}</td><td>${z.downwind}</td><td>${z.width}</td></tr>`).join('')}
+    </table>`).join('');
+
+  // ── Assemble document ──
+  const coordStr = `${incidentLatLon.lat.toFixed(5)}°N, ${Math.abs(incidentLatLon.lon).toFixed(5)}°${incidentLatLon.lon<0?'W':'E'}`;
+  const mgrsNote = '(MGRS available in GIS export)';
+
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>
+<title>WMD PLOTTER — Incident SitRep</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Arial',sans-serif; font-size:12px; color:#111; background:#fff; padding:20px 28px; }
+  .page-header { border-bottom:3px solid #000; padding-bottom:10px; margin-bottom:14px; }
+  .org { font-size:9px; letter-spacing:.15em; text-transform:uppercase; color:#555; }
+  .title { font-size:20px; font-weight:900; letter-spacing:.04em; }
+  .subtitle { font-size:11px; color:#444; margin-top:2px; }
+  .meta-grid { display:grid; grid-template-columns:1fr 1fr; gap:0; border:1px solid #000; margin-bottom:14px; }
+  .meta-cell { padding:5px 8px; border-right:1px solid #ccc; border-bottom:1px solid #ccc; }
+  .meta-cell:nth-child(even) { border-right:none; }
+  .meta-label { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:#666; }
+  .meta-val { font-size:12px; font-weight:700; margin-top:1px; }
+  h3 { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; background:#222; color:#fff; padding:4px 8px; margin:14px 0 0; }
+  table { width:100%; border-collapse:collapse; font-size:11px; margin-top:0; }
+  th { background:#eee; text-align:left; padding:4px 6px; font-size:10px; text-transform:uppercase; letter-spacing:.06em; border:1px solid #ccc; }
+  td { padding:4px 6px; border:1px solid #ccc; vertical-align:middle; }
+  tr:nth-child(even) td { background:#f8f8f8; }
+  p { margin:6px 0; font-size:11px; }
+  .disclaimer { margin-top:18px; padding:8px 10px; border:2px solid #cc0000; font-size:9px; color:#cc0000; line-height:1.5; }
+  .sig-block { margin-top:14px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
+  .sig-line { border-top:1px solid #000; padding-top:4px; font-size:9px; color:#666; text-transform:uppercase; letter-spacing:.06em; margin-top:32px; }
+  @media print {
+    body { padding:12px 16px; }
+    @page { margin:1.5cm; size:letter portrait; }
+    h3 { page-break-after:avoid; }
+    table { page-break-inside:avoid; }
+  }
+</style></head><body>
+
+<div class="page-header">
+  <div class="org">WHITWERX WMD PLOTTER &nbsp;·&nbsp; Incident Situation Report</div>
+  <div class="title">HAZMAT / CBRN INCIDENT BRIEF</div>
+  <div class="subtitle">Incident ${slot} &nbsp;·&nbsp; Generated: ${dtg}</div>
+</div>
+
+<div class="meta-grid">
+  <div class="meta-cell"><div class="meta-label">Incident Location</div><div class="meta-val">${coordStr}</div></div>
+  <div class="meta-cell"><div class="meta-label">Report Date/Time</div><div class="meta-val">${dtg}</div></div>
+  <div class="meta-cell"><div class="meta-label">Active Hazards</div><div class="meta-val">${hazards.map(h=>h.type).join(', ')||'None'}</div></div>
+  <div class="meta-cell"><div class="meta-label">Current Wind</div><div class="meta-val">${wx.wind_dir_label||'—'} at ${wx.wind_speed_mph||'—'} mph · PG-${wx.stability_class||'—'}</div></div>
+</div>
+
+${hazardBlocks || '<p style="color:#666">No hazard models computed.</p>'}
+
+<h3>🌬 Meteorology</h3>
+<table><tr><th>Parameter</th><th>Value</th></tr>${wxBlock}</table>
+
+${fcBlock}
+${popBlock}
+
+<div class="disclaimer">
+  ⚠ PLANNING ESTIMATE ONLY — NOT FOR LIFE-SAFETY DECISIONS<br/>
+  All outputs are mathematical modeling estimates subject to significant uncertainty. Gaussian plume ±2–5×; blast Brode (1955); radiation EPA FGR-12; population uniform county density ±50–500%. Always follow official emergency management guidance and consult with qualified HAZMAT/CBRN specialists before taking protective action.
+</div>
+
+<div class="sig-block">
+  <div><div class="sig-line">Prepared By</div></div>
+  <div><div class="sig-line">IC / Incident Commander</div></div>
+  <div><div class="sig-line">Date / Time</div></div>
+</div>
+
+</body></html>`;
+
+  const blob = new Blob([html], {type:'text/html'});
+  const url  = URL.createObjectURL(blob);
+  const win  = window.open(url, '_blank');
+  if (!win) toast('Pop-up blocked — allow pop-ups for this site', 4000);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Print / PDF incident report
