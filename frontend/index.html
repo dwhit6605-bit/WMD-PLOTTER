@@ -2453,7 +2453,7 @@ async function executeQuickRun(type) {
       if (!nucId) { toast('Select a radionuclide', 2000); return; }
       radLatLon = { lat: incidentLatLon.lat, lon: incidentLatLon.lon };
       const body = { lat: radLatLon.lat, lon: radLatLon.lon, radionuclide_id: nucId,
-                     release_rate_ci_s: ciMin / 60, release_height_m: 0 };
+                     release_rate_ci_min: ciMin, release_height_m: 0 };
       if (wxData) { body.wind_speed_ms=wxData.wind_speed_ms; body.wind_dir_from_deg=wxData.wind_dir_from_deg; body.stability_class=wxData.stability_class; }
       const r = await fetch(`${API}/api/radiation`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
       if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
@@ -2471,9 +2471,9 @@ async function executeQuickRun(type) {
       const day  = document.getElementById('qr-tod')?.value === 'true';
       if (!un) { toast('Enter a UN number', 2000); return; }
       const windKph = wxData ? wxData.wind_speed_ms * 3.6 : 16;
-      const r = await fetch(`${API}/api/erg`, { method:'POST', headers:{'Content-Type':'application/json'},
+      const r = await fetch(`${API}/api/erg/zones`, { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ lat: incidentLatLon.lat, lon: incidentLatLon.lon, un_number: un,
-                               spill_size: spill, daytime: day, wind_kph: windKph,
+                               spill_size: spill,
                                wind_dir_from_deg: wxData?.wind_dir_from_deg ?? 270 }) });
       if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
       data = await r.json();
