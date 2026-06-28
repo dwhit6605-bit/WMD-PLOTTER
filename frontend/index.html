@@ -2388,8 +2388,8 @@ function openQuickRun(type) {
       <button class="btn btn-primary btn-full" style="font-size:12px" onclick="executeQuickRun('rad')">⚡ Run & Push to TAK</button>`;
   } else if (type === 'hazmat') {
     form.innerHTML = `
-      <div style="font-size:10px;color:var(--muted);margin-bottom:4px">UN/NA number (e.g. 1017 = Chlorine)</div>
-      <input type="text" id="qr-un" placeholder="e.g. 1017" style="width:100%;font-size:13px;margin-bottom:5px">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:4px">UN/NA number — or use GEN-GAS for unknown vapor</div>
+      <input type="text" id="qr-un" placeholder="e.g. 1017, GEN-GAS" value="GEN-GAS" style="width:100%;font-size:13px;margin-bottom:5px">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
         <select id="qr-spill" style="font-size:11px">
           <option value="small">Small spill</option>
@@ -2583,11 +2583,23 @@ async function loadEvacRoutes() {
   const S = bounds.getSouth().toFixed(5), W = bounds.getWest().toFixed(5);
   const N = bounds.getNorth().toFixed(5), E = bounds.getEast().toFixed(5);
 
-  const qry = `[out:json][timeout:20];way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified)$"](${S},${W},${N},${E});out geom;`;
+  // Tighter query: only primary/secondary/tertiary roads to reduce Overpass load
+  const qry = `[out:json][timeout:25];way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential)$"](${S},${W},${N},${E});out geom;`;
+  const _OVERPASS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://overpass.openstreetmap.fr/api/interpreter',
+  ];
 
   try {
-    const resp = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(qry)}`);
-    if (!resp.ok) throw new Error(`Overpass ${resp.status}`);
+    let resp = null;
+    for (const ep of _OVERPASS) {
+      try {
+        resp = await fetch(`${ep}?data=${encodeURIComponent(qry)}`, { signal: AbortSignal.timeout(22000) });
+        if (resp.ok) break;
+      } catch { resp = null; }
+    }
+    if (!resp?.ok) throw new Error('All Overpass endpoints failed — try again in a moment');
     const d = await resp.json();
 
     const _STYLE = {
