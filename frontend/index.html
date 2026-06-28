@@ -450,6 +450,17 @@ input:checked+.slider:before{transform:translateX(16px)}
           <span class="step-badge" id="step3-badge">3</span>
           Select Hazard Model
         </div>
+        <!-- QUICK RUN STRIP -->
+        <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);margin-bottom:6px">⚡ QUICK RUN — defaults + auto-push</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px">
+            <button class="btn btn-ghost" style="font-size:18px;padding:8px 4px;flex-direction:column;display:flex;align-items:center;justify-content:center;gap:2px" onclick="openQuickRun('chem')">☣<div style="font-size:9px;color:var(--muted);font-weight:600">CHEM</div></button>
+            <button class="btn btn-ghost" style="font-size:18px;padding:8px 4px;flex-direction:column;display:flex;align-items:center;justify-content:center;gap:2px" onclick="openQuickRun('blast')">💥<div style="font-size:9px;color:var(--muted);font-weight:600">BLAST</div></button>
+            <button class="btn btn-ghost" style="font-size:18px;padding:8px 4px;flex-direction:column;display:flex;align-items:center;justify-content:center;gap:2px" onclick="openQuickRun('rad')">☢<div style="font-size:9px;color:var(--muted);font-weight:600">RAD</div></button>
+            <button class="btn btn-ghost" style="font-size:18px;padding:8px 4px;flex-direction:column;display:flex;align-items:center;justify-content:center;gap:2px" onclick="openQuickRun('hazmat')">🧪<div style="font-size:9px;color:var(--muted);font-weight:600">ERG</div></button>
+          </div>
+          <div id="quick-run-form" style="display:none;margin-top:8px"></div>
+        </div>
         <div class="tool-picker-grid" id="tool-picker-grid"></div>
       </div>
 
@@ -546,6 +557,7 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn btn-ghost" style="flex:1;font-size:11px" onclick="startPlumeAnimation()">🎬 Animate</button>
           <button class="btn btn-ghost" id="btn-forecast-plume" style="flex:1;font-size:11px" onclick="fetchForecastPlume()">🌬 Forecast</button>
+          <button class="btn btn-ghost" style="flex:1;font-size:11px" onclick="activateTool('evac_routes')">🛣 Evac</button>
         </div>
       </div>
 
@@ -624,6 +636,7 @@ input:checked+.slider:before{transform:translateX(16px)}
       <div class="section" id="blast-results-section" style="display:none">
         <div class="section-hdr">📊 Blast Results</div>
         <div id="blast-results-content"></div>
+        <button class="btn btn-ghost btn-full" style="font-size:11px;margin-top:6px" onclick="activateTool('evac_routes')">🛣 Evac Routes</button>
       </div>
 
       <!-- BLEVE -->
@@ -865,6 +878,26 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div style="display:flex;gap:6px;margin-top:8px">
           <button class="btn btn-ghost" style="flex:1;font-size:11px" onclick="computeOperationalZones()">⟳ Compute Zones</button>
           <button class="btn btn-ghost" style="flex:1;font-size:11px;color:var(--muted)" onclick="clearOpZones()">✕ Clear</button>
+        </div>
+      </div>
+
+      <!-- EVAC ROUTES -->
+      <div class="section tool-panel" id="panel-evac_routes" style="display:none">
+        <div class="section-hdr">🛣 Evac Routes</div>
+        <div id="evac-status" style="font-size:11px;color:var(--muted);margin-bottom:8px">
+          Classifies roads near the hazard zone as blocked / restricted / egress / clear.
+        </div>
+        <div id="evac-legend" style="display:none">
+          <div style="display:flex;flex-direction:column;gap:3px;font-size:11px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:28px;height:4px;background:#FF3B3B;display:inline-block;border-radius:2px"></span> Blocked (hot zone)</div>
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:28px;height:4px;background:#FF8C00;display:inline-block;border-radius:2px"></span> Restricted (warm zone)</div>
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:28px;height:4px;background:#FFD700;display:inline-block;border-radius:2px"></span> Monitored (cold zone)</div>
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:28px;height:4px;background:#00FF88;border:1px dashed #00FF88;display:inline-block;border-radius:2px"></span> Egress route</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost" style="flex:1;font-size:11px" onclick="loadEvacRoutes()">⟳ Load Roads</button>
+          <button class="btn btn-ghost" style="flex:1;font-size:11px;color:var(--muted)" onclick="clearEvacRoutes()">✕ Clear</button>
         </div>
       </div>
 
@@ -1183,7 +1216,8 @@ const TOOLS = [
   { id:'live_data',  icon:'📡', label:'Live Data Feeds',  desc:'FIRMS · NIFC · NWS Forecast',      needsWeather:false, isModel:false },
   { id:'shelter',    icon:'🏠', label:'Shelter / Evac',    desc:'Protective action guidance',       needsWeather:false, isModel:false },
   { id:'timeline',   icon:'📅', label:'Incident Timeline', desc:'CBRN scenario log & replay',       needsWeather:false, isModel:false },
-  { id:'opzones',   icon:'🚨', label:'Operational Zones', desc:'Hot / warm / cold ICS zone planning', needsWeather:false, isModel:false },
+  { id:'opzones',     icon:'🚨', label:'Operational Zones', desc:'Hot / warm / cold ICS zone planning', needsWeather:false, isModel:false },
+  { id:'evac_routes', icon:'🛣', label:'Evac Routes',       desc:'Road network hazard classification', needsWeather:false, isModel:false },
 ];
 
 const INFRA_TYPES = {
@@ -1605,7 +1639,8 @@ function activateTool(id) {
   if (id === 'live_data')  { /* user initiates each feed manually */ }
   if (id === 'shelter')    calculateShelterEvac();
   if (id === 'timeline')   renderTimeline();
-  if (id === 'opzones')   computeOperationalZones();
+  if (id === 'opzones')     computeOperationalZones();
+  if (id === 'evac_routes') loadEvacRoutes();
   if (id === 'population') { /* user clicks estimate button */ }
   if (id === 'dense_gas')  { loadDenseGases(); }
   if (id === 'fire_smoke') { loadFireTypes(); }
@@ -2302,6 +2337,310 @@ ${popBlock}
   const win  = window.open(url, '_blank');
   if (!win) toast('Pop-up blocked — allow pop-ups for this site', 4000);
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Quick Run — defaults + auto-push to TAK
+// ─────────────────────────────────────────────────────────────────────────────
+const _QR_COMMON_CHEMS = ['Chlorine','Ammonia','Hydrogen Cyanide','Phosgene','Sulfur Dioxide','Hydrogen Fluoride','Sarin','VX'];
+const _QR_COMMON_RAD   = ['Cs-137','Co-60','Sr-90','I-131','Am-241','Pu-239'];
+const _QR_DEFAULTS = {
+  chem:   { rate: 500, height: 0 },
+  blast:  { weight: 5 },
+  rad:    { rate_ci_min: 1, height: 0 },
+  hazmat: { spill: 'large', daytime: true },
+};
+
+function openQuickRun(type) {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  const form = document.getElementById('quick-run-form');
+
+  if (type === 'chem') {
+    const opts = _QR_COMMON_CHEMS
+      .map(n => chemicals.find(c => c.name.toLowerCase().includes(n.toLowerCase())))
+      .filter(Boolean)
+      .map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    form.innerHTML = `
+      <select id="qr-chem" style="width:100%;font-size:11px;margin-bottom:5px">${opts || '<option>Loading…</option>'}</select>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
+        <div><div style="font-size:9px;color:var(--muted)">Rate (g/s)</div>
+          <input type="number" id="qr-rate" value="500" min="1" style="font-size:13px;width:100%"></div>
+        <div><div style="font-size:9px;color:var(--muted)">Height (m)</div>
+          <input type="number" id="qr-h" value="0" min="0" max="200" style="font-size:13px;width:100%"></div>
+      </div>
+      <button class="btn btn-primary btn-full" style="font-size:12px" onclick="executeQuickRun('chem')">⚡ Run & Push to TAK</button>`;
+  } else if (type === 'blast') {
+    const opts = (explosives||[]).map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+    form.innerHTML = `
+      <select id="qr-exp" style="width:100%;font-size:11px;margin-bottom:5px">${opts || '<option>Loading…</option>'}</select>
+      <div style="margin-bottom:6px"><div style="font-size:9px;color:var(--muted)">Weight (kg)</div>
+        <input type="number" id="qr-weight" value="5" min="0.1" step="0.1" style="font-size:13px;width:100%"></div>
+      <button class="btn btn-primary btn-full" style="font-size:12px" onclick="executeQuickRun('blast')">⚡ Run & Push to TAK</button>`;
+  } else if (type === 'rad') {
+    const opts = _QR_COMMON_RAD
+      .map(n => radionuclides.find(r => r.name.includes(n) || r.symbol.includes(n)))
+      .filter(Boolean)
+      .map(r => `<option value="${r.id}">${r.name} (${r.symbol})</option>`).join('');
+    form.innerHTML = `
+      <select id="qr-nuc" style="width:100%;font-size:11px;margin-bottom:5px">${opts || '<option>Loading…</option>'}</select>
+      <div style="margin-bottom:6px"><div style="font-size:9px;color:var(--muted)">Release rate (Ci/min)</div>
+        <input type="number" id="qr-ci" value="1" min="0.001" step="0.1" style="font-size:13px;width:100%"></div>
+      <button class="btn btn-primary btn-full" style="font-size:12px" onclick="executeQuickRun('rad')">⚡ Run & Push to TAK</button>`;
+  } else if (type === 'hazmat') {
+    form.innerHTML = `
+      <div style="font-size:10px;color:var(--muted);margin-bottom:4px">UN/NA number (e.g. 1017 = Chlorine)</div>
+      <input type="text" id="qr-un" placeholder="e.g. 1017" style="width:100%;font-size:13px;margin-bottom:5px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:6px">
+        <select id="qr-spill" style="font-size:11px">
+          <option value="small">Small spill</option>
+          <option value="large" selected>Large spill</option>
+        </select>
+        <select id="qr-tod" style="font-size:11px">
+          <option value="true">Daytime</option>
+          <option value="false">Night</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-full" style="font-size:12px" onclick="executeQuickRun('hazmat')">⚡ Run & Push to TAK</button>`;
+  }
+
+  form.style.display = 'block';
+}
+
+async function executeQuickRun(type) {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  const btn = document.querySelector('#quick-run-form .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Running…'; }
+
+  try {
+    let data = null;
+
+    if (type === 'chem') {
+      const chemId = document.getElementById('qr-chem')?.value;
+      const rate   = parseFloat(document.getElementById('qr-rate')?.value || 500);
+      const h      = parseFloat(document.getElementById('qr-h')?.value   || 0);
+      if (!chemId) { toast('Select a chemical', 2000); return; }
+      const body = { lat: incidentLatLon.lat, lon: incidentLatLon.lon,
+                     chemical_id: chemId, release_rate_gs: rate, release_height_m: h };
+      if (wxData) { body.wind_speed_ms=wxData.wind_speed_ms; body.wind_dir_from_deg=wxData.wind_dir_from_deg; body.stability_class=wxData.stability_class; }
+      const r = await fetch(`${API}/api/plume`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+      if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+      data = await r.json();
+      lastPlumeData = data;
+      if (data.weather && !wxData) { wxData = data.weather; renderWeather(); }
+      renderPlumeOnMap(data); renderResults(data); enableExport('plume');
+      _activeOverlays.plume = true;
+      const chem = chemicals.find(c => c.id === chemId);
+      addTimelineEntry('plume', `⚡☣ QR: ${chem?.name||chemId} ${rate}g/s`, data, incidentLatLon.lat, incidentLatLon.lon);
+
+    } else if (type === 'blast') {
+      const expId  = document.getElementById('qr-exp')?.value;
+      const weight = parseFloat(document.getElementById('qr-weight')?.value || 5);
+      if (!expId) { toast('Select an explosive', 2000); return; }
+      blastLatLon = { lat: incidentLatLon.lat, lon: incidentLatLon.lon };
+      const r = await fetch(`${API}/api/blast`, { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ lat: blastLatLon.lat, lon: blastLatLon.lon, explosive_id: expId, weight_kg: weight }) });
+      if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+      data = await r.json();
+      lastBlastData = data;
+      renderBlastOnMap(data); renderBlastResults(data); enableExport('blast');
+      _activeOverlays.blast = true;
+      const exp = explosives.find(e => e.id === expId);
+      addTimelineEntry('blast', `⚡💥 QR: ${exp?.name||expId} ${weight}kg`, data, blastLatLon.lat, blastLatLon.lon);
+
+    } else if (type === 'rad') {
+      const nucId  = document.getElementById('qr-nuc')?.value;
+      const ciMin  = parseFloat(document.getElementById('qr-ci')?.value || 1);
+      if (!nucId) { toast('Select a radionuclide', 2000); return; }
+      radLatLon = { lat: incidentLatLon.lat, lon: incidentLatLon.lon };
+      const body = { lat: radLatLon.lat, lon: radLatLon.lon, radionuclide_id: nucId,
+                     release_rate_ci_s: ciMin / 60, release_height_m: 0 };
+      if (wxData) { body.wind_speed_ms=wxData.wind_speed_ms; body.wind_dir_from_deg=wxData.wind_dir_from_deg; body.stability_class=wxData.stability_class; }
+      const r = await fetch(`${API}/api/radiation`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+      if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+      data = await r.json();
+      lastRadData = data;
+      if (data.weather && !wxData) { wxData = data.weather; renderWeather(); }
+      renderRadiationOnMap(data); renderRadiationResults(data); enableExport('radiation');
+      _activeOverlays.radiation = true;
+      const nuc = radionuclides.find(x => x.id === nucId);
+      addTimelineEntry('radiation', `⚡☢ QR: ${nuc?.symbol||nucId} ${ciMin} Ci/min`, data, radLatLon.lat, radLatLon.lon);
+
+    } else if (type === 'hazmat') {
+      const un   = (document.getElementById('qr-un')?.value || '').trim();
+      const spill = document.getElementById('qr-spill')?.value || 'large';
+      const day  = document.getElementById('qr-tod')?.value === 'true';
+      if (!un) { toast('Enter a UN number', 2000); return; }
+      const windKph = wxData ? wxData.wind_speed_ms * 3.6 : 16;
+      const r = await fetch(`${API}/api/erg`, { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ lat: incidentLatLon.lat, lon: incidentLatLon.lon, un_number: un,
+                               spill_size: spill, daytime: day, wind_kph: windKph,
+                               wind_dir_from_deg: wxData?.wind_dir_from_deg ?? 270 }) });
+      if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+      data = await r.json();
+      _currentERGEntry = data; lastERGData = data;
+      renderERGOnMap(data); renderERGStats(); enableExport('erg');
+      _activeOverlays.erg = true;
+      addTimelineEntry('erg', `⚡🧪 QR: UN${un} ${spill}`, data, incidentLatLon.lat, incidentLatLon.lon);
+    }
+
+    document.getElementById('section-add-overlay').style.display = 'block';
+    document.getElementById('step3-badge').classList.add('done');
+    toast('✓ Computed — pushing to TAK…', 1500);
+
+    // Auto-push to TAK
+    try {
+      const pr = await fetch(`${API}/api/tak-push-marti`, { method:'POST' });
+      const pd = await pr.json();
+      if (pd.success) toast(`✓ Pushed to ${pd.notified ?? pd.contacts ?? 'all'} clients`, 2500);
+      else toast(`⚠ TAK push: ${pd.error || 'check config'}`, 3000);
+    } catch { toast('⚠ TAK push failed — check config', 3000); }
+
+    document.getElementById('quick-run-form').style.display = 'none';
+
+  } catch(e) {
+    toast(`Quick Run error: ${e.message}`, 5000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ Run & Push to TAK'; }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Evac Routes — Overpass road classification
+// ─────────────────────────────────────────────────────────────────────────────
+let _evacLayers = [];
+let _evacBusy   = false;
+
+function clearEvacRoutes() {
+  _evacLayers.forEach(l => map.removeLayer(l));
+  _evacLayers = [];
+  document.getElementById('evac-status').textContent = 'Classifies roads near the hazard zone as blocked / restricted / egress / clear.';
+  document.getElementById('evac-legend').style.display = 'none';
+}
+
+function _ptInRing(lon, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi))
+      inside = !inside;
+  }
+  return inside;
+}
+
+function _getHazardPolys() {
+  if (lastPlumeData) {
+    const f = lastPlumeData.geojson.features.filter(x => x.properties.type === 'plume_contour');
+    return {
+      hot:  f.find(x => x.properties.level === 'high'),
+      warm: f.find(x => x.properties.level === 'medium'),
+      cold: f.find(x => x.properties.level === 'low'),
+    };
+  }
+  if (lastRadData) {
+    const f = lastRadData.geojson.features.filter(x => x.properties.type === 'rad_contour');
+    return {
+      hot:  f.find(x => x.properties.level === 'high'),
+      warm: f.find(x => x.properties.level === 'medium'),
+      cold: f.find(x => x.properties.level === 'low'),
+    };
+  }
+  if (lastBlastData) {
+    const f = lastBlastData.geojson.features
+      .filter(x => x.properties.type === 'blast_zone')
+      .sort((a, b) => a.properties.radius_km - b.properties.radius_km);
+    return { hot: f[0], warm: f[1] ?? null, cold: f[f.length - 1] };
+  }
+  return null;
+}
+
+function _roadLevel(nodes, polys) {
+  const step = Math.max(1, Math.floor(nodes.length / 6));
+  const pts  = nodes.filter((_, i) => i % step === 0);
+  let level  = 'clear';
+  for (const p of pts) {
+    const lo = p.lon, la = p.lat;
+    if (polys.hot?.geometry  && _ptInRing(lo, la, polys.hot.geometry.coordinates[0]))  { return 'hot'; }
+    if (polys.warm?.geometry && _ptInRing(lo, la, polys.warm.geometry.coordinates[0])) { level = 'warm'; continue; }
+    if (level !== 'warm' && polys.cold?.geometry && _ptInRing(lo, la, polys.cold.geometry.coordinates[0])) level = 'cold';
+  }
+  return level;
+}
+
+async function loadEvacRoutes() {
+  if (_evacBusy) return;
+  const polys = _getHazardPolys();
+  if (!polys) { toast('Run a hazard model first', 2500); return; }
+
+  _evacBusy = true;
+  clearEvacRoutes();
+  document.getElementById('evac-status').textContent = '⟳ Loading road network…';
+
+  // Build bbox from hazard zone bounds + 40% padding
+  const outerFeat = polys.cold ?? polys.warm ?? polys.hot;
+  if (!outerFeat) { document.getElementById('evac-status').textContent = 'No zone data.'; _evacBusy = false; return; }
+  const bounds = L.geoJSON(outerFeat).getBounds().pad(0.4);
+  const S = bounds.getSouth().toFixed(5), W = bounds.getWest().toFixed(5);
+  const N = bounds.getNorth().toFixed(5), E = bounds.getEast().toFixed(5);
+
+  const qry = `[out:json][timeout:20];way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified)$"](${S},${W},${N},${E});out geom;`;
+
+  try {
+    const resp = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(qry)}`);
+    if (!resp.ok) throw new Error(`Overpass ${resp.status}`);
+    const d = await resp.json();
+
+    const _STYLE = {
+      hot:   { color:'#FF3B3B', weight:4, opacity:0.92 },
+      warm:  { color:'#FF8C00', weight:3, opacity:0.85 },
+      cold:  { color:'#FFD700', weight:3, opacity:0.75 },
+      clear: { color:'#00CC55', weight:2, opacity:0.55 },
+    };
+    const MAJOR = new Set(['motorway','trunk','primary','secondary']);
+    const counts = { hot:0, warm:0, cold:0, egress:0, clear:0 };
+
+    for (const el of d.elements) {
+      if (el.type !== 'way' || !el.geometry?.length) continue;
+      const level = _roadLevel(el.geometry, polys);
+      counts[level]++;
+
+      // Egress: a clear road whose midpoint is just outside cold but crosses its boundary
+      const isMajor   = MAJOR.has(el.tags?.highway);
+      const crossCold = level === 'clear' && polys.cold?.geometry &&
+        el.geometry.some(p => _ptInRing(p.lon, p.lat, polys.cold.geometry.coordinates[0]));
+      const isEgress  = crossCold;
+
+      if (level === 'clear' && !isEgress && !isMajor) continue; // skip minor clear roads
+
+      const latlngs = el.geometry.map(p => [p.lat, p.lon]);
+      const style   = isEgress
+        ? { color:'#00FF88', weight:4, opacity:0.95, dashArray:'10 5' }
+        : _STYLE[level];
+      const lyr = L.polyline(latlngs, style).addTo(map);
+      const name = el.tags?.name || el.tags?.ref || `${el.tags?.highway||'road'} #${el.id}`;
+      if (isEgress) {
+        counts.egress++;
+        lyr.bindPopup(`<b style="color:#00FF88">✓ EGRESS ROUTE</b><br/>${name}<br/><em>Exits hazard zone — use for evacuation</em>`);
+      } else if (level !== 'clear') {
+        lyr.bindPopup(`<b style="color:${style.color}">⚠ ${level.toUpperCase()} ZONE</b><br/>${name}<br/><em>Entry not recommended</em>`);
+      } else {
+        lyr.bindPopup(`<b style="color:#00CC55">✓ CLEAR</b><br/>${name}`);
+      }
+      _evacLayers.push(lyr);
+    }
+
+    const total = d.elements.filter(e => e.type === 'way').length;
+    document.getElementById('evac-status').textContent =
+      `${total} roads · ${counts.egress} egress routes · ${counts.hot + counts.warm} blocked/restricted`;
+    document.getElementById('evac-legend').style.display = 'block';
+    toast(`🛣 ${counts.egress} egress routes found`, 3000);
+
+  } catch(e) {
+    document.getElementById('evac-status').textContent = `Error: ${e.message}`;
+    toast(`⚠ Road load failed: ${e.message}`, 4000);
+  } finally {
+    _evacBusy = false;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
