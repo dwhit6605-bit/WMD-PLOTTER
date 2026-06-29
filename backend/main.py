@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from chemicals import CHEMICALS, get_chemical, get_thresholds
 from dispersion import compute_all_contours, determine_stability_class
+from line_source import compute_line_source_contours, interpolate_path
 from weather import fetch_weather, fetch_asos_weather
 from kml_gen import build_combined_kml, build_network_link_kml
 from blast import EXPLOSIVES, compute_blast_zones
@@ -176,6 +177,22 @@ class PlumeRequest(BaseModel):
     stability_class: Optional[str] = Field(default=None, pattern="^[A-Fa-f]$")
 
     # Override weather fetch
+    manual_weather: bool = False
+
+
+class LinePlumeRequest(BaseModel):
+    start_lat: float = Field(..., ge=-90, le=90)
+    start_lon: float = Field(..., ge=-180, le=180)
+    end_lat: float = Field(..., ge=-90, le=90)
+    end_lon: float = Field(..., ge=-180, le=180)
+    chemical_id: str
+    use_aegl: bool = True
+    release_rate_gs: float = Field(default=500.0, gt=0, le=1_000_000)
+    release_height_m: float = Field(default=0.0, ge=0, le=500)
+    n_segments: int = Field(default=12, ge=2, le=50)
+    wind_speed_ms: Optional[float] = Field(default=None, ge=0)
+    wind_dir_from_deg: Optional[float] = Field(default=None, ge=0, lt=360)
+    stability_class: Optional[str] = Field(default=None, pattern="^[A-Fa-f]$")
     manual_weather: bool = False
 
 
@@ -679,6 +696,153 @@ async def compute_plume(req: PlumeRequest, request: Request):
             "network_link": f"{base_url}/kml/network.kml",
             "live_kml": f"{base_url}/kml/live.kml",
             "download": f"{base_url}/kml/download",
+        },
+    })
+
+
+@app.post("/api/plume/line")
+async def compute_line_plume(req: LinePlumeRequest, request: Request):
+    """
+    Line source Gaussian plume contours.
+    Models a moving release (truck, train, pipeline) as N equally-spaced
+    point sources each releasing Q/N g/s at a constant total rate Q_gs.
+    """
+    chem = get_chemical(req.chemical_id)
+    if not chem:
+        raise HTTPException(status_code=404, detail=f"Chemical '{req.chemical_id}' not found.")
+
+    mid_lat = (req.start_lat + req.end_lat) / 2.0
+    mid_lon = (req.start_lon + req.end_lon) / 2.0
+
+    # ── Weather at path midpoint ──────────────────────────────────────────────
+    if req.manual_weather and req.wind_speed_ms is not None and req.wind_dir_from_deg is not None:
+        wind_ms   = req.wind_speed_ms
+        wind_from = req.wind_dir_from_deg
+        stability = (req.stability_class or "D").upper()
+        wx_data = {
+            "wind_speed_ms": wind_ms,
+            "wind_speed_mph": round(wind_ms * 2.237, 1),
+            "wind_dir_from_deg": wind_from,
+            "wind_dir_label": "Manual",
+            "stability_class": stability,
+            "stability_desc": f"{stability} — Manual override",
+            "source": "Manual",
+        }
+    else:
+        try:
+            wx_data = await fetch_weather(mid_lat, mid_lon)
+        except Exception as e:
+            wx_data = {
+                "wind_speed_ms": 3.0, "wind_speed_mph": 6.7,
+                "wind_dir_from_deg": 270.0, "wind_dir_label": "W",
+                "stability_class": "D", "stability_desc": "D — Neutral (fallback)",
+                "source": "Fallback", "error": str(e),
+            }
+        wind_ms   = wx_data["wind_speed_ms"]
+        wind_from = wx_data["wind_dir_from_deg"]
+        stability = wx_data["stability_class"]
+        if req.wind_speed_ms is not None:     wind_ms   = req.wind_speed_ms
+        if req.wind_dir_from_deg is not None: wind_from = req.wind_dir_from_deg
+        if req.stability_class:               stability = req.stability_class.upper()
+
+    thresholds = get_thresholds(chem, use_aegl=req.use_aegl)
+    if not thresholds:
+        raise HTTPException(status_code=422, detail="No hazard thresholds available for this chemical.")
+
+    # ── Generate source points and compute ────────────────────────────────────
+    pts = interpolate_path(req.start_lat, req.start_lon,
+                           req.end_lat,   req.end_lon, req.n_segments)
+    contours = compute_line_source_contours(
+        src_lats     = [p[0] for p in pts],
+        src_lons     = [p[1] for p in pts],
+        Q_gs         = req.release_rate_gs,
+        u_ms         = wind_ms,
+        stability    = stability,
+        mw           = chem["mw"],
+        thresholds   = thresholds,
+        wind_from_deg= wind_from,
+        H_m          = req.release_height_m,
+    )
+
+    # ── Build GeoJSON response ────────────────────────────────────────────────
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [[req.start_lon, req.start_lat],
+                                [req.end_lon,   req.end_lat]],
+            },
+            "properties": {"type": "release_path", "n_segments": req.n_segments},
+        }
+    ]
+
+    stats = {}
+    for level, info in contours.items():
+        latlon = info.get("latlon", [])
+        if latlon:
+            coords = [[lon, lat] for lat, lon in latlon]
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [coords]},
+                "properties": {
+                    "type": "plume_contour",
+                    "level": level,
+                    "label": info["label"],
+                    "color": info["color"],
+                    "threshold_ppm": info["threshold_ppm"],
+                    "max_downwind_m":  round(info["max_downwind_m"], 1),
+                    "max_downwind_km": round(info["max_downwind_m"] / 1000, 3),
+                    "max_width_m":  round(info["max_width_m"], 1),
+                    "max_width_km": round(info["max_width_m"] / 1000, 3),
+                },
+            })
+        stats[level] = {
+            "label":          info["label"],
+            "threshold_ppm":  info["threshold_ppm"],
+            "max_downwind_km": round(info.get("max_downwind_m", 0) / 1000, 3),
+            "max_width_km":   round(info.get("max_width_m", 0) / 1000, 3),
+            "has_contour":    bool(latlon),
+        }
+
+    # ── Cache for KML / TAK export ────────────────────────────────────────────
+    global _overlay_state
+    _overlay_state["plume"] = {
+        "source_lat":      mid_lat,
+        "source_lon":      mid_lon,
+        "chemical_name":   chem["name"],
+        "contours":        contours,
+        "wind_speed_ms":   wind_ms,
+        "wind_dir_from_deg": wind_from,
+        "stability_class": stability,
+        "release_rate_gs": req.release_rate_gs,
+        "release_height_m": req.release_height_m,
+        "computed_at":     datetime.now(timezone.utc).isoformat(),
+    }
+
+    path_m = math.hypot(
+        (req.end_lat - req.start_lat) * 111_320.0,
+        (req.end_lon - req.start_lon) * 111_320.0 * math.cos(math.radians(mid_lat)),
+    )
+    base_url = str(request.base_url).rstrip("/")
+    return JSONResponse(content={
+        "geojson": {"type": "FeatureCollection", "features": features},
+        "stats":   stats,
+        "weather": wx_data,
+        "model": {
+            "type":             "Line Source Gaussian (Pasquill-Gifford)",
+            "stability_class":  stability,
+            "wind_speed_ms":    wind_ms,
+            "wind_dir_from_deg": wind_from,
+            "Q_gs":             req.release_rate_gs,
+            "H_m":              req.release_height_m,
+            "n_segments":       req.n_segments,
+            "path_km":          round(path_m / 1000, 3),
+        },
+        "kml_links": {
+            "network_link": f"{base_url}/kml/network.kml",
+            "live_kml":     f"{base_url}/kml/live.kml",
+            "download":     f"{base_url}/kml/download",
         },
     })
 

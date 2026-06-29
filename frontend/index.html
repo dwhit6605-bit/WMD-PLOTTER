@@ -549,7 +549,20 @@ input:checked+.slider:before{transform:translateX(16px)}
           <option value="railcar" data-rate="200" data-h="1">Rail car failure (200 kg/min)</option>
           <option value="weapons" data-rate="10" data-h="5">Weapons dispersal (10 kg/min)</option>
         </select>
-        <button class="btn btn-primary btn-full" id="btn-run" onclick="runPlume()" disabled style="margin-top:10px">▶ Run Plume Model</button>
+        <!-- Line Source toggle -->
+        <div class="toggle-row" style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+          <span class="toggle-label">Line Source (Moving Release)</span>
+          <label class="toggle"><input type="checkbox" id="chk-line-source" onchange="toggleLineSource()"/><span class="slider"></span></label>
+        </div>
+        <div id="line-source-controls" style="display:none;margin-top:8px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Mark start and end of release path — tanker route, rail line, aerial pass.</div>
+          <div class="row2">
+            <button class="btn btn-ghost" style="font-size:11px" id="btn-line-start" onclick="startLineStartMode()">📍 Set Start</button>
+            <button class="btn btn-ghost" style="font-size:11px" id="btn-line-end" onclick="startLineEndMode()">🏁 Set End</button>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:5px;font-family:monospace;line-height:1.6" id="line-source-coords">Start: —&nbsp;&nbsp;End: —</div>
+        </div>
+        <button class="btn btn-primary btn-full" id="btn-run" onclick="runPlumeDispatch()" disabled style="margin-top:10px">▶ Run Plume Model</button>
       </div>
       <div class="section" id="results-section" style="display:none">
         <div class="section-hdr">📊 Plume Results</div>
@@ -1072,6 +1085,7 @@ let radLatLon = null, radMarker = null;
 let bleveLatLon = null, bleveMarker = null;
 let plumeLayers = [], blastLayers = [], radLayers = [], bleveLayers = [], infraLayers = [];
 let placingMode = false, blastPlacingMode = false, radPlacingMode = false, blevePlacingMode = false;
+let lineStartPlacingMode = false, lineEndPlacingMode = false;
 let blastUnitKg = true, radUnitCi = true, bleveUnitKg = true;
 let useImperial = localStorage.getItem('wmd_units') !== 'metric';
 let _lastInfraResult = null;
@@ -1371,10 +1385,12 @@ map.on('mousemove', e => {
 
 map.on('click', e => {
   const lat = e.latlng.lat, lon = e.latlng.lng;
-  if (placingMode)      { placeIncident(lat,lon); placingMode=false; map.getContainer().style.cursor=''; }
-  else if (blastPlacingMode) { placeBlast(lat,lon); blastPlacingMode=false; map.getContainer().style.cursor=''; }
-  else if (radPlacingMode)   { placeRad(lat,lon);   radPlacingMode=false;   map.getContainer().style.cursor=''; }
-  else if (blevePlacingMode) { placeBleve(lat,lon); blevePlacingMode=false; map.getContainer().style.cursor=''; }
+  if (placingMode)           { placeIncident(lat,lon); placingMode=false;          map.getContainer().style.cursor=''; }
+  else if (blastPlacingMode)    { placeBlast(lat,lon);   blastPlacingMode=false;    map.getContainer().style.cursor=''; }
+  else if (radPlacingMode)      { placeRad(lat,lon);     radPlacingMode=false;      map.getContainer().style.cursor=''; }
+  else if (blevePlacingMode)    { placeBleve(lat,lon);   blevePlacingMode=false;    map.getContainer().style.cursor=''; }
+  else if (lineStartPlacingMode){ placeLineStart(lat,lon); lineStartPlacingMode=false; map.getContainer().style.cursor=''; }
+  else if (lineEndPlacingMode)  { placeLineEnd(lat,lon);   lineEndPlacingMode=false;   map.getContainer().style.cursor=''; }
 });
 
 setInterval(() => {
@@ -1893,6 +1909,151 @@ async function runPlume() {
 }
 
 function clearPlumeLayers() { for(const l of plumeLayers) map.removeLayer(l); plumeLayers=[]; }
+
+// ── Line Source (moving release) ──────────────────────────────────────────────
+let lineStartLL = null, lineEndLL = null, lineSourceLayers = [];
+
+function runPlumeDispatch() {
+  const lineMode = document.getElementById('chk-line-source').checked;
+  if (lineMode) { runLinePlume(); } else { runPlume(); }
+}
+
+function toggleLineSource() {
+  const on = document.getElementById('chk-line-source').checked;
+  document.getElementById('line-source-controls').style.display = on ? 'block' : 'none';
+  const btn = document.getElementById('btn-run');
+  if (on) {
+    btn.textContent = '▶ Run Line Plume';
+    lineStartLL = null; lineEndLL = null;
+    clearLineSourceLayers();
+    document.getElementById('line-source-coords').innerHTML = 'Start: —&nbsp;&nbsp;End: —';
+    _updateLineRunBtn();
+  } else {
+    btn.textContent = '▶ Run Plume Model';
+    clearLineSourceLayers();
+    lineStartLL = null; lineEndLL = null;
+    btn.disabled = !(selectedChem && incidentLatLon);
+  }
+}
+
+function startLineStartMode() {
+  lineStartPlacingMode = true;
+  map.getContainer().style.cursor = 'crosshair';
+  toast('Click the map to set the START of the release path', 2500);
+  if (isMobile()) closeMobileSidebar();
+}
+
+function startLineEndMode() {
+  lineEndPlacingMode = true;
+  map.getContainer().style.cursor = 'crosshair';
+  toast('Click the map to set the END of the release path', 2500);
+  if (isMobile()) closeMobileSidebar();
+}
+
+function placeLineStart(lat, lon) {
+  lineStartLL = { lat, lon };
+  _drawLinePath();
+  _updateLineRunBtn();
+  _updateLineCoordDisplay();
+}
+
+function placeLineEnd(lat, lon) {
+  lineEndLL = { lat, lon };
+  _drawLinePath();
+  _updateLineRunBtn();
+  _updateLineCoordDisplay();
+}
+
+function _updateLineCoordDisplay() {
+  const d = document.getElementById('line-source-coords');
+  if (!d) return;
+  const s = lineStartLL ? `${lineStartLL.lat.toFixed(4)}, ${lineStartLL.lon.toFixed(4)}` : '—';
+  const e = lineEndLL   ? `${lineEndLL.lat.toFixed(4)}, ${lineEndLL.lon.toFixed(4)}` : '—';
+  d.innerHTML = `Start: ${s}&nbsp;&nbsp;End: ${e}`;
+}
+
+function _drawLinePath() {
+  clearLineSourceLayers();
+  const dot = (ll, color, label) => L.circleMarker([ll.lat, ll.lon],
+    { radius:7, color:'#fff', fillColor:color, fillOpacity:1, weight:2 }
+  ).addTo(map).bindPopup(`<b>${label}</b>`);
+  if (lineStartLL && lineEndLL) {
+    const line = L.polyline([[lineStartLL.lat, lineStartLL.lon],[lineEndLL.lat, lineEndLL.lon]],
+      { color:'#FFA500', weight:3, dashArray:'7 5', opacity:.9 }).addTo(map);
+    lineSourceLayers = [line, dot(lineStartLL,'#FFA500','Release Start'), dot(lineEndLL,'#FF4444','Release End')];
+  } else if (lineStartLL) {
+    lineSourceLayers = [dot(lineStartLL,'#FFA500','Release Start')];
+  } else if (lineEndLL) {
+    lineSourceLayers = [dot(lineEndLL,'#FF4444','Release End')];
+  }
+}
+
+function clearLineSourceLayers() {
+  lineSourceLayers.forEach(l => map.removeLayer(l));
+  lineSourceLayers = [];
+}
+
+function _updateLineRunBtn() {
+  const btn = document.getElementById('btn-run');
+  if (!document.getElementById('chk-line-source').checked) return;
+  btn.disabled = !(selectedChem && lineStartLL && lineEndLL);
+}
+
+async function runLinePlume() {
+  if (!lineStartLL || !lineEndLL) { toast('Set start and end points first', 2500); return; }
+  if (!selectedChem) { toast('Select a chemical first', 2500); return; }
+
+  const btn = document.getElementById('btn-run');
+  btn.innerHTML = '<span class="spin">⟳</span> Computing…';
+  btn.disabled = true;
+
+  // Slider is always in kg/min; convert to g/s for the line endpoint
+  const kgMin = parseFloat(document.getElementById('sl-rate').value);
+  const Q_gs  = kgMin * 1000.0 / 60.0;
+
+  const useManual = document.getElementById('chk-manual-wx').checked;
+  const body = {
+    start_lat: lineStartLL.lat, start_lon: lineStartLL.lon,
+    end_lat:   lineEndLL.lat,   end_lon:   lineEndLL.lon,
+    chemical_id: selectedChem.id,
+    use_aegl: document.getElementById('chk-aegl').checked,
+    release_rate_gs: Q_gs,
+    release_height_m: parseFloat(document.getElementById('sl-height').value),
+    n_segments: 12,
+    manual_weather: useManual,
+  };
+  if (useManual) {
+    body.wind_speed_ms     = parseFloat(document.getElementById('inp-wind-ms').value);
+    body.wind_dir_from_deg = parseFloat(document.getElementById('inp-wind-dir').value);
+    body.stability_class   = document.getElementById('sel-stability').value;
+  }
+
+  try {
+    const r = await fetch(`${API}/api/plume/line`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    if (!r.ok) { const e = await r.json(); throw new Error(e.detail || r.statusText); }
+    const data = await r.json();
+    lastPlumeData = data;
+    if (data.weather && !useManual) { wxData = data.weather; renderWeather(); }
+    renderPlumeOnMap(data);
+    renderResults(data);
+    enableExport('plume');
+    const m = data.model;
+    const pathStr = m.path_km ? ` · ${m.path_km} km path` : '';
+    document.getElementById('sb-model').textContent =
+      `LINE · PG-${m.stability_class} · ${m.wind_speed_ms.toFixed(1)} m/s from ${m.wind_dir_from_deg.toFixed(0)}° · Q=${m.Q_gs.toFixed(1)} g/s${pathStr}`;
+    addTimelineEntry('plume', `☣ ${selectedChem.name} LINE — PG-${m.stability_class} · ${m.Q_gs.toFixed(1)} g/s`, data, lineStartLL.lat, lineStartLL.lon);
+    toast(`✓ Line plume computed — ${selectedChem.name}`, 2500);
+    if (activePanels.has('shelter')) calculateShelterEvac();
+    if (isMobile()) closeMobileSidebar();
+  } catch(e) {
+    toast(`Error: ${e.message}`, 5000);
+  } finally {
+    btn.innerHTML = '▶ Run Line Plume';
+    btn.disabled = false;
+  }
+}
 
 function renderPlumeOnMap(data) {
   clearPlumeLayers();
