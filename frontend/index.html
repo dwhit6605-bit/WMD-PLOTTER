@@ -765,6 +765,11 @@ input:checked+.slider:before{transform:translateX(16px)}
 
       <div class="section tool-panel" id="panel-infra" style="display:none">
         <div class="section-hdr">🏗 Critical Infrastructure</div>
+        <!-- Auto-overlay toggle -->
+        <div class="toggle-row" style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+          <span class="toggle-label" style="font-size:11px;color:var(--text)">Auto-overlay after model run</span>
+          <label class="toggle"><input type="checkbox" id="chk-auto-infra" onchange="_onAutoInfraChange()"/><span class="slider"></span></label>
+        </div>
         <!-- Data source toggle -->
         <div style="display:flex;gap:4px;margin-bottom:8px">
           <button id="btn-infra-osm"   class="btn btn-primary" style="flex:1;font-size:10px;padding:4px 2px" onclick="setInfraSource('osm')">📍 OpenStreetMap</button>
@@ -4311,7 +4316,26 @@ function _refreshExportUI() {
   document.getElementById('export-summary').textContent = hasAny ? `Exporting: ${active.join(' + ')}` : 'No overlays computed yet.';
 }
 
-function enableExport(tool) { _activeOverlays[tool]=true; _refreshExportUI(); showAddOverlay(); }
+function enableExport(tool) { _activeOverlays[tool]=true; _refreshExportUI(); showAddOverlay(); _maybeAutoInfra(); }
+
+let _autoInfra = localStorage.getItem('autoInfra') === 'true';
+let _autoInfraTimer = null;
+
+function _onAutoInfraChange() {
+  _autoInfra = document.getElementById('chk-auto-infra').checked;
+  localStorage.setItem('autoInfra', _autoInfra);
+}
+
+function _maybeAutoInfra() {
+  if (!_autoInfra || !incidentLatLon) return;
+  clearTimeout(_autoInfraTimer);
+  _autoInfraTimer = setTimeout(runInfraSearch, 400); // debounce rapid multi-model runs
+}
+
+function _initAutoInfra() {
+  const chk = document.getElementById('chk-auto-infra');
+  if (chk) chk.checked = _autoInfra;
+}
 function disableExport(tool) { _activeOverlays[tool]=false; _refreshExportUI(); }
 
 async function downloadKML() {
@@ -4897,6 +4921,8 @@ Promise.all([
 }).catch(() => {
   setTimeout(_applyURLParams, 1500); // fallback if a fetch fails
 });
+
+_initAutoInfra();
 </script>
 
 <script>
