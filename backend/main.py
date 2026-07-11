@@ -61,7 +61,9 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  get_setting, set_setting, \
                  list_tak_profiles, get_tak_profile, get_active_tak_profile, \
                  upsert_tak_profile, set_tak_profile_cert, set_tak_profile_truststore, set_active_tak_profile, delete_tak_profile, \
-                 save_scenario, list_scenarios, get_scenario, delete_scenario
+                 save_scenario, list_scenarios, get_scenario, delete_scenario, \
+                 create_incident, list_incidents, update_incident, \
+                 list_facilities, create_facility, update_facility, delete_facility
 from tak_push import push_cot, push_test_point, push_bftr
 from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
@@ -1941,6 +1943,84 @@ async def nifc_perimeters(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"NIFC fetch failed: {e}")
 
+
+# ── Incidents ─────────────────────────────────────────────────────────────────
+
+class IncidentCreate(BaseModel):
+    name: str = Field(default="Untitled Incident", min_length=1, max_length=120)
+    ics_number: str = Field(default="")
+    incident_type: str = Field(default="HazMat")
+
+class IncidentUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    ics_number: Optional[str] = None
+    incident_type: Optional[str] = None
+    status: Optional[str] = None
+
+@app.get("/api/incidents")
+async def get_incidents(user: dict = Depends(current_user)):
+    return list_incidents(user["id"])
+
+@app.post("/api/incidents", status_code=201)
+async def post_incident(body: IncidentCreate, user: dict = Depends(current_user)):
+    return create_incident(user["id"], body.name, body.ics_number, body.incident_type)
+
+@app.patch("/api/incidents/{incident_id}")
+async def patch_incident(incident_id: int, body: IncidentUpdate,
+                         user: dict = Depends(current_user)):
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    result = update_incident(incident_id, user["id"], **fields)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return result
+
+# ── Facilities ────────────────────────────────────────────────────────────────
+
+class FacilityCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    facility_type: str = Field(default="industrial")
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    chemical_id: Optional[str] = None
+    default_rate_kg_min: Optional[float] = Field(default=None, gt=0)
+    release_height_m: float = Field(default=0.0, ge=0, le=500)
+    notes: str = Field(default="")
+
+class FacilityUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    facility_type: Optional[str] = None
+    lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    lon: Optional[float] = Field(default=None, ge=-180, le=180)
+    chemical_id: Optional[str] = None
+    default_rate_kg_min: Optional[float] = Field(default=None, gt=0)
+    release_height_m: Optional[float] = Field(default=None, ge=0, le=500)
+    notes: Optional[str] = None
+
+@app.get("/api/facilities")
+async def get_facilities(_: dict = Depends(current_user)):
+    return list_facilities()
+
+@app.post("/api/admin/facilities", status_code=201)
+async def post_facility(body: FacilityCreate, admin: dict = Depends(require_admin)):
+    return create_facility(
+        body.name, body.facility_type, body.lat, body.lon,
+        body.chemical_id, body.default_rate_kg_min,
+        body.release_height_m, body.notes, admin["id"],
+    )
+
+@app.put("/api/admin/facilities/{facility_id}")
+async def put_facility(facility_id: int, body: FacilityUpdate,
+                       _: dict = Depends(require_admin)):
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    result = update_facility(facility_id, **fields)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Facility not found")
+    return result
+
+@app.delete("/api/admin/facilities/{facility_id}", status_code=204)
+async def del_facility(facility_id: int, _: dict = Depends(require_admin)):
+    if not delete_facility(facility_id):
+        raise HTTPException(status_code=404, detail="Facility not found")
 
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":

@@ -82,6 +82,45 @@ def init_db() -> None:
             conn.execute(f"ALTER TABLE tak_profiles ADD COLUMN {new} {typedef}")
         except Exception:
             pass  # column already exists
+    # Incidents
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS incidents (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       INTEGER NOT NULL,
+            name          TEXT    NOT NULL DEFAULT 'Untitled Incident',
+            ics_number    TEXT,
+            incident_type TEXT    NOT NULL DEFAULT 'HazMat',
+            status        TEXT    NOT NULL DEFAULT 'active',
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_incidents_user ON incidents(user_id, created_at DESC)")
+
+    # Facility presets (org-wide, admin-managed)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS facilities (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            name                TEXT    NOT NULL,
+            facility_type       TEXT    NOT NULL DEFAULT 'industrial',
+            lat                 REAL    NOT NULL,
+            lon                 REAL    NOT NULL,
+            chemical_id         TEXT,
+            default_rate_kg_min REAL,
+            release_height_m    REAL    NOT NULL DEFAULT 0.0,
+            notes               TEXT,
+            created_by          INTEGER,
+            created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
+    # Idempotent migrations
+    for col, typedef in [("incident_id", "INTEGER")]:
+        try:
+            conn.execute(f"ALTER TABLE scenarios ADD COLUMN {col} {typedef}")
+        except Exception:
+            pass
+
     conn.commit()
     _migrate_tak_settings(conn)
     conn.close()
@@ -342,6 +381,111 @@ def delete_scenario(scenario_id: int, user_id: int) -> bool:
     cur = conn.execute(
         "DELETE FROM scenarios WHERE id=? AND user_id=?", (scenario_id, user_id)
     )
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
+
+
+# ── Incidents ─────────────────────────────────────────────────────────────────
+
+def create_incident(user_id: int, name: str, ics_number: str = "",
+                    incident_type: str = "HazMat") -> dict:
+    conn = _connect()
+    cur = conn.execute(
+        """INSERT INTO incidents (user_id, name, ics_number, incident_type)
+           VALUES (?, ?, ?, ?)""",
+        (user_id, name, ics_number, incident_type),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM incidents WHERE id=?", (cur.lastrowid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+def list_incidents(user_id: int, limit: int = 50) -> list:
+    conn = _connect()
+    rows = conn.execute(
+        """SELECT * FROM incidents WHERE user_id=?
+           ORDER BY created_at DESC LIMIT ?""",
+        (user_id, limit),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_incident(incident_id: int, user_id: int, **fields) -> Optional[dict]:
+    allowed = {"name", "ics_number", "incident_type", "status"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return None
+    updates["updated_at"] = "datetime('now')"
+    set_clause = ", ".join(
+        f"{k}=datetime('now')" if k == "updated_at" else f"{k}=?"
+        for k in updates
+    )
+    vals = [v for k, v in updates.items() if k != "updated_at"]
+    vals += [incident_id, user_id]
+    conn = _connect()
+    conn.execute(
+        f"UPDATE incidents SET {set_clause} WHERE id=? AND user_id=?", vals
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT * FROM incidents WHERE id=? AND user_id=?", (incident_id, user_id)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+# ── Facilities ────────────────────────────────────────────────────────────────
+
+def list_facilities() -> list:
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT * FROM facilities ORDER BY name COLLATE NOCASE"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def create_facility(name: str, facility_type: str, lat: float, lon: float,
+                    chemical_id: Optional[str], default_rate_kg_min: Optional[float],
+                    release_height_m: float, notes: str, created_by: int) -> dict:
+    conn = _connect()
+    cur = conn.execute(
+        """INSERT INTO facilities
+           (name, facility_type, lat, lon, chemical_id, default_rate_kg_min,
+            release_height_m, notes, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (name, facility_type, lat, lon, chemical_id, default_rate_kg_min,
+         release_height_m, notes, created_by),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM facilities WHERE id=?", (cur.lastrowid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+def update_facility(facility_id: int, **fields) -> Optional[dict]:
+    allowed = {"name", "facility_type", "lat", "lon", "chemical_id",
+               "default_rate_kg_min", "release_height_m", "notes"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return None
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    vals = list(updates.values()) + [facility_id]
+    conn = _connect()
+    conn.execute(f"UPDATE facilities SET {set_clause} WHERE id=?", vals)
+    conn.commit()
+    row = conn.execute("SELECT * FROM facilities WHERE id=?", (facility_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_facility(facility_id: int) -> bool:
+    conn = _connect()
+    cur = conn.execute("DELETE FROM facilities WHERE id=?", (facility_id,))
     conn.commit()
     deleted = cur.rowcount > 0
     conn.close()

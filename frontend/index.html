@@ -362,6 +362,11 @@ input:checked+.slider:before{transform:translateX(16px)}
     <div class="logo">WHITWERX<span>Model Display (WMD)</span></div>
     <div class="hdr-badge">⚠ FOR AUTHORIZED USE ONLY</div>
     <div style="flex:1"></div>
+    <button id="incident-pill" onclick="openIncidentModal()"
+            style="display:none;background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.3);border-radius:4px;padding:3px 10px;font-size:11px;color:var(--green);cursor:pointer;font-family:inherit;letter-spacing:.04em;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            title="Click to name or switch incident">
+      📋 <span id="incident-pill-name">No Incident</span>
+    </button>
     <div id="version-badge" class="version-badge" title="WHITWERX Model Display">v—</div>
     <button id="btn-units" onclick="toggleUnits()" title="Toggle units: US Customary ↔ Metric SI" style="font-size:11px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:4px;padding:3px 10px;letter-spacing:.06em;cursor:pointer;transition:color .2s,border-color .2s;color:var(--muted);font-weight:700;display:flex;align-items:center;gap:4px">📐 <span id="btn-units-lbl">US</span></button>
     <div id="hdr-status" style="font-size:12px;color:var(--muted)">Ready</div>
@@ -429,6 +434,7 @@ input:checked+.slider:before{transform:translateX(16px)}
           <button class="btn btn-ghost btn-full" onclick="clearIncident()">Clear All</button>
         </div>
         <button class="btn btn-ghost btn-full" id="btn-use-location" style="margin-top:6px" onclick="useMyLocation()">📡 Use My Location</button>
+        <button class="btn btn-ghost btn-full" style="margin-top:6px;border-color:rgba(121,192,255,.35);color:var(--accent2)" onclick="openFacilityPicker()">🏭 Load Facility Preset</button>
         <div id="geo-status" style="font-size:10px;color:var(--muted);margin-top:4px;min-height:12px;text-align:center"></div>
       </div>
 
@@ -4801,6 +4807,10 @@ loadVersion();
     if (u.role === 'admin') document.getElementById('hdr-admin-link').style.display = 'inline-flex';
     el.style.display = 'flex';
 
+    // Load incidents and show pill
+    await _loadIncidents();
+    _updateIncidentPill();
+
     // Show TAK push section only if a profile is configured
     const ts = await fetch('/api/tak-status').then(r => r.ok ? r.json() : null).catch(() => null);
     if (ts?.configured) {
@@ -5232,6 +5242,258 @@ window.addEventListener('appinstalled', () => {
   _deferredInstallPrompt = null;
   document.getElementById('pwa-install-banner').style.display = 'none';
 });
+
+// ── Named Incidents ───────────────────────────────────────────────────────────
+
+let _activeIncident   = null; // {id, name, ics_number, incident_type, status}
+let _incidentList     = [];
+
+function _incidentPillVisible(show) {
+  document.getElementById('incident-pill').style.display = show ? '' : 'none';
+}
+
+function _updateIncidentPill() {
+  const el = document.getElementById('incident-pill-name');
+  el.textContent = _activeIncident ? _activeIncident.name : 'No Incident';
+  _incidentPillVisible(true);
+}
+
+async function _loadIncidents() {
+  try {
+    const r = await fetch(`${API}/api/incidents`);
+    if (r.ok) _incidentList = await r.json();
+  } catch(e) { /* non-fatal */ }
+}
+
+function openIncidentModal() {
+  _loadIncidents().then(() => {
+    const m = document.getElementById('incident-modal');
+    if (!m) return;
+    _renderIncidentList();
+    if (_activeIncident) {
+      document.getElementById('im-name').value     = _activeIncident.name;
+      document.getElementById('im-ics').value      = _activeIncident.ics_number || '';
+      document.getElementById('im-type').value     = _activeIncident.incident_type || 'HazMat';
+      document.getElementById('im-editing').value  = _activeIncident.id;
+    } else {
+      document.getElementById('im-name').value     = '';
+      document.getElementById('im-ics').value      = '';
+      document.getElementById('im-type').value     = 'HazMat';
+      document.getElementById('im-editing').value  = '';
+    }
+    m.style.display = 'flex';
+  });
+}
+
+function closeIncidentModal() {
+  document.getElementById('incident-modal').style.display = 'none';
+}
+
+function _renderIncidentList() {
+  const el = document.getElementById('im-list');
+  if (!_incidentList.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 0">No saved incidents yet.</div>';
+    return;
+  }
+  el.innerHTML = _incidentList.map(inc => `
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:700;color:${inc.id===_activeIncident?.id?'var(--green)':'var(--text)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(inc.name)}</div>
+        <div style="font-size:10px;color:var(--muted)">${_esc(inc.incident_type)}${inc.ics_number?' · '+_esc(inc.ics_number):''}</div>
+      </div>
+      <button class="btn btn-ghost" style="font-size:10px;padding:2px 8px" onclick="_activateIncident(${inc.id})">Load</button>
+    </div>
+  `).join('');
+}
+
+function _activateIncident(id) {
+  _activeIncident = _incidentList.find(i => i.id === id) || null;
+  _updateIncidentPill();
+  closeIncidentModal();
+  toast(`Incident: ${_activeIncident?.name}`, 2000);
+}
+
+async function saveIncident() {
+  const name  = document.getElementById('im-name').value.trim();
+  const ics   = document.getElementById('im-ics').value.trim();
+  const type  = document.getElementById('im-type').value;
+  const editId = document.getElementById('im-editing').value;
+  if (!name) { toast('Incident name required', 2000); return; }
+  try {
+    let r;
+    if (editId) {
+      r = await fetch(`${API}/api/incidents/${editId}`, {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name, ics_number: ics, incident_type: type}),
+      });
+    } else {
+      r = await fetch(`${API}/api/incidents`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name, ics_number: ics, incident_type: type}),
+      });
+    }
+    if (!r.ok) { toast('Failed to save incident', 2000); return; }
+    const saved = await r.json();
+    _activeIncident = saved;
+    _updateIncidentPill();
+    await _loadIncidents();
+    closeIncidentModal();
+    toast(`Incident "${saved.name}" saved`, 2000);
+  } catch(e) { toast('Failed to save incident', 2000); }
+}
+
+function newIncidentForm() {
+  document.getElementById('im-name').value    = '';
+  document.getElementById('im-ics').value     = '';
+  document.getElementById('im-type').value    = 'HazMat';
+  document.getElementById('im-editing').value = '';
+  document.getElementById('im-name').focus();
+}
+
+function _esc(s) { return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ── Facility Presets ──────────────────────────────────────────────────────────
+
+let _facilityCache = [];
+
+async function openFacilityPicker() {
+  try {
+    const r = await fetch(`${API}/api/facilities`);
+    if (r.ok) _facilityCache = await r.json();
+  } catch(e) { _facilityCache = []; }
+  const m = document.getElementById('facility-picker-modal');
+  _renderFacilityList();
+  m.style.display = 'flex';
+}
+
+function closeFacilityPicker() {
+  document.getElementById('facility-picker-modal').style.display = 'none';
+}
+
+function _renderFacilityList(query) {
+  const el = document.getElementById('fp-list');
+  let list = _facilityCache;
+  if (query) {
+    const q = query.toLowerCase();
+    list = list.filter(f => f.name.toLowerCase().includes(q) || f.facility_type.toLowerCase().includes(q));
+  }
+  if (!list.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:12px 0;text-align:center">No facilities found. Ask your admin to add some via the Admin Panel.</div>';
+    return;
+  }
+  const typeIcons = {industrial:'🏭',chemical:'⚗️',refinery:'🛢️',water:'💧',nuclear:'☢️',hospital:'🏥',school:'🎓',transit:'🚉',other:'📍'};
+  el.innerHTML = list.map(f => {
+    const chem = chemicals.find(c => c.id === f.chemical_id);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer"
+                 onclick="loadFacilityPreset(${f.id})" onmouseover="this.style.background='rgba(255,255,255,.03)'" onmouseout="this.style.background=''">
+      <div style="font-size:20px;line-height:1">${typeIcons[f.facility_type]||'📍'}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(f.name)}</div>
+        <div style="font-size:11px;color:var(--muted)">
+          ${_esc(f.facility_type)}
+          ${chem ? ' · <span style="color:var(--accent2)">'+_esc(chem.name)+'</span>' : ''}
+          ${f.default_rate_kg_min ? ' · '+f.default_rate_kg_min+' kg/min' : ''}
+          · ${f.lat.toFixed(4)}, ${f.lon.toFixed(4)}
+        </div>
+        ${f.notes ? '<div style="font-size:10px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_esc(f.notes)+'</div>' : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function loadFacilityPreset(id) {
+  const f = _facilityCache.find(x => x.id === id);
+  if (!f) return;
+
+  // Place incident marker at facility location
+  placeIncident(f.lat, f.lon);
+  map.setView([f.lat, f.lon], 13);
+
+  // Pre-fill chemical in plume panel if facility has one
+  if (f.chemical_id) {
+    // Switch to plume tool panel
+    document.querySelectorAll('.tool-panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-plume').style.display = '';
+    // Select chemical
+    const sel = document.getElementById('sel-chemical');
+    if (sel) { sel.value = f.chemical_id; onChemicalChange(); }
+    // Pre-fill release rate slider (kg/min)
+    if (f.default_rate_kg_min != null) {
+      const sl = document.getElementById('sl-rate');
+      const unitSel = document.getElementById('sel-rate-unit');
+      if (sl && unitSel) {
+        unitSel.value = 'kg_min';
+        sl.value = Math.min(Math.max(f.default_rate_kg_min, 0.1), 500);
+        updateRateLabel();
+      }
+    }
+    // Pre-fill release height slider (m)
+    if (f.release_height_m != null) {
+      const slH = document.getElementById('sl-height');
+      if (slH) {
+        slH.value = Math.min(Math.max(f.release_height_m, 0), 200);
+        document.getElementById('lbl-height').textContent = slH.value;
+      }
+    }
+  }
+
+  closeFacilityPicker();
+  toast(`Loaded: ${f.name}`, 2500);
+}
 </script>
+
+<!-- Incident Modal -->
+<div id="incident-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9900;align-items:center;justify-content:center">
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;width:min(440px,95vw);max-height:85vh;display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">Named Incident</div>
+      <button onclick="closeIncidentModal()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1">✕</button>
+    </div>
+
+    <!-- Recent incidents list -->
+    <div id="im-list" style="overflow-y:auto;max-height:160px"></div>
+
+    <!-- New / edit form -->
+    <div style="border-top:1px solid var(--border);padding-top:12px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-weight:600">NEW / EDIT INCIDENT</div>
+      <input type="hidden" id="im-editing"/>
+      <input type="text"   id="im-name" placeholder="Incident name (e.g. 'Downtown HazMat')"
+             style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:7px 10px;margin-bottom:8px"/>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input type="text" id="im-ics" placeholder="ICS # (optional)"
+               style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:7px 10px"/>
+        <select id="im-type"
+                style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:7px 10px">
+          <option value="HazMat">HazMat</option>
+          <option value="Radiological">Radiological</option>
+          <option value="Explosive">Explosive / Blast</option>
+          <option value="Fire">Fire / Smoke</option>
+          <option value="WMD">WMD / CBRN</option>
+          <option value="SAR">Search &amp; Rescue</option>
+          <option value="Training">Training / Exercise</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" style="flex:1;font-size:12px" onclick="newIncidentForm()">+ New</button>
+        <button class="btn" style="flex:2;font-size:12px;background:var(--green);color:#000;font-weight:700" onclick="saveIncident()">Save &amp; Activate</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Facility Preset Picker -->
+<div id="facility-picker-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9900;align-items:center;justify-content:center">
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;width:min(500px,95vw);max-height:85vh;display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">Facility Presets</div>
+      <button onclick="closeFacilityPicker()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1">✕</button>
+    </div>
+    <input type="text" placeholder="Search facilities…" oninput="_renderFacilityList(this.value)"
+           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:7px 10px"/>
+    <div id="fp-list" style="overflow-y:auto;flex:1"></div>
+    <div style="font-size:10px;color:var(--muted);text-align:center">Click a facility to place the incident marker and pre-fill the plume panel</div>
+  </div>
+</div>
 </body>
 </html>

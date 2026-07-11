@@ -255,6 +255,52 @@
     </div>
   </div>
 
+  <!-- Facility Library -->
+  <div class="card" id="fac-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="margin:0">Facility / Infrastructure Library</h3>
+      <button class="btn btn-green" onclick="openFacModal()">+ Add Facility</button>
+    </div>
+    <div id="fac-list"><div class="muted" style="font-size:12px;padding:8px 0">Loading…</div></div>
+    <div class="msg" id="fac-msg"></div>
+  </div>
+
+  <!-- Facility Modal -->
+  <div id="fac-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:min(520px,95vw);max-height:90vh;overflow-y:auto">
+      <h3 id="fac-modal-title" style="font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;margin-bottom:16px">Add Facility</h3>
+      <div class="form-row" style="flex-wrap:wrap;gap:10px">
+        <input type="text"   id="fm-name"     placeholder="Facility name" style="flex:1 1 200px" spellcheck="false"/>
+        <select id="fm-type" style="flex:1 1 140px">
+          <option value="industrial">Industrial</option>
+          <option value="chemical">Chemical Plant</option>
+          <option value="refinery">Refinery / Terminal</option>
+          <option value="water">Water Treatment</option>
+          <option value="nuclear">Nuclear / Radiological</option>
+          <option value="hospital">Hospital / Medical</option>
+          <option value="school">School / University</option>
+          <option value="transit">Transit Hub</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-row" style="gap:10px;margin-top:10px">
+        <input type="number" id="fm-lat"  placeholder="Latitude"  step="any" style="flex:1"/>
+        <input type="number" id="fm-lon"  placeholder="Longitude" step="any" style="flex:1"/>
+      </div>
+      <div class="form-row" style="flex-wrap:wrap;gap:10px;margin-top:10px">
+        <select id="fm-chem" style="flex:1 1 160px"><option value="">— Chemical (optional) —</option></select>
+        <input type="number" id="fm-rate"   placeholder="Default rate (kg/min)" step="any" min="0" style="flex:1 1 160px"/>
+        <input type="number" id="fm-height" placeholder="Release height (m)" step="any" min="0" value="0" style="flex:1 1 140px"/>
+      </div>
+      <textarea id="fm-notes" placeholder="Notes (optional)" rows="2" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit;font-size:12px;padding:8px;margin-top:10px;resize:vertical"></textarea>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+        <button class="btn" onclick="closeFacModal()" style="background:var(--bg)">Cancel</button>
+        <button class="btn btn-green" onclick="saveFacility()">Save</button>
+      </div>
+      <div class="msg" id="fac-modal-msg" style="margin-top:10px"></div>
+    </div>
+  </div>
+
   <!-- User list -->
   <div class="card" style="padding:0;overflow:hidden">
     <table>
@@ -292,6 +338,8 @@ async function init() {
   _me = await r.json();
   loadUsers();
   loadProfiles();
+  loadFacilities();
+  loadChemicalsForModal();
 }
 
 async function loadUsers() {
@@ -550,6 +598,117 @@ async function testProfile(id) {
     statusEl.className   = 'tak-status err';
   }
   setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'tak-status'; }, 12000);
+}
+
+// ── Facility Library ─────────────────────────────────────────────────────────
+
+let _facEditingId = null;
+let _chemicals    = [];
+
+async function loadChemicalsForModal() {
+  const r = await fetch('/api/chemicals');
+  if (!r.ok) return;
+  _chemicals = await r.json();
+  const sel = document.getElementById('fm-chem');
+  sel.innerHTML = '<option value="">— Chemical (optional) —</option>' +
+    _chemicals.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+}
+
+async function loadFacilities() {
+  const r = await fetch('/api/facilities');
+  if (!r.ok) return;
+  const list = await r.json();
+  const el   = document.getElementById('fac-list');
+  if (!list.length) {
+    el.innerHTML = '<div class="muted" style="font-size:12px;padding:8px 0">No facilities yet. Add pre-configured sites so responders can quickly load known hazards.</div>';
+    return;
+  }
+  const typeIcons = {industrial:'🏭',chemical:'⚗️',refinery:'🛢️',water:'💧',nuclear:'☢️',hospital:'🏥',school:'🎓',transit:'🚉',other:'📍'};
+  el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="color:var(--muted);text-align:left">
+      <th style="padding:6px 8px">Name</th>
+      <th style="padding:6px 8px">Type</th>
+      <th style="padding:6px 8px">Chemical</th>
+      <th style="padding:6px 8px">Rate (kg/min)</th>
+      <th style="padding:6px 8px">Coords</th>
+      <th></th>
+    </tr></thead>
+    <tbody>${list.map(f => {
+      const chem = _chemicals.find(c => c.id === f.chemical_id);
+      return `<tr style="border-top:1px solid var(--border)">
+        <td style="padding:6px 8px"><strong>${esc(f.name)}</strong></td>
+        <td style="padding:6px 8px">${typeIcons[f.facility_type]||'📍'} ${esc(f.facility_type)}</td>
+        <td style="padding:6px 8px">${chem ? esc(chem.name) : '<span class="muted">—</span>'}</td>
+        <td style="padding:6px 8px">${f.default_rate_kg_min != null ? f.default_rate_kg_min : '<span class="muted">—</span>'}</td>
+        <td style="padding:6px 8px;color:var(--muted)">${f.lat.toFixed(4)}, ${f.lon.toFixed(4)}</td>
+        <td style="padding:6px 8px;text-align:right;white-space:nowrap">
+          <button class="btn" style="font-size:11px;padding:3px 8px" onclick="editFacility(${f.id})">Edit</button>
+          <button class="btn btn-red" style="font-size:11px;padding:3px 8px" onclick="deleteFacility(${f.id},'${esc(f.name)}')">Del</button>
+        </td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+function openFacModal(f) {
+  _facEditingId = f ? f.id : null;
+  document.getElementById('fac-modal-title').textContent = f ? 'EDIT FACILITY' : 'ADD FACILITY';
+  document.getElementById('fm-name').value   = f ? f.name   : '';
+  document.getElementById('fm-type').value   = f ? f.facility_type : 'industrial';
+  document.getElementById('fm-lat').value    = f ? f.lat    : '';
+  document.getElementById('fm-lon').value    = f ? f.lon    : '';
+  document.getElementById('fm-chem').value   = f ? (f.chemical_id || '') : '';
+  document.getElementById('fm-rate').value   = f ? (f.default_rate_kg_min ?? '') : '';
+  document.getElementById('fm-height').value = f ? (f.release_height_m ?? 0) : 0;
+  document.getElementById('fm-notes').value  = f ? (f.notes || '') : '';
+  document.getElementById('fac-modal-msg').textContent = '';
+  document.getElementById('fac-modal').style.display = 'flex';
+}
+
+function closeFacModal() {
+  document.getElementById('fac-modal').style.display = 'none';
+}
+
+async function editFacility(id) {
+  const r = await fetch('/api/facilities');
+  if (!r.ok) return;
+  const list = await r.json();
+  const f = list.find(x => x.id === id);
+  if (f) openFacModal(f);
+}
+
+async function saveFacility() {
+  const name    = document.getElementById('fm-name').value.trim();
+  const lat     = parseFloat(document.getElementById('fm-lat').value);
+  const lon     = parseFloat(document.getElementById('fm-lon').value);
+  if (!name) { showMsg('fac-modal-msg', 'Name is required.', 'error'); return; }
+  if (isNaN(lat) || isNaN(lon)) { showMsg('fac-modal-msg', 'Valid lat/lon required.', 'error'); return; }
+  const body = {
+    name, lat, lon,
+    facility_type:        document.getElementById('fm-type').value,
+    chemical_id:          document.getElementById('fm-chem').value || null,
+    default_rate_kg_min:  parseFloat(document.getElementById('fm-rate').value) || null,
+    release_height_m:     parseFloat(document.getElementById('fm-height').value) || 0,
+    notes:                document.getElementById('fm-notes').value.trim(),
+  };
+  const url    = _facEditingId ? `/api/admin/facilities/${_facEditingId}` : '/api/admin/facilities';
+  const method = _facEditingId ? 'PUT' : 'POST';
+  const r = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (r.ok) {
+    closeFacModal();
+    loadFacilities();
+    showMsg('fac-msg', `Facility ${_facEditingId ? 'updated' : 'created'}.`, 'success');
+  } else {
+    const d = await r.json().catch(()=>({}));
+    showMsg('fac-modal-msg', d.detail || 'Save failed.', 'error');
+  }
+}
+
+async function deleteFacility(id, name) {
+  if (!confirm(`Delete facility "${name}"? This cannot be undone.`)) return;
+  const r = await fetch(`/api/admin/facilities/${id}`, { method: 'DELETE' });
+  if (r.ok) { loadFacilities(); showMsg('fac-msg', 'Facility deleted.', 'success'); }
+  else { const d = await r.json().catch(()=>({})); showMsg('fac-msg', d.detail || 'Delete failed.', 'error'); }
 }
 
 init();
