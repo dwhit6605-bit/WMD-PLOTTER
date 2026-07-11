@@ -136,6 +136,10 @@ def init_db() -> None:
         conn.execute("ALTER TABLE users ADD COLUMN org_id INTEGER")
     except Exception:
         pass
+    try:
+        conn.execute("ALTER TABLE tak_profiles ADD COLUMN org_id INTEGER")
+    except Exception:
+        pass
 
     conn.commit()
     _migrate_tak_settings(conn)
@@ -195,14 +199,24 @@ def set_setting(key: str, value: Optional[str]) -> None:
     conn.close()
 
 
-def list_tak_profiles() -> list:
+def list_tak_profiles(org_id: Optional[int] = None, org_scoped: bool = False) -> list:
     conn = _connect()
-    rows = conn.execute(
-        "SELECT id, name, host, port, marti_port, ssl, callsign, is_active, created_at,"
-        " (cert_p12 IS NOT NULL) AS has_cert,"
-        " (truststore_p12 IS NOT NULL) AS has_truststore"
-        " FROM tak_profiles ORDER BY id"
-    ).fetchall()
+    if org_scoped:
+        # Return only profiles belonging to this org (or global if org_id is None)
+        rows = conn.execute(
+            "SELECT id, name, host, port, marti_port, ssl, callsign, is_active, created_at, org_id,"
+            " (cert_p12 IS NOT NULL) AS has_cert,"
+            " (truststore_p12 IS NOT NULL) AS has_truststore"
+            " FROM tak_profiles WHERE org_id IS ? ORDER BY id",
+            (org_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, name, host, port, marti_port, ssl, callsign, is_active, created_at, org_id,"
+            " (cert_p12 IS NOT NULL) AS has_cert,"
+            " (truststore_p12 IS NOT NULL) AS has_truststore"
+            " FROM tak_profiles ORDER BY id"
+        ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -214,19 +228,35 @@ def get_tak_profile(profile_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def get_active_tak_profile() -> Optional[dict]:
+def get_active_tak_profile(org_id: Optional[int] = None) -> Optional[dict]:
     conn = _connect()
+    # Try org-specific active profile first
+    if org_id is not None:
+        row = conn.execute(
+            "SELECT * FROM tak_profiles WHERE org_id=? AND is_active=1 LIMIT 1", (org_id,)
+        ).fetchone()
+        if not row:
+            row = conn.execute(
+                "SELECT * FROM tak_profiles WHERE org_id=? ORDER BY id LIMIT 1", (org_id,)
+            ).fetchone()
+        if row:
+            conn.close()
+            return dict(row)
+    # Fall back to global (org_id IS NULL)
     row = conn.execute(
-        "SELECT * FROM tak_profiles WHERE is_active=1 ORDER BY id LIMIT 1"
+        "SELECT * FROM tak_profiles WHERE org_id IS NULL AND is_active=1 LIMIT 1"
     ).fetchone()
     if not row:
-        row = conn.execute("SELECT * FROM tak_profiles ORDER BY id LIMIT 1").fetchone()
+        row = conn.execute(
+            "SELECT * FROM tak_profiles WHERE org_id IS NULL ORDER BY id LIMIT 1"
+        ).fetchone()
     conn.close()
     return dict(row) if row else None
 
 
 def upsert_tak_profile(name: str, host: str, port: int, marti_port: int,
-                       ssl: bool, callsign: str, profile_id: Optional[int] = None) -> int:
+                       ssl: bool, callsign: str, profile_id: Optional[int] = None,
+                       org_id: Optional[int] = None) -> int:
     conn = _connect()
     if profile_id:
         conn.execute(
@@ -237,8 +267,8 @@ def upsert_tak_profile(name: str, host: str, port: int, marti_port: int,
         conn.close()
         return profile_id
     cur = conn.execute(
-        "INSERT INTO tak_profiles (name, host, port, marti_port, ssl, callsign) VALUES (?,?,?,?,?,?)",
-        (name, host, port, marti_port, int(ssl), callsign),
+        "INSERT INTO tak_profiles (name, host, port, marti_port, ssl, callsign, org_id) VALUES (?,?,?,?,?,?,?)",
+        (name, host, port, marti_port, int(ssl), callsign, org_id),
     )
     conn.commit()
     new_id = cur.lastrowid
@@ -268,7 +298,13 @@ def set_tak_profile_truststore(profile_id: int, truststore_p12: Optional[str], t
 
 def set_active_tak_profile(profile_id: int) -> None:
     conn = _connect()
-    conn.execute("UPDATE tak_profiles SET is_active=0")
+    # Only deactivate profiles in the same org scope as the one being activated
+    row = conn.execute("SELECT org_id FROM tak_profiles WHERE id=?", (profile_id,)).fetchone()
+    org_id = row["org_id"] if row else None
+    if org_id is None:
+        conn.execute("UPDATE tak_profiles SET is_active=0 WHERE org_id IS NULL")
+    else:
+        conn.execute("UPDATE tak_profiles SET is_active=0 WHERE org_id=?", (org_id,))
     conn.execute("UPDATE tak_profiles SET is_active=1 WHERE id=?", (profile_id,))
     conn.commit()
     conn.close()

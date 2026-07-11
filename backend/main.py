@@ -73,6 +73,11 @@ from auth import (
     COOKIE_NAME, JWT_EXPIRE_DAYS, ALLOW_REGISTRATION, REGISTRATION_CODE,
 )
 
+async def require_org_admin(user: dict = Depends(current_user)) -> dict:
+    if user.get("role") not in ("admin", "org_admin"):
+        raise HTTPException(status_code=403, detail="Org admin or admin role required")
+    return user
+
 APP_VERSION = "2.3.0"
 BUILD_DATE  = "2026-05-27"   # v2.3.0: AEGL table, plume animation, print report, multi-incident
 
@@ -274,10 +279,10 @@ async def auth_login(request: Request):
         raise HTTPException(status_code=401, detail="Invalid username or password.")
 
     update_last_login(user["id"])
-    token = create_token(user["id"], user["username"], user["role"])
+    token = create_token(user["id"], user["username"], user["role"], org_id=user.get("org_id"))
 
     is_https = request.url.scheme == "https"
-    resp = JSONResponse({"username": user["username"], "role": user["role"]})
+    resp = JSONResponse({"username": user["username"], "role": user["role"], "org_id": user.get("org_id")})
     resp.set_cookie(
         COOKIE_NAME, token,
         httponly=True,
@@ -349,7 +354,7 @@ async def registration_status(request: Request):
 # ── Admin: user management ────────────────────────────────────────────────────
 
 @app.get("/admin/users")
-async def admin_users_page(user: dict = Depends(require_admin)):
+async def admin_users_page(user: dict = Depends(require_org_admin)):
     return HTMLResponse((FRONTEND_DIR / "admin_users.html").read_text())
 
 
@@ -1625,14 +1630,32 @@ def _profile_to_config(p: dict) -> dict:
     }
 
 
+def _caller_org_id(user: dict) -> Optional[int]:
+    """Return the org_id scope for this caller: None for global admin, their org for org_admin."""
+    if user.get("role") == "admin":
+        return None  # global admin sees/touches everything
+    return user.get("org_id")  # org_admin is scoped to their org
+
+def _assert_profile_ownership(profile: dict, user: dict) -> None:
+    """Raise 403 if an org_admin tries to touch a profile outside their org."""
+    if user.get("role") == "admin":
+        return
+    caller_org = user.get("org_id")
+    if profile.get("org_id") != caller_org:
+        raise HTTPException(status_code=403, detail="Cannot modify another org's TAK profile")
+
 @app.get("/api/admin/tak-profiles")
-async def api_list_tak_profiles(user: dict = Depends(require_admin)):
-    return {"profiles": list_tak_profiles()}
+async def api_list_tak_profiles(user: dict = Depends(require_org_admin)):
+    if user.get("role") == "admin":
+        return {"profiles": list_tak_profiles()}
+    # org_admin: only their org's profiles
+    return {"profiles": list_tak_profiles(org_id=user.get("org_id"), org_scoped=True)}
 
 
 @app.post("/api/admin/tak-profiles")
-async def api_create_tak_profile(request: Request, user: dict = Depends(require_admin)):
+async def api_create_tak_profile(request: Request, user: dict = Depends(require_org_admin)):
     body = await request.json()
+    org_id = _caller_org_id(user)
     pid = upsert_tak_profile(
         name       = (body.get("name") or "Unnamed").strip(),
         host       = (body.get("host") or "").strip(),
@@ -1640,22 +1663,25 @@ async def api_create_tak_profile(request: Request, user: dict = Depends(require_
         marti_port = int(body.get("marti_port") or 8443),
         ssl        = bool(body.get("ssl", True)),
         callsign   = (body.get("callsign") or "WMD PLOTTER").strip(),
+        org_id     = org_id,
     )
     if body.get("cert_p12_b64"):
         set_tak_profile_cert(pid, body["cert_p12_b64"], body.get("cert_pass") or "")
     if body.get("truststore_p12_b64"):
         set_tak_profile_truststore(pid, body["truststore_p12_b64"], body.get("truststore_pass") or "")
-    # Auto-activate if it's the first profile
-    profiles = list_tak_profiles()
+    # Auto-activate if it's the first profile in this org scope
+    profiles = list_tak_profiles(org_id=org_id, org_scoped=True)
     if len(profiles) == 1:
         set_active_tak_profile(pid)
     return {"id": pid, "status": "created"}
 
 
 @app.put("/api/admin/tak-profiles/{profile_id}")
-async def api_update_tak_profile(profile_id: int, request: Request, user: dict = Depends(require_admin)):
-    if not get_tak_profile(profile_id):
+async def api_update_tak_profile(profile_id: int, request: Request, user: dict = Depends(require_org_admin)):
+    existing = get_tak_profile(profile_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="Profile not found")
+    _assert_profile_ownership(existing, user)
     body = await request.json()
     upsert_tak_profile(
         name       = (body.get("name") or "Unnamed").strip(),
@@ -1678,27 +1704,34 @@ async def api_update_tak_profile(profile_id: int, request: Request, user: dict =
 
 
 @app.delete("/api/admin/tak-profiles/{profile_id}")
-async def api_delete_tak_profile(profile_id: int, user: dict = Depends(require_admin)):
+async def api_delete_tak_profile(profile_id: int, user: dict = Depends(require_org_admin)):
+    existing = get_tak_profile(profile_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    _assert_profile_ownership(existing, user)
     if not delete_tak_profile(profile_id):
         raise HTTPException(status_code=404, detail="Profile not found")
-    # If we deleted the active profile, activate the first remaining one
-    remaining = list_tak_profiles()
+    # Re-activate first remaining profile in this org scope
+    org_id = existing.get("org_id")
+    remaining = list_tak_profiles(org_id=org_id, org_scoped=True)
     if remaining and not any(p["is_active"] for p in remaining):
         set_active_tak_profile(remaining[0]["id"])
     return {"status": "deleted"}
 
 
 @app.post("/api/admin/tak-profiles/{profile_id}/activate")
-async def api_activate_tak_profile(profile_id: int, user: dict = Depends(require_admin)):
-    if not get_tak_profile(profile_id):
+async def api_activate_tak_profile(profile_id: int, user: dict = Depends(require_org_admin)):
+    existing = get_tak_profile(profile_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="Profile not found")
+    _assert_profile_ownership(existing, user)
     set_active_tak_profile(profile_id)
     return {"status": "activated"}
 
 
 @app.get("/api/tak-status")
 async def tak_status(user: dict = Depends(current_user)):
-    p = get_active_tak_profile()
+    p = get_active_tak_profile(org_id=user.get("org_id"))
     if not p:
         return {"configured": False, "host": "", "port": "8089"}
     return {"configured": bool(p.get("host")), "host": p.get("host") or "", "port": str(p.get("port") or 8089),
@@ -1714,7 +1747,7 @@ async def tak_push(request: Request, user: dict = Depends(current_user)):
              "error": "No model data — run a model first, then push."},
             status_code=400,
         )
-    p = get_active_tak_profile()
+    p = get_active_tak_profile(org_id=user.get("org_id"))
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "sent": 0, "error": "No TAK server profile configured"}, status_code=400)
     result = push_cot(_profile_to_config(p), _overlay_state)
@@ -1758,7 +1791,7 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
     except Exception:
         pass
     profile_id = body.get("profile_id")
-    p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile()
+    p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile(org_id=user.get("org_id"))
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
     config = _profile_to_config(p)
@@ -1827,7 +1860,7 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
 
 
 @app.post("/api/tak-test-point")
-async def tak_test_point(request: Request, user: dict = Depends(require_admin)):
+async def tak_test_point(request: Request, user: dict = Depends(require_org_admin)):
     """
     Send an SA point marker to a TAK profile to verify end-to-end routing.
     Tries HTTP CoT injection (/Marti/api/cot) first — more reliable than raw TCP
@@ -1838,7 +1871,7 @@ async def tak_test_point(request: Request, user: dict = Depends(require_admin)):
     lat  = float(body.get("lat", 0.0))
     lon  = float(body.get("lon", 0.0))
     profile_id = body.get("profile_id")
-    p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile()
+    p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile(org_id=user.get("org_id"))
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
 

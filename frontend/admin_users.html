@@ -157,6 +157,7 @@
       <input type="password" id="new-pass" placeholder="Password (min 8 chars)"/>
       <select id="new-role">
         <option value="user">User</option>
+        <option value="org_admin">Org Admin</option>
         <option value="admin">Admin</option>
       </select>
       <button class="btn btn-green" onclick="createUser()">Create</button>
@@ -368,6 +369,24 @@ async function init() {
   const r = await fetch('/auth/me');
   if (!r.ok) { location.href = '/login'; return; }
   _me = await r.json();
+
+  const isOrgAdmin = _me.role === 'org_admin';
+
+  // Org admins only see the TAK configuration section
+  if (isOrgAdmin) {
+    document.querySelector('h2').textContent = 'TAK Server Configuration';
+    document.getElementById('fac-card').style.display = 'none';
+    document.getElementById('tak-card').scrollIntoView();
+    // Hide: create-user card, orgs card, user list card
+    document.querySelectorAll('.main > .card, .main > div.card').forEach(el => {
+      if (!el.id || el.id === 'tak-card') return;
+      el.style.display = 'none';
+    });
+    document.querySelectorAll('.main > div[style*="padding:0"]').forEach(el => el.style.display = 'none');
+    loadProfiles();
+    return;
+  }
+
   await loadOrgs();
   loadUsers();
   loadProfiles();
@@ -392,8 +411,9 @@ async function loadUsers() {
       <td>
         <select onchange="setUserRole(${u.id},this.value)"
                 style="font-size:11px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer;width:auto">
-          <option value="user"  ${u.role==='user'  ?'selected':''}>User</option>
-          <option value="admin" ${u.role==='admin' ?'selected':''}>Admin</option>
+          <option value="user"      ${u.role==='user'      ?'selected':''}>User</option>
+          <option value="org_admin" ${u.role==='org_admin' ?'selected':''}>Org Admin</option>
+          <option value="admin"     ${u.role==='admin'     ?'selected':''}>Admin</option>
         </select>
       </td>
       <td>

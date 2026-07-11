@@ -4804,7 +4804,8 @@ loadVersion();
     const u = await r.json();
     const el = document.getElementById('hdr-user');
     document.getElementById('hdr-username').textContent = u.username;
-    if (u.role === 'admin') document.getElementById('hdr-admin-link').style.display = 'inline-flex';
+    if (u.role === 'admin' || u.role === 'org_admin') document.getElementById('hdr-admin-link').style.display = 'inline-flex';
+    if (u.role === 'org_admin') document.getElementById('hdr-admin-link').title = 'TAK Server Settings';
     el.style.display = 'flex';
 
     // Load incidents and show pill

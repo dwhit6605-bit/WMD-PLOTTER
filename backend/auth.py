@@ -48,13 +48,12 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 # ── JWT ───────────────────────────────────────────────────────────────────────
 
-def create_token(user_id: int, username: str, role: str) -> str:
+def create_token(user_id: int, username: str, role: str, org_id=None) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRE_DAYS)
-    return jwt.encode(
-        {"sub": str(user_id), "username": username, "role": role, "exp": expire},
-        JWT_SECRET,
-        algorithm=JWT_ALGORITHM,
-    )
+    payload = {"sub": str(user_id), "username": username, "role": role, "exp": expire}
+    if org_id is not None:
+        payload["org_id"] = org_id
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
 def decode_token(token: str) -> dict:
