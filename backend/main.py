@@ -374,8 +374,8 @@ async def api_create_user(request: Request, admin: dict = Depends(require_admin)
         raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
     if not password or len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
-    if role not in ("user", "admin"):
-        raise HTTPException(status_code=400, detail="Role must be 'user' or 'admin'.")
+    if role not in ("user", "org_admin", "admin"):
+        raise HTTPException(status_code=400, detail="Invalid role.")
     if get_user_by_username(username):
         raise HTTPException(status_code=409, detail="Username already taken.")
 
@@ -392,16 +392,6 @@ async def api_delete_user(user_id: int, admin: dict = Depends(require_admin)):
     return JSONResponse({"status": "deleted"})
 
 
-@app.post("/api/admin/users/{user_id}/password")
-async def api_reset_password(user_id: int, request: Request, admin: dict = Depends(require_admin)):
-    body = await request.json()
-    password = body.get("password") or ""
-    if not password or len(password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
-    if not get_user_by_id(user_id):
-        raise HTTPException(status_code=404, detail="User not found.")
-    update_password(user_id, hash_password(password))
-    return JSONResponse({"status": "updated"})
 
 
 @app.get("/api/version")
@@ -2021,8 +2011,8 @@ async def patch_user(user_id: int, body: UserPatch, admin: dict = Depends(requir
         # org_id=-1 is sentinel for "unassign"
         set_user_org(user_id, None if body.org_id == -1 else body.org_id)
     if body.role is not None:
-        if body.role not in ("user", "admin"):
-            raise HTTPException(status_code=400, detail="Role must be 'user' or 'admin'")
+        if body.role not in ("user", "org_admin", "admin"):
+            raise HTTPException(status_code=400, detail="Invalid role.")
         set_user_role(user_id, body.role)
     users = list_users()
     u = next((x for x in users if x["id"] == user_id), None)
