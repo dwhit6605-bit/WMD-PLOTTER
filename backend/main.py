@@ -63,7 +63,8 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  upsert_tak_profile, set_tak_profile_cert, set_tak_profile_truststore, set_active_tak_profile, delete_tak_profile, \
                  save_scenario, list_scenarios, get_scenario, delete_scenario, \
                  create_incident, list_incidents, update_incident, \
-                 list_facilities, create_facility, update_facility, delete_facility
+                 list_facilities, create_facility, update_facility, delete_facility, \
+                 set_user_org, set_user_role, list_orgs, create_org, update_org, delete_org
 from tak_push import push_cot, push_test_point, push_bftr
 from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
@@ -1943,6 +1944,65 @@ async def nifc_perimeters(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"NIFC fetch failed: {e}")
 
+
+# ── Organizations ─────────────────────────────────────────────────────────────
+
+class OrgCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+@app.get("/api/admin/organizations")
+async def get_orgs(_: dict = Depends(require_admin)):
+    return list_orgs()
+
+@app.post("/api/admin/organizations", status_code=201)
+async def post_org(body: OrgCreate, _: dict = Depends(require_admin)):
+    try:
+        return create_org(body.name)
+    except Exception:
+        raise HTTPException(status_code=409, detail="Organization name already exists")
+
+@app.put("/api/admin/organizations/{org_id}")
+async def put_org(org_id: int, body: OrgCreate, _: dict = Depends(require_admin)):
+    result = update_org(org_id, body.name)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return result
+
+@app.delete("/api/admin/organizations/{org_id}", status_code=204)
+async def del_org(org_id: int, _: dict = Depends(require_admin)):
+    if not delete_org(org_id):
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+# ── User management (admin) ───────────────────────────────────────────────────
+
+class UserPatch(BaseModel):
+    org_id: Optional[int] = None
+    role:   Optional[str] = None
+
+class AdminPasswordReset(BaseModel):
+    new_password: str = Field(min_length=8)
+
+@app.patch("/api/admin/users/{user_id}")
+async def patch_user(user_id: int, body: UserPatch, admin: dict = Depends(require_admin)):
+    if body.org_id is not None:
+        # org_id=-1 is sentinel for "unassign"
+        set_user_org(user_id, None if body.org_id == -1 else body.org_id)
+    if body.role is not None:
+        if body.role not in ("user", "admin"):
+            raise HTTPException(status_code=400, detail="Role must be 'user' or 'admin'")
+        set_user_role(user_id, body.role)
+    users = list_users()
+    u = next((x for x in users if x["id"] == user_id), None)
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    return u
+
+@app.post("/api/admin/users/{user_id}/password")
+async def admin_reset_password(user_id: int, body: AdminPasswordReset,
+                               _: dict = Depends(require_admin)):
+    from auth import hash_password
+    update_password(user_id, hash_password(body.new_password))
+    return {"ok": True}
 
 # ── Incidents ─────────────────────────────────────────────────────────────────
 

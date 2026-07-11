@@ -114,12 +114,28 @@ def init_db() -> None:
         )
     """)
 
+    # Organizations
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS organizations (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+            created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
     # Idempotent migrations
-    for col, typedef in [("incident_id", "INTEGER")]:
+    for col, typedef in [
+        ("incident_id", "INTEGER"),
+        ("org_id",      "INTEGER"),
+    ]:
         try:
             conn.execute(f"ALTER TABLE scenarios ADD COLUMN {col} {typedef}")
         except Exception:
             pass
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN org_id INTEGER")
+    except Exception:
+        pass
 
     conn.commit()
     _migrate_tak_settings(conn)
@@ -316,7 +332,11 @@ def update_last_login(user_id: int) -> None:
 def list_users() -> list:
     conn = _connect()
     rows = conn.execute(
-        "SELECT id, username, role, created_at, last_login FROM users ORDER BY created_at"
+        """SELECT u.id, u.username, u.role, u.created_at, u.last_login,
+                  u.org_id, o.name AS org_name
+           FROM users u
+           LEFT JOIN organizations o ON o.id = u.org_id
+           ORDER BY u.created_at"""
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -338,6 +358,70 @@ def update_password(user_id: int, password_hash: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def set_user_role(user_id: int, role: str) -> bool:
+    conn = _connect()
+    cur = conn.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+
+def set_user_org(user_id: int, org_id: Optional[int]) -> bool:
+    conn = _connect()
+    cur = conn.execute(
+        "UPDATE users SET org_id = ? WHERE id = ?", (org_id, user_id)
+    )
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+
+# ── Organizations ─────────────────────────────────────────────────────────────
+
+def list_orgs() -> list:
+    conn = _connect()
+    rows = conn.execute(
+        """SELECT o.id, o.name, o.created_at,
+                  COUNT(u.id) AS member_count
+           FROM organizations o
+           LEFT JOIN users u ON u.org_id = o.id
+           GROUP BY o.id ORDER BY o.name COLLATE NOCASE"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def create_org(name: str) -> dict:
+    conn = _connect()
+    cur = conn.execute("INSERT INTO organizations (name) VALUES (?)", (name,))
+    conn.commit()
+    row = conn.execute("SELECT * FROM organizations WHERE id=?", (cur.lastrowid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+def update_org(org_id: int, name: str) -> Optional[dict]:
+    conn = _connect()
+    conn.execute("UPDATE organizations SET name=? WHERE id=?", (name, org_id))
+    conn.commit()
+    row = conn.execute("SELECT * FROM organizations WHERE id=?", (org_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_org(org_id: int) -> bool:
+    conn = _connect()
+    # Unassign users first
+    conn.execute("UPDATE users SET org_id=NULL WHERE org_id=?", (org_id,))
+    cur = conn.execute("DELETE FROM organizations WHERE id=?", (org_id,))
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
 
 
 # ── Scenarios ─────────────────────────────────────────────────────────────────

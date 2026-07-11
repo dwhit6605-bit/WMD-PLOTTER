@@ -164,6 +164,19 @@
     <div class="msg" id="create-msg"></div>
   </div>
 
+  <!-- Organizations -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="margin:0">Organizations</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="new-org-name" placeholder="Organization name" style="flex:none;width:220px"/>
+        <button class="btn btn-green" onclick="createOrg()">+ Add</button>
+      </div>
+    </div>
+    <div id="org-list"><div class="muted" style="font-size:12px">Loading…</div></div>
+    <div class="msg" id="org-msg"></div>
+  </div>
+
   <!-- TAK Server Profiles -->
   <div class="card" id="tak-card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
@@ -308,7 +321,7 @@
         <tr>
           <th>Username</th>
           <th>Role</th>
-          <th>Created</th>
+          <th>Organization</th>
           <th>Last Login</th>
           <th></th>
         </tr>
@@ -317,6 +330,23 @@
         <tr><td colspan="5" class="empty">Loading…</td></tr>
       </tbody>
     </table>
+  </div>
+</div>
+
+<!-- Password Reset Modal -->
+<div id="pw-modal" class="modal-backdrop">
+  <div class="modal" style="width:min(380px,95vw)">
+    <h3>Reset Password</h3>
+    <p id="pw-modal-user" style="font-size:12px;color:var(--accent2);margin-bottom:14px"></p>
+    <input type="password" id="pw-new" placeholder="New password (min 8 chars)" autocomplete="new-password"
+           style="width:100%;margin-bottom:10px"/>
+    <input type="password" id="pw-confirm" placeholder="Confirm password"
+           style="width:100%;margin-bottom:14px"/>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closePwModal()">Cancel</button>
+      <button class="btn btn-green" onclick="submitPwReset()">Set Password</button>
+    </div>
+    <div class="msg" id="pw-msg"></div>
   </div>
 </div>
 
@@ -332,10 +362,13 @@ let _modalTruststoreB64   = null;
 let _modalHasTruststore   = false;
 let _modalClearTruststore = false;
 
+let _orgs = [];
+
 async function init() {
   const r = await fetch('/auth/me');
   if (!r.ok) { location.href = '/login'; return; }
   _me = await r.json();
+  await loadOrgs();
   loadUsers();
   loadProfiles();
   loadFacilities();
@@ -351,17 +384,47 @@ async function loadUsers() {
     tbody.innerHTML = '<tr><td colspan="5" class="empty">No users yet.</td></tr>';
     return;
   }
+  const orgOpts = '<option value="-1">— None —</option>' +
+    _orgs.map(o => `<option value="${o.id}">${esc(o.name)}</option>`).join('');
   tbody.innerHTML = d.users.map(u => `
     <tr>
       <td><strong>${esc(u.username)}</strong></td>
-      <td><span class="badge badge-${u.role}">${u.role}</span></td>
-      <td class="muted">${fmt(u.created_at)}</td>
-      <td class="muted">${fmt(u.last_login) || '—'}</td>
-      <td style="text-align:right">
-        ${u.username !== _me?.username ? `<button class="btn btn-red" onclick="deleteUser(${u.id},'${esc(u.username)}')">Delete</button>` : ''}
+      <td>
+        <select onchange="setUserRole(${u.id},this.value)"
+                style="font-size:11px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer;width:auto">
+          <option value="user"  ${u.role==='user'  ?'selected':''}>User</option>
+          <option value="admin" ${u.role==='admin' ?'selected':''}>Admin</option>
+        </select>
+      </td>
+      <td>
+        <select onchange="setUserOrg(${u.id},this.value)"
+                style="font-size:11px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer;width:auto;max-width:160px">
+          ${orgOpts.replace(`value="${u.org_id}"`, `value="${u.org_id}" selected`)}
+        </select>
+      </td>
+      <td class="muted" style="font-size:12px">${fmt(u.last_login) || '—'}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-outline btn-sm" onclick="openPwModal(${u.id},'${esc(u.username)}')" style="margin-right:4px">🔑 PW</button>
+        ${u.username !== _me?.username ? `<button class="btn btn-red" onclick="deleteUser(${u.id},'${esc(u.username)}')">Del</button>` : ''}
       </td>
     </tr>
   `).join('');
+}
+
+async function setUserRole(id, role) {
+  const r = await fetch(`/api/admin/users/${id}`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({role}),
+  });
+  if (!r.ok) { alert('Failed to update role'); loadUsers(); }
+}
+
+async function setUserOrg(id, orgIdStr) {
+  const r = await fetch(`/api/admin/users/${id}`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({org_id: parseInt(orgIdStr)}),
+  });
+  if (!r.ok) { alert('Failed to update organization'); loadUsers(); }
 }
 
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -598,6 +661,109 @@ async function testProfile(id) {
     statusEl.className   = 'tak-status err';
   }
   setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'tak-status'; }, 12000);
+}
+
+// ── Organizations ────────────────────────────────────────────────────────────
+
+async function loadOrgs() {
+  const r = await fetch('/api/admin/organizations');
+  if (!r.ok) return;
+  _orgs = await r.json();
+  renderOrgList();
+}
+
+function renderOrgList() {
+  const el = document.getElementById('org-list');
+  if (!_orgs.length) {
+    el.innerHTML = '<div class="muted" style="font-size:12px">No organizations yet. Add one to group your users.</div>';
+    return;
+  }
+  el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="color:var(--muted)">
+      <th style="padding:5px 8px;text-align:left">Name</th>
+      <th style="padding:5px 8px;text-align:left">Members</th>
+      <th></th>
+    </tr></thead>
+    <tbody>${_orgs.map(o => `
+      <tr style="border-top:1px solid var(--border)">
+        <td style="padding:6px 8px" id="org-name-${o.id}">
+          <strong>${esc(o.name)}</strong>
+        </td>
+        <td style="padding:6px 8px;color:var(--muted)">${o.member_count} user${o.member_count!==1?'s':''}</td>
+        <td style="padding:6px 8px;text-align:right;white-space:nowrap">
+          <button class="btn btn-outline btn-sm" onclick="renameOrg(${o.id},'${esc(o.name)}')">Rename</button>
+          <button class="btn btn-red" onclick="deleteOrg(${o.id},'${esc(o.name)}')">Del</button>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function createOrg() {
+  const name = document.getElementById('new-org-name').value.trim();
+  if (!name) { showMsg('org-msg', 'Name required.', 'error'); return; }
+  const r = await fetch('/api/admin/organizations', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({name}),
+  });
+  if (r.ok) {
+    document.getElementById('new-org-name').value = '';
+    await loadOrgs();
+    loadUsers();
+    showMsg('org-msg', `Organization "${name}" created.`, 'success');
+  } else {
+    const d = await r.json().catch(()=>({}));
+    showMsg('org-msg', d.detail || 'Failed.', 'error');
+  }
+}
+
+async function renameOrg(id, currentName) {
+  const name = prompt('Rename organization:', currentName);
+  if (!name || name.trim() === currentName) return;
+  const r = await fetch(`/api/admin/organizations/${id}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({name: name.trim()}),
+  });
+  if (r.ok) { await loadOrgs(); loadUsers(); showMsg('org-msg', 'Renamed.', 'success'); }
+  else { const d = await r.json().catch(()=>({})); showMsg('org-msg', d.detail||'Failed.','error'); }
+}
+
+async function deleteOrg(id, name) {
+  if (!confirm(`Delete organization "${name}"?\n\nMembers will be unassigned but not deleted.`)) return;
+  const r = await fetch(`/api/admin/organizations/${id}`, {method:'DELETE'});
+  if (r.ok) { await loadOrgs(); loadUsers(); showMsg('org-msg', 'Deleted.', 'success'); }
+  else { showMsg('org-msg', 'Delete failed.', 'error'); }
+}
+
+// ── Password Reset ────────────────────────────────────────────────────────────
+
+let _pwUserId = null;
+
+function openPwModal(id, username) {
+  _pwUserId = id;
+  document.getElementById('pw-modal-user').textContent = `User: ${username}`;
+  document.getElementById('pw-new').value = '';
+  document.getElementById('pw-confirm').value = '';
+  document.getElementById('pw-msg').className = 'msg';
+  document.getElementById('pw-modal').classList.add('open');
+}
+
+function closePwModal() {
+  document.getElementById('pw-modal').classList.remove('open');
+  _pwUserId = null;
+}
+
+async function submitPwReset() {
+  const pw  = document.getElementById('pw-new').value;
+  const pw2 = document.getElementById('pw-confirm').value;
+  if (pw.length < 8)  { showMsg('pw-msg','Password must be at least 8 characters.','error'); return; }
+  if (pw !== pw2)     { showMsg('pw-msg','Passwords do not match.','error'); return; }
+  const r = await fetch(`/api/admin/users/${_pwUserId}/password`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({new_password: pw}),
+  });
+  if (r.ok) { closePwModal(); showMsg('create-msg','Password updated.','success'); }
+  else { const d = await r.json().catch(()=>({})); showMsg('pw-msg', d.detail||'Failed.','error'); }
 }
 
 // ── Facility Library ─────────────────────────────────────────────────────────
