@@ -1465,6 +1465,7 @@ function _placeICSMarker(lat, lon) {
   const marker = L.marker([lat, lon], { icon, draggable: true }).addTo(map);
   marker._annotSlot = _activeSlot;
   marker._isICSMarker = true;
+  marker._icsType = _icsPlacingType;
   marker.on('click', function(ev) {
     if (_annotErase) {
       const slot = this._annotSlot ?? _activeSlot;
@@ -4568,17 +4569,35 @@ function _annotLayerToKML(layer) {
       <LineString><coordinates>${pts}</coordinates></LineString></Placemark>`;
   }
 
-  // Marker / Text label (ICS markers get their type label; text/other get tooltip or Geoman text)
+  // ICS marker — colored icon with proper label (handled before generic Marker check)
+  if (layer instanceof L.Marker && layer._isICSMarker && layer._icsType && ICS_TYPES[layer._icsType]) {
+    const t   = ICS_TYPES[layer._icsType];
+    const ll  = layer.getLatLng();
+    const kmlColor = _hexToKMLColor(t.color, 1.0);
+    return `<Placemark>
+      <name>${_escapeXML(t.label)}</name>
+      <Style>
+        <IconStyle>
+          <color>${kmlColor}</color>
+          <scale>1.3</scale>
+          <Icon><href>https://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>
+          <hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/>
+        </IconStyle>
+        <LabelStyle>
+          <color>ffffffff</color>
+          <scale>0.8</scale>
+        </LabelStyle>
+      </Style>
+      <Point><coordinates>${ll.lng.toFixed(6)},${ll.lat.toFixed(6)},0</coordinates></Point>
+    </Placemark>`;
+  }
+
+  // Text label / generic marker
   if (layer instanceof L.Marker) {
     const ll  = layer.getLatLng();
-    let txt;
-    if (layer._isICSMarker && layer._icsType && ICS_TYPES[layer._icsType]) {
-      txt = ICS_TYPES[layer._icsType].label;
-    } else {
-      txt = (layer.pm?.getText && layer.pm.getText())
-         || layer.getTooltip?.()?.getContent?.()
-         || 'Marker';
-    }
+    const txt = (layer.pm?.getText && layer.pm.getText())
+             || layer.getTooltip?.()?.getContent?.()
+             || 'Marker';
     return `<Placemark><name>${_escapeXML(txt)}</name>
       <Point><coordinates>${ll.lng.toFixed(6)},${ll.lat.toFixed(6)},0</coordinates></Point>
     </Placemark>`;
