@@ -1,6 +1,6 @@
 """
 SQLite-backed user store. No external database required.
-Schema: users(id, username, password_hash, role, created_at, last_login)
+Schema: users(id, username, email, password_hash, role, created_at, last_login)
 """
 
 import sqlite3
@@ -134,6 +134,10 @@ def init_db() -> None:
             pass
     try:
         conn.execute("ALTER TABLE users ADD COLUMN org_id INTEGER")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
     except Exception:
         pass
     try:
@@ -344,16 +348,17 @@ def get_user_by_id(user_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def create_user(username: str, password_hash: str, role: str = "user") -> dict:
+def create_user(username: str, password_hash: str, role: str = "user",
+                email: Optional[str] = None) -> dict:
     conn = _connect()
     cur = conn.execute(
-        "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-        (username, password_hash, role),
+        "INSERT INTO users (username, password_hash, role, email) VALUES (?, ?, ?, ?)",
+        (username, password_hash, role, email or None),
     )
     conn.commit()
     user_id = cur.lastrowid
     conn.close()
-    return {"id": user_id, "username": username, "role": role}
+    return {"id": user_id, "username": username, "role": role, "email": email}
 
 
 def update_last_login(user_id: int) -> None:
@@ -368,7 +373,7 @@ def update_last_login(user_id: int) -> None:
 def list_users() -> list:
     conn = _connect()
     rows = conn.execute(
-        """SELECT u.id, u.username, u.role, u.created_at, u.last_login,
+        """SELECT u.id, u.username, u.email, u.role, u.created_at, u.last_login,
                   u.org_id, o.name AS org_name
            FROM users u
            LEFT JOIN organizations o ON o.id = u.org_id
@@ -376,6 +381,17 @@ def list_users() -> list:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def update_user_email(user_id: int, email: Optional[str]) -> bool:
+    conn = _connect()
+    cur = conn.execute(
+        "UPDATE users SET email = ? WHERE id = ?", (email or None, user_id)
+    )
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
 
 
 def delete_user(user_id: int) -> bool:

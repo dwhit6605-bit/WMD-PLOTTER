@@ -223,6 +223,13 @@
                autocomplete="new-password" oninput="clearMsg()"/>
       </label>
 
+      <label>
+        Email <span style="font-weight:400;color:var(--muted)">(optional)</span>
+        <input type="email" id="inp-email" placeholder="your@email.com"
+               autocomplete="email" spellcheck="false" oninput="clearMsg()"/>
+        <span class="field-hint">Used by your admin to contact you — never shared</span>
+      </label>
+
       <label id="reg-code-wrap">
         Registration Code
         <input type="text" id="inp-code" placeholder="enter invite code"
@@ -303,6 +310,7 @@
     const username = document.getElementById('inp-user').value.trim();
     const password = document.getElementById('inp-pass').value;
     const password2 = document.getElementById('inp-pass2').value;
+    const email = document.getElementById('inp-email').value.trim();
     const code = document.getElementById('inp-code').value.trim();
     const btn = document.getElementById('btn-reg');
 
@@ -319,7 +327,7 @@
       const r = await fetch('/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, registration_code: code }),
+        body: JSON.stringify({ username, password, email: email || undefined, registration_code: code }),
       });
       const d = await r.json().catch(() => ({}));
       if (r.ok) {

@@ -321,6 +321,7 @@
       <thead>
         <tr>
           <th>Username</th>
+          <th>Email</th>
           <th>Role</th>
           <th>Organization</th>
           <th>Last Login</th>
@@ -328,7 +329,7 @@
         </tr>
       </thead>
       <tbody id="user-list">
-        <tr><td colspan="5" class="empty">Loading…</td></tr>
+        <tr><td colspan="6" class="empty">Loading…</td></tr>
       </tbody>
     </table>
   </div>
@@ -400,7 +401,7 @@ async function loadUsers() {
   const d = await r.json();
   const tbody = document.getElementById('user-list');
   if (!d.users.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty">No users yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No users yet.</td></tr>';
     return;
   }
   const orgOpts = '<option value="-1">— None —</option>' +
@@ -408,6 +409,13 @@ async function loadUsers() {
   tbody.innerHTML = d.users.map(u => `
     <tr>
       <td><strong>${esc(u.username)}</strong></td>
+      <td>
+        <input type="email" value="${esc(u.email||'')}" placeholder="—"
+               style="font-size:11px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;width:170px;outline:none"
+               onchange="setUserEmail(${u.id},this.value)"
+               onkeydown="if(event.key==='Enter')this.blur()"
+               title="Click to edit email"/>
+      </td>
       <td>
         <select onchange="setUserRole(${u.id},this.value)"
                 style="font-size:11px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer;width:auto">
@@ -445,6 +453,14 @@ async function setUserOrg(id, orgIdStr) {
     body: JSON.stringify({org_id: parseInt(orgIdStr)}),
   });
   if (!r.ok) { alert('Failed to update organization'); loadUsers(); }
+}
+
+async function setUserEmail(id, email) {
+  const r = await fetch(`/api/admin/users/${id}`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({email: email.trim()}),
+  });
+  if (!r.ok) { alert('Failed to update email'); loadUsers(); }
 }
 
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }

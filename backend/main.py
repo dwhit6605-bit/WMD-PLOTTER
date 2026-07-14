@@ -64,7 +64,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  save_scenario, list_scenarios, get_scenario, delete_scenario, \
                  create_incident, list_incidents, update_incident, \
                  list_facilities, create_facility, update_facility, delete_facility, \
-                 set_user_org, set_user_role, list_orgs, create_org, update_org, delete_org
+                 set_user_org, set_user_role, update_user_email, list_orgs, create_org, update_org, delete_org
 from tak_push import push_cot, push_test_point, push_bftr
 from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
@@ -306,6 +306,7 @@ async def auth_register(request: Request):
     username  = (body.get("username") or "").strip()
     password  = body.get("password") or ""
     reg_code  = (body.get("registration_code") or "").strip()
+    email     = (body.get("email") or "").strip() or None
 
     # Determine if the requester is an admin (already logged in)
     requester = getattr(request.state, "user", None)
@@ -327,7 +328,7 @@ async def auth_register(request: Request):
         raise HTTPException(status_code=409, detail="That username is already taken.")
 
     role = "user"
-    user = create_user(username, hash_password(password), role)
+    user = create_user(username, hash_password(password), role, email=email)
     return JSONResponse({"username": user["username"], "role": user["role"]}, status_code=201)
 
 
@@ -2007,6 +2008,7 @@ async def del_org(org_id: int, _: dict = Depends(require_admin)):
 class UserPatch(BaseModel):
     org_id: Optional[int] = None
     role:   Optional[str] = None
+    email:  Optional[str] = None
 
 class AdminPasswordReset(BaseModel):
     new_password: str = Field(min_length=8)
@@ -2020,6 +2022,8 @@ async def patch_user(user_id: int, body: UserPatch, admin: dict = Depends(requir
         if body.role not in ("user", "org_admin", "admin"):
             raise HTTPException(status_code=400, detail="Invalid role.")
         set_user_role(user_id, body.role)
+    if body.email is not None:
+        update_user_email(user_id, body.email.strip() or None)
     users = list_users()
     u = next((x for x in users if x["id"] == user_id), None)
     if not u:
