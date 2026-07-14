@@ -65,6 +65,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  create_incident, list_incidents, update_incident, \
                  list_facilities, create_facility, update_facility, delete_facility, \
                  set_user_org, set_user_role, set_user_status, update_user_email, list_orgs, create_org, update_org, delete_org
+from email_notify import notify_access_request
 from tak_push import push_cot, push_test_point, push_bftr
 from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
@@ -365,6 +366,7 @@ async def auth_request_access(request: Request):
 
     create_user(username, hash_password(password), role="user", email=email,
                 status="pending", display_name=display_name, access_reason=access_reason)
+    notify_access_request(display_name, username, access_reason, email)
     return JSONResponse({"ok": True}, status_code=201)
 
 
