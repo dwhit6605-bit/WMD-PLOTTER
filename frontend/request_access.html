@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>WMD Plotter — Request Access</title>
+  <link rel="icon" type="image/png" href="/static/icons/icon-192.png"/>
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --border:  #21262d;
+      --text:    #c9d1d9;
+      --muted:   #8b949e;
+      --green:   #00ff88;
+      --accent2: #79c0ff;
+      --warn:    #f0883e;
+      --red:     #f85149;
+    }
+
+    body {
+      min-height: 100dvh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Courier New', Courier, monospace;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .topbar-logo {
+      width: 32px; height: 32px;
+      background: var(--green);
+      clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 900; color: #000; letter-spacing: -1px;
+      flex-shrink: 0;
+    }
+    .topbar-title .brand { font-size: 13px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+    .topbar-title .sub   { font-size: 10px; color: var(--muted); letter-spacing: 0.5px; }
+    .topbar-warn {
+      margin-left: auto;
+      background: rgba(240,136,62,.15);
+      border: 1px solid rgba(240,136,62,.4);
+      color: var(--warn);
+      font-size: 10px; font-weight: 700; letter-spacing: 1px;
+      padding: 3px 8px; border-radius: 4px;
+    }
+
+    .page {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      gap: 20px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 460px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 40px rgba(0,0,0,.6);
+    }
+    .card-head {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border);
+      text-align: center;
+    }
+    .card-head h1 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: 0.5px; }
+    .card-head p  { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+
+    .card-body { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+    }
+    .field-hint { font-size: 10px; color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; margin-top: 2px; }
+
+    input[type=text], input[type=password], input[type=email], textarea {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color .15s;
+      width: 100%;
+    }
+    input[type=text]:focus, input[type=password]:focus,
+    input[type=email]:focus, textarea:focus {
+      border-color: var(--green);
+      box-shadow: 0 0 0 3px rgba(0,255,136,.08);
+    }
+    input::placeholder, textarea::placeholder { color: var(--muted); opacity: .6; }
+    textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+
+    .password-strength {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .password-strength-bar {
+      height: 100%;
+      border-radius: 2px;
+      transition: width .3s, background .3s;
+      width: 0%;
+    }
+
+    .msg { font-size: 12px; padding: 10px 12px; border-radius: 6px; display: none; }
+    .msg.error   { background: rgba(248,81,73,.1);  border: 1px solid rgba(248,81,73,.3);  color: var(--red);    display: block; }
+    .msg.success { background: rgba(0,255,136,.08); border: 1px solid rgba(0,255,136,.3);  color: var(--green);  display: block; }
+
+    .btn-primary {
+      width: 100%;
+      padding: 11px;
+      background: var(--green);
+      color: #000;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      border: none;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn-primary:hover  { opacity: .9; }
+    .btn-primary:active { transform: scale(.98); }
+    .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+
+    .card-foot {
+      padding: 14px 24px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .card-foot a { color: var(--accent2); text-decoration: none; font-weight: 600; }
+    .card-foot a:hover { text-decoration: underline; }
+
+    .auth-note { font-size: 10px; color: var(--muted); letter-spacing: 0.5px; text-align: center; }
+    .auth-note strong { color: var(--warn); }
+
+    /* Pending confirmation screen */
+    .pending-screen {
+      display: none;
+      padding: 32px 24px;
+      text-align: center;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .pending-icon { font-size: 48px; }
+    .pending-screen h2 { font-size: 16px; font-weight: 700; color: var(--green); letter-spacing: .5px; }
+    .pending-screen p  { font-size: 12px; color: var(--muted); line-height: 1.7; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-logo">W</div>
+  <div class="topbar-title">
+    <div class="brand">WHITWERX</div>
+    <div class="sub">MODEL DISPLAY (WMD)</div>
+  </div>
+  <div class="topbar-warn">FOR AUTHORIZED USE ONLY</div>
+</div>
+
+<div class="page">
+  <div class="card">
+    <div class="card-head">
+      <h1>Request Access</h1>
+      <p>WMD Plotter — CBRN Planning System<br>
+         Complete all fields. An administrator will review your request.</p>
+    </div>
+
+    <div id="form-body" class="card-body">
+      <div class="msg" id="msg"></div>
+
+      <label>
+        Full Name
+        <input type="text" id="inp-name" placeholder="First Last"
+               autocomplete="name" spellcheck="false" oninput="clearMsg()"/>
+      </label>
+
+      <label>
+        Agency / Organization
+        <input type="text" id="inp-org" placeholder="e.g. FEMA Region 6, Metro Fire, State OEM"
+               spellcheck="false" oninput="clearMsg()"/>
+        <span class="field-hint">Your agency, department, or organization</span>
+      </label>
+
+      <label>
+        Reason for Access
+        <textarea id="inp-reason" placeholder="Describe why you need access and how you intend to use WMD Plotter (exercise planning, incident support, training, etc.)"
+                  oninput="clearMsg()"></textarea>
+      </label>
+
+      <label>
+        Email
+        <input type="email" id="inp-email" placeholder="your@agency.gov"
+               autocomplete="email" spellcheck="false" oninput="clearMsg()"/>
+        <span class="field-hint">Used for account notifications — not shared</span>
+      </label>
+
+      <div style="border-top:1px solid var(--border);padding-top:16px;display:flex;flex-direction:column;gap:16px">
+        <label>
+          Username
+          <input type="text" id="inp-user" placeholder="choose a login username"
+                 autocomplete="username" spellcheck="false" oninput="clearMsg()"/>
+          <span class="field-hint">3–32 characters · used to sign in</span>
+        </label>
+
+        <label>
+          Password
+          <input type="password" id="inp-pass" placeholder="min 8 characters"
+                 autocomplete="new-password" oninput="updateStrength()"/>
+          <div class="password-strength">
+            <div class="password-strength-bar" id="strength-bar"></div>
+          </div>
+        </label>
+
+        <label>
+          Confirm Password
+          <input type="password" id="inp-pass2" placeholder="repeat password"
+                 autocomplete="new-password" oninput="clearMsg()"/>
+        </label>
+      </div>
+
+      <button class="btn-primary" id="btn-submit" onclick="doSubmit()">Submit Access Request</button>
+    </div>
+
+    <!-- Success / pending confirmation -->
+    <div id="pending-screen" class="pending-screen">
+      <div class="pending-icon">⏳</div>
+      <h2>Request Submitted</h2>
+      <p>Your access request has been received.<br>
+         An administrator will review it and approve or deny access.<br><br>
+         <strong style="color:var(--text)">Username: <span id="conf-username"></span></strong><br>
+         Keep your password somewhere safe — you'll use it to sign in once approved.</p>
+      <a href="/login" style="margin-top:8px;color:var(--accent2);font-size:12px;font-weight:600">← Back to Sign In</a>
+    </div>
+
+    <div class="card-foot" id="card-foot">
+      Already have an account? <a href="/login">Sign in</a>
+    </div>
+  </div>
+
+  <div class="auth-note">
+    Access is restricted to <strong>authorized personnel only</strong>.
+  </div>
+</div>
+
+<script>
+  function clearMsg() { document.getElementById('msg').className = 'msg'; }
+
+  function showMsg(text, type = 'error') {
+    const el = document.getElementById('msg');
+    el.textContent = text;
+    el.className = 'msg ' + type;
+  }
+
+  function updateStrength() {
+    const p = document.getElementById('inp-pass').value;
+    const bar = document.getElementById('strength-bar');
+    let score = 0;
+    if (p.length >= 8)  score++;
+    if (p.length >= 12) score++;
+    if (/[A-Z]/.test(p) && /[a-z]/.test(p)) score++;
+    if (/[0-9]/.test(p)) score++;
+    if (/[^A-Za-z0-9]/.test(p)) score++;
+    bar.style.width      = [0, 20, 40, 65, 85, 100][score] + '%';
+    bar.style.background = ['', '#f85149', '#f0883e', '#e3b341', '#79c0ff', '#00ff88'][score];
+    clearMsg();
+  }
+
+  async function doSubmit() {
+    const name     = document.getElementById('inp-name').value.trim();
+    const org      = document.getElementById('inp-org').value.trim();
+    const reason   = document.getElementById('inp-reason').value.trim();
+    const email    = document.getElementById('inp-email').value.trim();
+    const username = document.getElementById('inp-user').value.trim();
+    const password = document.getElementById('inp-pass').value;
+    const password2 = document.getElementById('inp-pass2').value;
+    const btn = document.getElementById('btn-submit');
+
+    if (!name)     { showMsg('Full name is required.'); return; }
+    if (!org)      { showMsg('Agency / organization is required.'); return; }
+    if (!reason)   { showMsg('Please describe your reason for access.'); return; }
+    if (!email)    { showMsg('Email is required.'); return; }
+    if (!username || username.length < 3) { showMsg('Username must be at least 3 characters.'); return; }
+    if (!password || password.length < 8) { showMsg('Password must be at least 8 characters.'); return; }
+    if (password !== password2) { showMsg('Passwords do not match.'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Submitting…';
+
+    const access_reason = `${org} — ${reason}`;
+
+    try {
+      const r = await fetch('/auth/request-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, display_name: name, access_reason, email }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        document.getElementById('form-body').style.display = 'none';
+        document.getElementById('card-foot').style.display = 'none';
+        document.getElementById('conf-username').textContent = username;
+        document.getElementById('pending-screen').style.display = 'flex';
+      } else {
+        showMsg(d.detail || 'Submission failed — please try again.');
+        btn.disabled = false;
+        btn.textContent = 'Submit Access Request';
+      }
+    } catch {
+      showMsg('Network error — check your connection.');
+      btn.disabled = false;
+      btn.textContent = 'Submit Access Request';
+    }
+  }
+</script>
+</body>
+</html>

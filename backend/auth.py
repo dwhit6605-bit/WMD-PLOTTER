@@ -64,10 +64,11 @@ def decode_token(token: str) -> dict:
 
 # Paths that don't require authentication — enumerate explicitly so /auth/me stays protected
 _PUBLIC_EXACT = {
-    "/login", "/register",
+    "/login", "/register", "/request-access",
     "/sw.js", "/manifest.json",
     # Auth actions that work without a cookie
     "/auth/login", "/auth/logout", "/auth/register", "/auth/registration-status",
+    "/auth/request-access",
 }
 _PUBLIC_PREFIXES = ("/static/icons/", "/kml/")
 _PUBLIC_API      = {"/api/health"}

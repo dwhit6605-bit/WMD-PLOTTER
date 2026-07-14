@@ -1,6 +1,6 @@
 """
 SQLite-backed user store. No external database required.
-Schema: users(id, username, email, password_hash, role, created_at, last_login)
+Schema: users(id, username, email, password_hash, role, status, display_name, access_reason, created_at, last_login)
 """
 
 import sqlite3
@@ -138,6 +138,18 @@ def init_db() -> None:
         pass
     try:
         conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN access_reason TEXT")
     except Exception:
         pass
     try:
@@ -349,16 +361,20 @@ def get_user_by_id(user_id: int) -> Optional[dict]:
 
 
 def create_user(username: str, password_hash: str, role: str = "user",
-                email: Optional[str] = None) -> dict:
+                email: Optional[str] = None, status: str = "active",
+                display_name: Optional[str] = None,
+                access_reason: Optional[str] = None) -> dict:
     conn = _connect()
     cur = conn.execute(
-        "INSERT INTO users (username, password_hash, role, email) VALUES (?, ?, ?, ?)",
-        (username, password_hash, role, email or None),
+        """INSERT INTO users (username, password_hash, role, email, status, display_name, access_reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (username, password_hash, role, email or None, status,
+         display_name or None, access_reason or None),
     )
     conn.commit()
     user_id = cur.lastrowid
     conn.close()
-    return {"id": user_id, "username": username, "role": role, "email": email}
+    return {"id": user_id, "username": username, "role": role, "email": email, "status": status}
 
 
 def update_last_login(user_id: int) -> None:
@@ -373,14 +389,27 @@ def update_last_login(user_id: int) -> None:
 def list_users() -> list:
     conn = _connect()
     rows = conn.execute(
-        """SELECT u.id, u.username, u.email, u.role, u.created_at, u.last_login,
+        """SELECT u.id, u.username, u.email, u.role, u.status,
+                  u.display_name, u.access_reason,
+                  u.created_at, u.last_login,
                   u.org_id, o.name AS org_name
            FROM users u
            LEFT JOIN organizations o ON o.id = u.org_id
-           ORDER BY u.created_at"""
+           ORDER BY
+             CASE COALESCE(u.status,'active') WHEN 'pending' THEN 0 ELSE 1 END,
+             u.created_at"""
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def set_user_status(user_id: int, status: str) -> bool:
+    conn = _connect()
+    cur = conn.execute("UPDATE users SET status = ? WHERE id = ?", (status, user_id))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
 
 
 def update_user_email(user_id: int, email: Optional[str]) -> bool:

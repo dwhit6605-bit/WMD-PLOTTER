@@ -64,7 +64,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  save_scenario, list_scenarios, get_scenario, delete_scenario, \
                  create_incident, list_incidents, update_incident, \
                  list_facilities, create_facility, update_facility, delete_facility, \
-                 set_user_org, set_user_role, update_user_email, list_orgs, create_org, update_org, delete_org
+                 set_user_org, set_user_role, set_user_status, update_user_email, list_orgs, create_org, update_org, delete_org
 from tak_push import push_cot, push_test_point, push_bftr
 from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
@@ -266,6 +266,11 @@ async def register_page():
     return HTMLResponse((FRONTEND_DIR / "register.html").read_text())
 
 
+@app.get("/request-access", response_class=HTMLResponse)
+async def request_access_page():
+    return HTMLResponse((FRONTEND_DIR / "request_access.html").read_text())
+
+
 # ── Auth API ──────────────────────────────────────────────────────────────────
 
 @app.post("/auth/login")
@@ -277,6 +282,10 @@ async def auth_login(request: Request):
     user = get_user_by_username(username)
     if not user or not verify_password(password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password.")
+    if user.get("status", "active") == "pending":
+        raise HTTPException(status_code=403, detail="Your account is pending administrator approval. You will be notified when access is granted.")
+    if user.get("status", "active") == "denied":
+        raise HTTPException(status_code=403, detail="Your access request was not approved. Contact your administrator for more information.")
 
     update_last_login(user["id"])
     token = create_token(user["id"], user["username"], user["role"], org_id=user.get("org_id"))
@@ -330,6 +339,33 @@ async def auth_register(request: Request):
     role = "user"
     user = create_user(username, hash_password(password), role, email=email)
     return JSONResponse({"username": user["username"], "role": user["role"]}, status_code=201)
+
+
+@app.post("/auth/request-access")
+async def auth_request_access(request: Request):
+    body         = await request.json()
+    username     = (body.get("username") or "").strip()
+    password     = body.get("password") or ""
+    display_name = (body.get("display_name") or "").strip()
+    access_reason = (body.get("access_reason") or "").strip()
+    email        = (body.get("email") or "").strip() or None
+
+    if not username or len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
+    if len(username) > 32:
+        raise HTTPException(status_code=400, detail="Username must be 32 characters or less.")
+    if not password or len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if not display_name:
+        raise HTTPException(status_code=400, detail="Full name is required.")
+    if not access_reason:
+        raise HTTPException(status_code=400, detail="Please describe your organization and reason for access.")
+    if get_user_by_username(username):
+        raise HTTPException(status_code=409, detail="That username is already taken.")
+
+    create_user(username, hash_password(password), role="user", email=email,
+                status="pending", display_name=display_name, access_reason=access_reason)
+    return JSONResponse({"ok": True}, status_code=201)
 
 
 @app.get("/auth/me")
@@ -2029,6 +2065,20 @@ async def patch_user(user_id: int, body: UserPatch, admin: dict = Depends(requir
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
     return u
+
+@app.post("/api/admin/users/{user_id}/approve")
+async def approve_user(user_id: int, _: dict = Depends(require_admin)):
+    if not set_user_status(user_id, "active"):
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True}
+
+
+@app.delete("/api/admin/users/{user_id}/deny")
+async def deny_user(user_id: int, _: dict = Depends(require_admin)):
+    if not delete_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True}
+
 
 @app.post("/api/admin/users/{user_id}/password")
 async def admin_reset_password(user_id: int, body: AdminPasswordReset,

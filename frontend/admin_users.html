@@ -149,6 +149,15 @@
 <div class="main">
   <h2>User Accounts</h2>
 
+  <!-- Pending Access Requests -->
+  <div class="card" id="pending-card" style="display:none;border-color:rgba(248,81,73,.5);background:rgba(248,81,73,.03)">
+    <h3 style="color:var(--red);display:flex;align-items:center;gap:8px">
+      🔔 Pending Access Requests
+      <span id="pending-count" style="background:var(--red);color:#fff;font-size:11px;font-weight:700;border-radius:10px;padding:1px 8px">0</span>
+    </h3>
+    <div id="pending-list" style="display:flex;flex-direction:column;gap:10px;margin-top:4px"></div>
+  </div>
+
   <!-- Create user -->
   <div class="card">
     <h3>Create User</h3>
@@ -399,6 +408,39 @@ async function loadUsers() {
   const r = await fetch('/api/admin/users');
   if (!r.ok) return;
   const d = await r.json();
+
+  // Split pending vs active
+  const pending = (d.users || []).filter(u => u.status === 'pending');
+  const active  = (d.users || []).filter(u => u.status !== 'pending');
+
+  // Render pending card
+  const pCard = document.getElementById('pending-card');
+  const pList = document.getElementById('pending-list');
+  document.getElementById('pending-count').textContent = pending.length;
+  if (pending.length > 0) {
+    pCard.style.display = 'block';
+    pList.innerHTML = pending.map(u => `
+      <div style="background:var(--bg);border:1px solid rgba(248,81,73,.3);border-radius:8px;padding:12px 14px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700;color:var(--text)">${esc(u.display_name || u.username)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">@${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''}</div>
+            <div style="font-size:11px;color:var(--text);margin-top:6px;line-height:1.5">${esc(u.access_reason || '—')}</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:4px">Requested ${fmt(u.created_at)}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0;align-items:flex-start">
+            <button class="btn btn-green btn-sm" onclick="approveUser(${u.id},'${esc(u.display_name || u.username)}')">✓ Approve</button>
+            <button class="btn btn-red btn-sm"   onclick="denyUser(${u.id},'${esc(u.display_name || u.username)}')">✕ Deny</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } else {
+    pCard.style.display = 'none';
+  }
+
+  // Swap full list for active-only
+  d.users = active;
   const tbody = document.getElementById('user-list');
   if (!d.users.length) {
     tbody.innerHTML = '<tr><td colspan="6" class="empty">No users yet.</td></tr>';
@@ -461,6 +503,20 @@ async function setUserEmail(id, email) {
     body: JSON.stringify({email: email.trim()}),
   });
   if (!r.ok) { alert('Failed to update email'); loadUsers(); }
+}
+
+async function approveUser(id, name) {
+  if (!confirm(`Approve access for ${name}?`)) return;
+  const r = await fetch(`/api/admin/users/${id}/approve`, { method: 'POST' });
+  if (r.ok) loadUsers();
+  else alert('Failed to approve user');
+}
+
+async function denyUser(id, name) {
+  if (!confirm(`Deny and delete the request from ${name}? This cannot be undone.`)) return;
+  const r = await fetch(`/api/admin/users/${id}/deny`, { method: 'DELETE' });
+  if (r.ok) loadUsers();
+  else alert('Failed to deny user');
 }
 
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
