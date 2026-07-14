@@ -128,6 +128,13 @@ input:checked+.slider:before{transform:translateX(16px)}
 .color-swatches{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}
 .clr-swatch{width:22px;height:22px;border-radius:4px;cursor:pointer;border:2px solid transparent;flex-shrink:0;transition:border-color .12s}
 .clr-swatch.clr-active{border-color:#fff!important}
+.annot-sub{font-size:9px;font-weight:700;letter-spacing:.07em;color:var(--muted);margin-bottom:4px;margin-top:6px}
+.ics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin-bottom:4px}
+.ics-btn{padding:5px 2px;font-size:11px;border-radius:5px;line-height:1.3;text-align:center}
+.zone-row{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:6px}
+.zone-btn{padding:5px 2px;font-size:11px;font-weight:700;border-radius:5px;border:1px solid;cursor:pointer}
+.ann-lbl-tooltip{background:#0d1117!important;border:1px solid var(--border)!important;color:#e6edf3!important;font-family:monospace;font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.5)!important}
+.ann-lbl-tooltip::before,.ann-lbl-tooltip::after{display:none!important}
 .slot-tabs{display:flex;gap:4px;margin-bottom:8px}
 .slot-tab{flex:1;padding:3px 5px;font-size:11px;font-weight:700;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--muted);cursor:pointer;transition:all .15s}
 .slot-tab.active-slot{color:#0d1117;border-color:transparent}
@@ -926,14 +933,38 @@ input:checked+.slider:before{transform:translateX(16px)}
       </div>
 
       <!-- ANNOTATE -->
-      <div class="section" id="section-annotate">
+      <div class="section" id="section-annotate" style="display:none">
         <div class="section-hdr">✏️ Draw / Annotate</div>
+
+        <!-- ICS Markers -->
+        <div class="annot-sub">ICS MARKERS</div>
+        <div class="ics-grid">
+          <button class="btn btn-ghost ics-btn annot-btn" id="ics-btn-cp"      title="Command Post"     onclick="startICSMode('cp')">⭐<br><span style="font-size:9px">CP</span></button>
+          <button class="btn btn-ghost ics-btn annot-btn" id="ics-btn-staging" title="Staging Area"      onclick="startICSMode('staging')">🅿<br><span style="font-size:9px">Staging</span></button>
+          <button class="btn btn-ghost ics-btn annot-btn" id="ics-btn-decon"   title="Decon Station"    onclick="startICSMode('decon')">💧<br><span style="font-size:9px">Decon</span></button>
+          <button class="btn btn-ghost ics-btn annot-btn" id="ics-btn-medical" title="Medical Triage"   onclick="startICSMode('medical')">➕<br><span style="font-size:9px">Medical</span></button>
+          <button class="btn btn-ghost ics-btn annot-btn" id="ics-btn-lz"      title="Landing Zone"     onclick="startICSMode('lz')">🚁<br><span style="font-size:9px">LZ</span></button>
+          <button class="btn btn-ghost ics-btn annot-btn" id="ics-btn-road"    title="Road Block"       onclick="startICSMode('road')">🚧<br><span style="font-size:9px">Block</span></button>
+          <button class="btn btn-ghost ics-btn annot-btn" id="ics-btn-hazard"  title="Hazard"           onclick="startICSMode('hazard')">⚠️<br><span style="font-size:9px">Hazard</span></button>
+          <button class="btn btn-ghost ics-btn annot-btn" id="ics-btn-shelter" title="Shelter-in-Place"  onclick="startICSMode('shelter')">🏠<br><span style="font-size:9px">Shelter</span></button>
+        </div>
+
+        <!-- Zone Presets -->
+        <div class="annot-sub">ZONES</div>
+        <div class="zone-row">
+          <button class="zone-btn" style="background:rgba(255,68,68,.12);border-color:rgba(255,68,68,.5);color:#FF4444" onclick="startZoneDraw('hot')">🔴 Hot</button>
+          <button class="zone-btn" style="background:rgba(255,140,0,.12);border-color:rgba(255,140,0,.5);color:#FF8C00" onclick="startZoneDraw('warm')">🟠 Warm</button>
+          <button class="zone-btn" style="background:rgba(51,153,255,.12);border-color:rgba(51,153,255,.5);color:#3399FF" onclick="startZoneDraw('cold')">🔵 Cold</button>
+        </div>
+
+        <!-- Freehand Draw -->
+        <div class="annot-sub">DRAW</div>
         <div class="annot-toolbar">
-          <button class="btn btn-ghost annot-btn" id="annot-btn-Line"    title="Draw line"    onclick="startDraw('Line')">╱</button>
-          <button class="btn btn-ghost annot-btn" id="annot-btn-Polygon" title="Draw polygon" onclick="startDraw('Polygon')">⬡</button>
-          <button class="btn btn-ghost annot-btn" id="annot-btn-Circle"  title="Draw circle"  onclick="startDraw('Circle')">○</button>
+          <button class="btn btn-ghost annot-btn" id="annot-btn-Line"    title="Draw line"      onclick="startDraw('Line')">╱</button>
+          <button class="btn btn-ghost annot-btn" id="annot-btn-Polygon" title="Draw polygon"   onclick="startDraw('Polygon')">⬡</button>
+          <button class="btn btn-ghost annot-btn" id="annot-btn-Circle"  title="Draw circle"    onclick="startDraw('Circle')">○</button>
           <button class="btn btn-ghost annot-btn" id="annot-btn-Text"    title="Add text label" onclick="startDraw('Text')" style="font-size:13px;font-weight:700">T</button>
-          <button class="btn btn-ghost annot-btn" id="annot-btn-erase"   title="Delete annotation (click a shape)" onclick="toggleAnnotErase()" style="font-size:13px">🗑</button>
+          <button class="btn btn-ghost annot-btn" id="annot-btn-erase"   title="Erase mode — click shapes to delete" onclick="toggleAnnotErase()" style="font-size:13px">🗑</button>
         </div>
         <div class="color-swatches" id="annot-colors">
           <div class="clr-swatch clr-active" data-color="#FF4444" style="background:#FF4444" onclick="setAnnotColor('#FF4444')" title="Red"></div>
@@ -948,7 +979,7 @@ input:checked+.slider:before{transform:translateX(16px)}
       </div>
 
       <!-- EXPORT -->
-      <div class="section">
+      <div class="section" id="section-export" style="display:none">
         <div class="section-hdr">📤 Export Active Overlays</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:8px" id="export-summary">No overlays computed yet.</div>
         <div class="export-grid">
@@ -1281,6 +1312,18 @@ let _annotColor  = '#FF4444';
 let _annotMode   = null;          // currently active draw type string or null
 let _annotErase  = false;
 let _annotLayers = [[], [], []];  // per-slot layer arrays
+let _icsPlacingMode = false, _icsPlacingType = null;
+
+const ICS_TYPES = {
+  cp:      { icon:'⭐', label:'Command Post',    color:'#00ff88', bg:'rgba(0,30,15,.92)' },
+  staging: { icon:'🅿',  label:'Staging Area',    color:'#79c0ff', bg:'rgba(0,20,50,.92)' },
+  decon:   { icon:'💧', label:'Decon Station',   color:'#00ccff', bg:'rgba(0,25,40,.92)' },
+  medical: { icon:'➕', label:'Medical Triage',  color:'#ff6666', bg:'rgba(40,0,0,.92)'  },
+  lz:      { icon:'🚁', label:'Landing Zone',    color:'#ffd700', bg:'rgba(30,25,0,.92)' },
+  road:    { icon:'🚧', label:'Road Block',       color:'#ff8c00', bg:'rgba(30,15,0,.92)' },
+  hazard:  { icon:'⚠️',  label:'Hazard',          color:'#ff3333', bg:'rgba(40,0,0,.92)'  },
+  shelter: { icon:'🏠', label:'Shelter-in-Place', color:'#c9d1d9', bg:'rgba(20,25,30,.92)'},
+};
 
 function _initAnnotations() {
   if (!map.pm) return;
@@ -1299,16 +1342,15 @@ function _initAnnotations() {
       layer.setStyle({ color:_annotColor, fillColor:_annotColor,
                        fillOpacity:0.15, weight:2.5, opacity:0.9 });
     }
-    // Tag with slot
     layer._annotSlot = _activeSlot;
     _annotLayers[_activeSlot].push(layer);
-    // Allow editing on click (toggle)
     layer.on('click', function() {
       if (!_annotErase) this.pm.toggleEdit();
     });
-    // Exit draw mode after each shape so user re-clicks to draw another
     _annotMode = null;
     _updateAnnotBtns();
+    // Prompt for optional label (skip for Text — user already typed the text)
+    if (e.shape !== 'Text') _showAnnotLabelPopup(layer);
   });
 
   map.on('pm:remove', e => {
@@ -1383,11 +1425,106 @@ function _stopAllAnnotModes() {
   map.pm.disableDraw();
   map.pm.disableGlobalRemovalMode();
   _annotMode = null; _annotErase = false;
+  _icsPlacingMode = false; _icsPlacingType = null;
   _updateAnnotBtns();
   document.getElementById('annot-btn-erase')?.classList.remove('annot-active');
+  document.querySelectorAll('.ics-btn').forEach(b => b.classList.remove('annot-active'));
+  map.getContainer().style.cursor = '';
 }
 
 _initAnnotations();
+
+// ── ICS Markers ───────────────────────────────────────────────────────────────
+function startICSMode(typeId) {
+  if (_icsPlacingMode && _icsPlacingType === typeId) {
+    _icsPlacingMode = false; _icsPlacingType = null;
+    map.getContainer().style.cursor = '';
+    document.querySelectorAll('.ics-btn').forEach(b => b.classList.remove('annot-active'));
+    return;
+  }
+  _stopAllAnnotModes();
+  _icsPlacingMode = true; _icsPlacingType = typeId;
+  map.getContainer().style.cursor = 'crosshair';
+  document.getElementById(`ics-btn-${typeId}`)?.classList.add('annot-active');
+  toast(`Click map to place ${ICS_TYPES[typeId].label}`, 2000);
+}
+
+function _placeICSMarker(lat, lon) {
+  const t = ICS_TYPES[_icsPlacingType];
+  if (!t) return;
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="background:${t.bg};border:2px solid ${t.color};border-radius:6px;
+      padding:3px 8px;display:flex;align-items:center;gap:5px;white-space:nowrap;
+      box-shadow:0 2px 10px rgba(0,0,0,.7);cursor:pointer;pointer-events:auto">
+      <span style="font-size:14px">${t.icon}</span>
+      <span style="font-size:9px;font-weight:800;color:${t.color};letter-spacing:.08em;font-family:monospace">${t.label.toUpperCase()}</span>
+    </div>`,
+    iconSize: null, iconAnchor: [0, 0]
+  });
+  const marker = L.marker([lat, lon], { icon, draggable: true }).addTo(map);
+  marker._annotSlot = _activeSlot;
+  marker._isICSMarker = true;
+  marker.on('click', function(ev) {
+    if (_annotErase) {
+      const slot = this._annotSlot ?? _activeSlot;
+      map.removeLayer(this);
+      _annotLayers[slot] = _annotLayers[slot].filter(l => l !== this);
+      L.DomEvent.stop(ev);
+    }
+  });
+  _annotLayers[_activeSlot].push(marker);
+  // Reset placing mode but keep type so user can place multiple
+  _icsPlacingMode = false; _icsPlacingType = null;
+  map.getContainer().style.cursor = '';
+  document.querySelectorAll('.ics-btn').forEach(b => b.classList.remove('annot-active'));
+}
+
+// ── Zone presets ─────────────────────────────────────────────────────────────
+function startZoneDraw(zone) {
+  const colors = { hot:'#FF4444', warm:'#FF8C00', cold:'#3399FF' };
+  setAnnotColor(colors[zone]);
+  startDraw('Circle');
+  toast(`Draw ${zone} zone — click center, drag to set radius`, 2500);
+}
+
+// ── Label popup after drawing ─────────────────────────────────────────────────
+function _showAnnotLabelPopup(layer) {
+  const center = layer.getBounds ? layer.getBounds().getCenter() : layer.getLatLng();
+  if (!center) return;
+  const uid = 'al_' + Date.now();
+  const popup = L.popup({ closeButton: true, className: 'ann-lbl-popup', minWidth: 230, maxWidth: 300 })
+    .setLatLng(center)
+    .setContent(`<div style="display:flex;gap:6px;align-items:center;padding:2px 0">
+      <input id="${uid}" type="text" placeholder="Label (Enter to skip)"
+             style="font-family:monospace;font-size:12px;padding:4px 8px;background:#0d1117;
+                    border:1px solid #30363d;color:#e6edf3;border-radius:4px;flex:1;outline:none"/>
+      <button onclick="_applyAnnotLabel('${uid}',window._pendingAnnotLayer)"
+              style="background:#00ff88;color:#000;border:none;border-radius:4px;
+                     padding:4px 10px;font-weight:700;cursor:pointer;font-family:monospace;font-size:12px">✓</button>
+    </div>`)
+    .openOn(map);
+  window._pendingAnnotLayer = layer;
+  setTimeout(() => {
+    const inp = document.getElementById(uid);
+    if (!inp) return;
+    inp.focus();
+    inp.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter')  { ev.preventDefault(); _applyAnnotLabel(uid, layer); }
+      if (ev.key === 'Escape') { map.closePopup(); window._pendingAnnotLayer = null; }
+    });
+  }, 60);
+}
+
+function _applyAnnotLabel(uid, layer) {
+  const inp = document.getElementById(uid);
+  const val = inp ? inp.value.trim() : '';
+  map.closePopup();
+  if (val && layer) {
+    layer.bindTooltip(val, { permanent: true, direction: 'center', className: 'ann-lbl-tooltip' });
+  }
+  window._pendingAnnotLayer = null;
+}
 
 map.on('mousemove', e => {
   document.getElementById('sb-coords').textContent =
@@ -1402,6 +1539,7 @@ map.on('click', e => {
   else if (blevePlacingMode)    { placeBleve(lat,lon);   blevePlacingMode=false;    map.getContainer().style.cursor=''; }
   else if (lineStartPlacingMode){ placeLineStart(lat,lon); lineStartPlacingMode=false; map.getContainer().style.cursor=''; }
   else if (lineEndPlacingMode)  { placeLineEnd(lat,lon);   lineEndPlacingMode=false;   map.getContainer().style.cursor=''; }
+  else if (_icsPlacingMode)     { _placeICSMarker(lat, lon); }
 });
 
 setInterval(() => {
@@ -1628,11 +1766,14 @@ function buildToolPicker() {
 
 function showToolPicker() {
   document.getElementById('section-toolpicker').style.display = 'block';
+  document.getElementById('section-annotate').style.display = 'block';
 }
 
 function hideToolPicker() {
   document.getElementById('section-toolpicker').style.display = 'none';
   document.getElementById('section-add-overlay').style.display = 'none';
+  document.getElementById('section-annotate').style.display = 'none';
+  document.getElementById('section-export').style.display = 'none';
   [...activePanels].forEach(id => deactivateTool(id));
 }
 
@@ -4316,7 +4457,13 @@ function _refreshExportUI() {
   document.getElementById('export-summary').textContent = hasAny ? `Exporting: ${active.join(' + ')}` : 'No overlays computed yet.';
 }
 
-function enableExport(tool) { _activeOverlays[tool]=true; _refreshExportUI(); showAddOverlay(); _maybeAutoInfra(); }
+function enableExport(tool) {
+  _activeOverlays[tool]=true;
+  _refreshExportUI();
+  showAddOverlay();
+  _maybeAutoInfra();
+  document.getElementById('section-export').style.display = 'block';
+}
 
 let _autoInfra = localStorage.getItem('autoInfra') === 'true';
 let _autoInfraTimer = null;
@@ -4923,6 +5070,18 @@ Promise.all([
 });
 
 _initAutoInfra();
+
+// ── Auto-geolocation on load ──────────────────────────────────────────────────
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      map.setView([pos.coords.latitude, pos.coords.longitude], 12);
+      toast('📍 Map centered on your location — click map or search to place incident', 3500);
+    },
+    () => { /* permission denied or unavailable — keep default view */ },
+    { timeout: 8000, maximumAge: 300000 }
+  );
+}
 </script>
 
 <script>
