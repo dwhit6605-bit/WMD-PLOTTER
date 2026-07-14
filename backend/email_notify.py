@@ -11,6 +11,7 @@ import os
 import logging
 import threading
 from datetime import datetime, timezone
+from typing import Optional
 
 import requests
 
@@ -45,7 +46,7 @@ def notify_access_request(
     display_name: str,
     username: str,
     access_reason: str,
-    email: str | None,
+    email: Optional[str],
 ) -> None:
     """
     Fire-and-forget notification when a new user submits an access request.
