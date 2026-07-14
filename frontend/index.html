@@ -4530,6 +4530,8 @@ function _annotLayerToKML(layer) {
     <PolyStyle><color>${fillClr}</color></PolyStyle>
   </Style>`;
 
+  const _lbl = l => _escapeXML(l.getTooltip?.()?.getContent?.() || '');
+
   // Circle — approximate as 64-vertex polygon
   if (layer instanceof L.Circle) {
     const c  = layer.getLatLng();
@@ -4541,7 +4543,7 @@ function _annotLayerToKML(layer) {
       const dlon = (rm / (111320 * Math.cos(c.lat * Math.PI / 180))) * Math.sin(θ);
       pts.push(`${(c.lng + dlon).toFixed(6)},${(c.lat + dlat).toFixed(6)},0`);
     }
-    return `<Placemark><name>Circle</name>${styleEl}
+    return `<Placemark><name>${_lbl(layer) || 'Circle'}</name>${styleEl}
       <Polygon><outerBoundaryIs><LinearRing>
         <coordinates>${pts.join(' ')}</coordinates>
       </LinearRing></outerBoundaryIs></Polygon></Placemark>`;
@@ -4552,7 +4554,7 @@ function _annotLayerToKML(layer) {
     const ring = layer.getLatLngs()[0];
     const pts  = ring.map(ll => `${ll.lng.toFixed(6)},${ll.lat.toFixed(6)},0`);
     pts.push(pts[0]); // close ring
-    return `<Placemark><name>Polygon</name>${styleEl}
+    return `<Placemark><name>${_lbl(layer) || 'Polygon'}</name>${styleEl}
       <Polygon><outerBoundaryIs><LinearRing>
         <coordinates>${pts.join(' ')}</coordinates>
       </LinearRing></outerBoundaryIs></Polygon></Placemark>`;
@@ -4562,14 +4564,21 @@ function _annotLayerToKML(layer) {
   if (layer instanceof L.Polyline) {
     const lls = layer.getLatLngs();
     const pts  = lls.map(ll => `${ll.lng.toFixed(6)},${ll.lat.toFixed(6)},0`).join(' ');
-    return `<Placemark><name>Line</name>${styleEl}
+    return `<Placemark><name>${_lbl(layer) || 'Line'}</name>${styleEl}
       <LineString><coordinates>${pts}</coordinates></LineString></Placemark>`;
   }
 
-  // Marker / Text label
+  // Marker / Text label (ICS markers get their type label; text/other get tooltip or Geoman text)
   if (layer instanceof L.Marker) {
     const ll  = layer.getLatLng();
-    const txt = (layer.pm?.getText && layer.pm.getText()) || 'Label';
+    let txt;
+    if (layer._isICSMarker && layer._icsType && ICS_TYPES[layer._icsType]) {
+      txt = ICS_TYPES[layer._icsType].label;
+    } else {
+      txt = (layer.pm?.getText && layer.pm.getText())
+         || layer.getTooltip?.()?.getContent?.()
+         || 'Marker';
+    }
     return `<Placemark><name>${_escapeXML(txt)}</name>
       <Point><coordinates>${ll.lng.toFixed(6)},${ll.lat.toFixed(6)},0</coordinates></Point>
     </Placemark>`;
@@ -4601,20 +4610,31 @@ async function pushToTAK() {
   const orig = btn.textContent;
   btn.disabled = true;
 
+  // Build annotation KML to include in the push package
+  const allAnnot = _annotLayers.flat().filter(Boolean);
+  let annotKml = '';
+  if (allAnnot.length > 0) {
+    const placemarks = allAnnot.map(_annotLayerToKML).filter(Boolean).join('\n');
+    if (placemarks) annotKml = `<Folder><name>Annotations</name>\n${placemarks}\n</Folder>`;
+  }
+  const pushBody = JSON.stringify(annotKml ? { annotations_kml: annotKml } : {});
+  const pushHeaders = { 'Content-Type': 'application/json' };
+
   try {
     // Attempt 1: Marti HTTPS data package (broadest distribution)
     btn.textContent = '📡 Pushing (HTTP)…';
-    const rm = await fetch(`${API}/api/tak-push-marti`, { method: 'POST' });
+    const rm = await fetch(`${API}/api/tak-push-marti`, { method: 'POST', headers: pushHeaders, body: pushBody });
     const dm = await rm.json().catch(() => ({}));
     if (dm.success) {
-      const notified = dm.notified ?? dm.sent;
-      const zones    = dm.zones || '?';
-      const note     = dm.note ? ` — ${dm.note}` : '';
-      const urlHint  = dm.kmz_url ? `\nDownload URL: ${dm.kmz_url}` : '';
+      const notified  = dm.notified ?? dm.sent;
+      const zones     = dm.zones || '?';
+      const annotHint = dm.annotations ? ` + annotations` : '';
+      const note      = dm.note ? ` — ${dm.note}` : '';
+      const urlHint   = dm.kmz_url ? `\nDownload URL: ${dm.kmz_url}` : '';
       if (notified != null) {
-        toast(`✓ Data package sent to ${notified} device${notified !== 1 ? 's' : ''} · ${zones} overlay${zones !== 1 ? 's' : ''}${note}\nCheck ATAK for import prompt${urlHint}`, 6000);
+        toast(`✓ Data package sent to ${notified} device${notified !== 1 ? 's' : ''} · ${zones} overlay${zones !== 1 ? 's' : ''}${annotHint}${note}\nCheck ATAK for import prompt${urlHint}`, 6000);
       } else {
-        toast(`✓ Data package sent · ${zones} overlay${zones !== 1 ? 's' : ''}${note}`, 4000);
+        toast(`✓ Data package sent · ${zones} overlay${zones !== 1 ? 's' : ''}${annotHint}${note}`, 4000);
       }
       return;
     }

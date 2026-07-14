@@ -1780,7 +1780,8 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
         body = await request.json()
     except Exception:
         pass
-    profile_id = body.get("profile_id")
+    profile_id    = body.get("profile_id")
+    annotations_kml = body.get("annotations_kml", "")
     p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile(org_id=user.get("org_id"))
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
@@ -1792,7 +1793,11 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
         # auto-import on receipt. A bare KMZ (doc.kml only) lacks this and
         # ATAK reports "data package download failed" even after downloading.
         export_state  = {k: v for k, v in _overlay_state.items() if v}
-        kml_bytes     = build_combined_kml(export_state).encode("utf-8")
+        kml_str       = build_combined_kml(export_state)
+        # Merge client-side annotations (ICS markers, drawn shapes, zones) into the KML
+        if annotations_kml and annotations_kml.strip():
+            kml_str = kml_str.replace("</Document>", annotations_kml + "\n</Document>")
+        kml_bytes     = kml_str.encode("utf-8")
         active        = list(export_state.keys())
 
         dp_bytes, dp_filename, _pkg_uid = build_tak_data_package(kml_bytes, active)
@@ -1834,12 +1839,13 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
             sa_events.append(incident_sa_cot_event(src_lat, src_lon, tool, agent))
 
         result = push_bftr(config, bftr_events + sa_events)
-        result["notified"] = result.pop("sent", 0)
-        result["zones"]    = len(active)
-        result["sa_markers"] = len(sa_events)
-        result["contacts"] = len(contacts)
-        result["kmz_url"]  = kmz_url
-        result["note"]     = note
+        result["notified"]    = result.pop("sent", 0)
+        result["zones"]       = len(active)
+        result["sa_markers"]  = len(sa_events)
+        result["contacts"]    = len(contacts)
+        result["kmz_url"]     = kmz_url
+        result["note"]        = note
+        result["annotations"] = 1 if annotations_kml else 0
 
         status = 200 if result["success"] else 502
         return JSONResponse(result, status_code=status)
