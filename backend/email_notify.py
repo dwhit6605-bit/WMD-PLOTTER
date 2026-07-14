@@ -13,7 +13,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Optional
 
-import requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +30,12 @@ def _send(payload: dict) -> None:
         logger.debug("email_notify: BREVO_API_KEY not set, skipping")
         return
     try:
-        r = requests.post(
-            BREVO_SEND_URL,
-            headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
-            json=payload,
-            timeout=10,
-        )
+        with httpx.Client(timeout=10) as client:
+            r = client.post(
+                BREVO_SEND_URL,
+                headers={"api-key": BREVO_API_KEY, "Content-Type": "application/json"},
+                json=payload,
+            )
         if r.status_code not in (200, 201, 202):
             logger.warning("Brevo API returned %s: %s", r.status_code, r.text[:200])
     except Exception as exc:
