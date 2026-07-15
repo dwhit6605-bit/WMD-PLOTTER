@@ -141,8 +141,11 @@ _TOOL_HAZARD_LABEL = {
 
 
 def incident_sa_cot_event(lat: float, lon: float, tool: str,
-                           agent_name: str = "", callsign: str = "WMD PLOTTER") -> str:
-    """SA marker (type a-h-G, red) at the incident origin for hazard SA in ATAK."""
+                           agent_name: str = "", callsign: str = "WMD PLOTTER",
+                           release_rate_gs: float = 0.0,
+                           wind_speed_ms: float = 0.0, wind_dir_label: str = "",
+                           stability_class: str = "") -> str:
+    """SA marker (type a-h-G, red) at the incident origin with full CBRN detail in remarks."""
     hazard = _TOOL_HAZARD_LABEL.get(tool, "HAZMAT")
     label  = f"WMD-{hazard}"
     if agent_name:
@@ -150,14 +153,105 @@ def incident_sa_cot_event(lat: float, lon: float, tool: str,
     now   = datetime.now(timezone.utc)
     stale = now + timedelta(hours=8)
     uid   = f"wmd-incident-{tool}-{int(now.timestamp())}"
+
+    parts = [f"AGENT: {agent_name}"] if agent_name else []
+    if release_rate_gs > 0:
+        parts.append(f"RATE: {release_rate_gs / 1000 * 60:.2f} kg/min")
+    if wind_speed_ms > 0:
+        spd_mph = wind_speed_ms * 2.237
+        parts.append(f"WIND: {wind_dir_label} {spd_mph:.1f} mph")
+    if stability_class:
+        parts.append(f"PG-{stability_class}")
+    parts.append(f"TIME: {now.strftime('%Y-%m-%d %H:%M')} UTC")
+    remarks = f"WMD PLOTTER | {hazard} INCIDENT | " + " | ".join(parts)
+
     return f"""<event version="2.0" uid="{uid}" type="a-h-G" how="h-e"
        time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}">
   <point lat="{lat:.6f}" lon="{lon:.6f}" hae="0" ce="9999999.0" le="9999999.0"/>
   <detail>
     <contact callsign="{label}"/>
     <uid Droid="{label}"/>
-    <remarks>WMD PLOTTER — {hazard} incident origin</remarks>
+    <remarks>{remarks}</remarks>
     <archive/>
+    <marti><dest callsign="All Streaming"/></marti>
+  </detail>
+</event>"""
+
+
+# CoT type per facility category — best-fit MIL-STD-2525C atom types
+_FAC_COT_TYPE: dict[str, str] = {
+    "hospital":    "a-f-G-E-V-M",  # friendly · ground · medical
+    "school":      "a-f-G-C-I",    # friendly · ground · civilian installation
+    "refinery":    "a-n-G-I-U-E",  # neutral  · ground · industrial · utility · petroleum
+    "chemical":    "a-n-G-I-U-E",
+    "industrial":  "a-n-G-I-U-E",
+    "water":       "a-n-G-I-U-W",  # neutral  · ground · industrial · utility · water
+    "power":       "a-n-G-I-U-E",
+}
+
+_FAC_PREFIX: dict[str, str] = {
+    "hospital":   "HOSP",
+    "school":     "SCHL",
+    "refinery":   "REF",
+    "chemical":   "CHEM",
+    "industrial": "IND",
+    "water":      "WATR",
+    "power":      "PWR",
+}
+
+
+def facility_cot_event(lat: float, lon: float, name: str,
+                        fac_type: str, notes: str = "") -> str:
+    """SA point for a facility from the facility library — typed by category."""
+    cot_type = _FAC_COT_TYPE.get(fac_type, "a-n-G")
+    prefix   = _FAC_PREFIX.get(fac_type, "FAC")
+    callsign = f"{prefix}·{name[:24]}"
+    now   = datetime.now(timezone.utc)
+    stale = now + timedelta(hours=24)
+    uid   = f"wmd-fac-{abs(hash(name + fac_type)) % 0xFFFFFF:06x}"
+    remarks = notes[:200] if notes else f"{fac_type.title()} facility"
+    return f"""<event version="2.0" uid="{uid}" type="{cot_type}" how="h-e"
+       time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}">
+  <point lat="{lat:.6f}" lon="{lon:.6f}" hae="0" ce="9999999.0" le="9999999.0"/>
+  <detail>
+    <contact callsign="{callsign}"/>
+    <uid Droid="{callsign}"/>
+    <remarks>{remarks}</remarks>
+    <archive/>
+    <marti><dest callsign="All Streaming"/></marti>
+  </detail>
+</event>"""
+
+
+def line_cot_event(uid: str, label: str, color: str,
+                   latlngs: list, line_type: str = "u-d-r-w") -> str:
+    """
+    CoT polyline event (open polygon = route/road).
+    latlngs: list of [lat, lon] pairs.
+    line_type: u-d-r-w (user-drawn route), default for evac roads.
+    """
+    now   = datetime.now(timezone.utc)
+    stale = now + timedelta(hours=8)
+    stroke = _hex_to_argb_int(color, 220)
+    vertices = "\n        ".join(
+        f'<vertex lat="{pt[0]:.6f}" lon="{pt[1]:.6f}" hae="0"/>' for pt in latlngs
+    )
+    return f"""<event version="2.0" uid="{uid}" type="{line_type}" how="h-e"
+       time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}">
+  <point lat="{latlngs[0][0]:.6f}" lon="{latlngs[0][1]:.6f}" hae="0" ce="9999999.0" le="9999999.0"/>
+  <detail>
+    <shape>
+      <polyline closed="false">
+        {vertices}
+      </polyline>
+    </shape>
+    <strokeColor value="{stroke}"/>
+    <strokeWeight value="3.0"/>
+    <strokeStyle value="solid"/>
+    <archive/>
+    <remarks>{label}</remarks>
+    <contact callsign="WMD PLOTTER"/>
+    <uid Droid="WMD PLOTTER"/>
     <marti><dest callsign="All Streaming"/></marti>
   </detail>
 </event>"""

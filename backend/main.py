@@ -41,7 +41,7 @@ from chemicals import CHEMICALS, get_chemical, get_thresholds
 from dispersion import compute_all_contours, determine_stability_class
 from line_source import compute_line_source_contours, interpolate_path
 from weather import fetch_weather, fetch_asos_weather
-from kml_gen import build_combined_kml, build_network_link_kml
+from kml_gen import build_combined_kml, build_network_link_kml, build_timeseries_kml
 from blast import EXPLOSIVES, compute_blast_zones
 from radiation import RADIONUCLIDES, get_radionuclide, compute_radiation_contours
 from bleve import FUELS, compute_bleve_zones
@@ -68,7 +68,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
 from email_notify import notify_access_request, notify_access_approved, send_test, \
                          notify_access_request_sms, send_test_sms
 from socal_import import import_socal_facilities
-from tak_push import push_cot, push_test_point, push_bftr
+from tak_push import push_cot, push_test_point, push_bftr, push_facilities, push_evac_routes
 from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
     hash_password, verify_password, create_token, decode_token,
@@ -1972,6 +1972,190 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
     except Exception as exc:
         logger.exception("tak-push-marti error")
         return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
+
+
+@app.post("/api/tak-push-facilities")
+async def tak_push_facilities_endpoint(request: Request, user: dict = Depends(current_user)):
+    """
+    Push facility library entries within a given radius of the incident (or a lat/lon)
+    as typed CoT SA markers to the active TAK server profile.
+    Body: { lat, lon, radius_km (default 10) }
+    """
+    from db import list_facilities
+    import math
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    lat       = float(body.get("lat") or 0)
+    lon       = float(body.get("lon") or 0)
+    radius_km = float(body.get("radius_km") or 10.0)
+
+    if not lat and not lon:
+        return JSONResponse({"success": False, "error": "lat/lon required"}, status_code=400)
+
+    p = get_active_tak_profile(org_id=user.get("org_id"))
+    if not p or not p.get("host"):
+        return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
+
+    # Haversine filter
+    def _haversine_km(la1, lo1, la2, lo2):
+        R = 6371.0
+        dlat = math.radians(la2 - la1)
+        dlon = math.radians(lo2 - lo1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(la1))*math.cos(math.radians(la2))*math.sin(dlon/2)**2
+        return R * 2 * math.asin(math.sqrt(a))
+
+    all_fac = list_facilities()
+    nearby  = [f for f in all_fac if _haversine_km(lat, lon, f["lat"], f["lon"]) <= radius_km]
+
+    if not nearby:
+        return JSONResponse({"success": False, "sent": 0,
+                             "error": f"No facilities found within {radius_km} km"}, status_code=400)
+
+    result = push_facilities(_profile_to_config(p), nearby)
+    result["total_facilities"] = len(nearby)
+    result["radius_km"] = radius_km
+    return JSONResponse(result, status_code=200 if result["success"] else 502)
+
+
+@app.post("/api/tak-push-evac")
+async def tak_push_evac_endpoint(request: Request, user: dict = Depends(current_user)):
+    """
+    Push evacuation route polylines as CoT line events (u-d-r-w).
+    Body: { routes: [{label, level, latlngs: [[lat,lon],...]}] }
+    Routes are classified by level: hot / warm / cold / egress / clear.
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    routes = body.get("routes", [])
+    if not routes:
+        return JSONResponse({"success": False, "error": "No routes provided"}, status_code=400)
+
+    p = get_active_tak_profile(org_id=user.get("org_id"))
+    if not p or not p.get("host"):
+        return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
+
+    result = push_evac_routes(_profile_to_config(p), routes)
+    return JSONResponse(result, status_code=200 if result["success"] else 502)
+
+
+@app.post("/api/plume/timeseries/push")
+async def push_plume_timeseries(request: Request, user: dict = Depends(current_user)):
+    """
+    Compute 24-hr NWS forecast plume time series, build a time-stamped KMZ,
+    serve it at /kml/live.kmz, then push a b-f-t-r CoT via TCP so ATAK
+    auto-downloads and imports the package.  The time slider in ATAK/Google
+    Earth will animate through the 24 hourly plume frames.
+    Body: same as POST /api/plume (PlumeRequest fields).
+    """
+    global _live_kmz_cache
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    chemical_id = body.get("chemical_id")
+    if not chemical_id:
+        return JSONResponse({"success": False, "error": "chemical_id required"}, status_code=400)
+
+    chem = get_chemical(chemical_id)
+    if not chem:
+        return JSONResponse({"success": False, "error": f"Chemical '{chemical_id}' not found"}, status_code=404)
+
+    lat = float(body.get("lat") or 0)
+    lon = float(body.get("lon") or 0)
+    if not lat and not lon:
+        return JSONResponse({"success": False, "error": "lat/lon required"}, status_code=400)
+
+    p = get_active_tak_profile(org_id=user.get("org_id"))
+    if not p or not p.get("host"):
+        return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
+
+    # Build the PlumeRequest and re-use the timeseries logic
+    try:
+        periods = await fetch_nws_forecast(lat, lon)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": f"NWS forecast unavailable: {e}"}, status_code=502)
+
+    thresholds = get_thresholds(chem, use_aegl=bool(body.get("use_aegl", True)))
+    if not thresholds:
+        return JSONResponse({"success": False, "error": "No hazard thresholds for this chemical"}, status_code=422)
+
+    Q_gs = float(body.get("release_rate_kg_min", 1.0)) * 1000 / 60.0
+    H_m  = float(body.get("release_height_m", 0.0))
+
+    steps = []
+    for i, period in enumerate(periods):
+        wind_ms   = max(period["wind_speed_ms"], 0.5)
+        wind_from = period["wind_dir_from_deg"]
+        stability = period["stability_class"]
+        contours  = compute_all_contours(
+            Q_gs=Q_gs, u_ms=wind_ms, stability=stability, mw=chem["mw"],
+            thresholds=thresholds, source_lat=lat, source_lon=lon,
+            wind_from_deg=wind_from, H_m=H_m,
+        )
+        features = []
+        for level, info in contours.items():
+            latlon = info.get("latlon", [])
+            if not latlon:
+                continue
+            coords = [[pt[1], pt[0]] for pt in latlon]
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [coords]},
+                "properties": {
+                    "level": level, "label": info["label"], "color": info["color"],
+                    "max_downwind_m": round(info.get("max_downwind_m", 0)),
+                },
+            })
+        steps.append({
+            "hour": i + 1,
+            "start_time":        period["startTime"],
+            "wind_speed_mph":    period["wind_speed_mph"],
+            "wind_dir_label":    period["wind_dir_label"],
+            "stability_class":   stability,
+            "short_forecast":    period["short_forecast"],
+            "geojson": {"type": "FeatureCollection", "features": features},
+        })
+
+    # Build time-stamped KML + wrap in TAK Data Package
+    kml_str   = build_timeseries_kml(steps, chem["name"], lat, lon)
+    kml_bytes = kml_str.encode("utf-8")
+    dp_bytes, dp_filename, _pkg_uid = build_tak_data_package(kml_bytes, ["plume_timeseries"])
+    _live_kmz_cache = dp_bytes
+
+    sha256     = hashlib.sha256(dp_bytes).hexdigest()
+    public_base = (os.environ.get("WMD_PUBLIC_URL") or "").rstrip("/")
+    if not public_base:
+        public_base = str(request.base_url).rstrip("/")
+    kmz_url    = f"{public_base}/kml/live.kmz"
+
+    config   = _profile_to_config(p)
+    contacts = await get_contacts(config)
+    if contacts:
+        bftr_events = [bftr_cot_event(dp_filename, kmz_url, sha256, len(dp_bytes), c["uid"]) for c in contacts]
+        note = f"Sending to {len(contacts)} connected client(s)"
+    else:
+        bftr_events = [bftr_cot_event(dp_filename, kmz_url, sha256, len(dp_bytes))]
+        note = "No connected clients via Marti — broadcast to All Streaming"
+
+    result = push_bftr(config, bftr_events)
+    result["chemical"]  = chem["name"]
+    result["hours"]     = len(steps)
+    result["contacts"]  = len(contacts)
+    result["kmz_url"]   = kmz_url
+    result["note"]      = note
+    return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 
 @app.post("/api/tak-test-point")

@@ -638,6 +638,7 @@ input:checked+.slider:before{transform:translateX(16px)}
             <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="stepTimeseries(1)">▶</button>
             <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="clearTimeseries()">✕</button>
           </div>
+          <button class="btn btn-ghost" style="width:100%;font-size:11px;margin-top:4px" onclick="pushTimeseriesToTAK()">📡 Push Time Steps to TAK</button>
         </div>
       </div>
 
@@ -955,6 +956,7 @@ input:checked+.slider:before{transform:translateX(16px)}
         </div>
         <div style="display:flex;gap:6px">
           <button class="btn btn-ghost" style="flex:1;font-size:11px" onclick="loadEvacRoutes()">⟳ Load Roads</button>
+          <button class="btn btn-ghost" id="btn-evac-tak" style="flex:1;font-size:11px" onclick="pushEvacToTAK()" disabled>📡 Push to TAK</button>
           <button class="btn btn-ghost" style="flex:1;font-size:11px;color:var(--muted)" onclick="clearEvacRoutes()">✕ Clear</button>
         </div>
       </div>
@@ -1036,8 +1038,27 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div style="display:flex;flex-direction:column;gap:6px">
           <button class="btn btn-ghost" id="btn-tak-push" onclick="pushToTAK()" disabled
                   style="background:rgba(0,200,100,0.12);border-color:rgba(0,200,100,0.45);color:#3ddc84;font-size:13px;font-weight:700;padding:10px">
-            📡 Push to TAK Server
+            📡 Push Hazard Zones to TAK
           </button>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost" id="btn-tak-facilities" onclick="pushFacilitiesToTAK()" disabled
+                    style="flex:1;font-size:11px" title="Push nearby facilities from library as SA markers">
+              🏭 Push Facilities
+            </button>
+            <button class="btn btn-ghost" id="btn-tak-timeseries" onclick="pushTimeseriesToTAK()" disabled
+                    style="flex:1;font-size:11px" title="Push 24-hr forecast plumes as time-animated KMZ">
+              ⏱ Push Time Steps
+            </button>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <label style="font-size:10px;color:var(--muted);white-space:nowrap">Facility radius</label>
+            <select id="sel-fac-radius" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:3px 6px;font-size:11px;font-family:inherit">
+              <option value="5">5 km</option>
+              <option value="10" selected>10 km</option>
+              <option value="20">20 km</option>
+              <option value="50">50 km</option>
+            </select>
+          </div>
           <button class="btn btn-ghost" id="btn-tak-dp" onclick="downloadTAKDP()" disabled
                   style="font-size:11px;color:var(--muted);border-color:rgba(255,255,255,0.1)">
             📦 Download Data Package (.zip)
@@ -2972,12 +2993,15 @@ async function executeQuickRun(type) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Evac Routes — Overpass road classification
 // ─────────────────────────────────────────────────────────────────────────────
-let _evacLayers = [];
-let _evacBusy   = false;
+let _evacLayers    = [];
+let _evacRouteData = [];  // [{label, level, latlngs}] for TAK push
+let _evacBusy      = false;
 
 function clearEvacRoutes() {
   _evacLayers.forEach(l => map.removeLayer(l));
-  _evacLayers = [];
+  _evacLayers = []; _evacRouteData = [];
+  const takBtn = document.getElementById('btn-evac-tak');
+  if (takBtn) takBtn.disabled = true;
   document.getElementById('evac-status').textContent = 'Classifies roads near the hazard zone as blocked / restricted / egress / clear.';
   document.getElementById('evac-legend').style.display = 'none';
 }
@@ -3104,6 +3128,7 @@ async function loadEvacRoutes() {
         lyr.bindPopup(`<b style="color:#00CC55">✓ CLEAR</b><br/>${name}`);
       }
       _evacLayers.push(lyr);
+      _evacRouteData.push({ label: name, level: isEgress ? 'egress' : level, latlngs });
     }
 
     const total = d.elements.filter(e => e.type === 'way').length;
@@ -3111,6 +3136,8 @@ async function loadEvacRoutes() {
       `${total} roads · ${counts.egress} egress routes · ${counts.hot + counts.warm} blocked/restricted`;
     document.getElementById('evac-legend').style.display = 'block';
     toast(`🛣 ${counts.egress} egress routes found`, 3000);
+    const takBtn = document.getElementById('btn-evac-tak');
+    if (takBtn && _evacRouteData.length) takBtn.disabled = false;
 
   } catch(e) {
     document.getElementById('evac-status').textContent = `Error: ${e.message}`;
@@ -4601,11 +4628,14 @@ const _activeOverlays_export = _activeOverlays;
 
 function _refreshExportUI() {
   const active = Object.entries(_activeOverlays).filter(([,v])=>v).map(([k])=>k.charAt(0).toUpperCase()+k.slice(1));
-  const hasAny = active.length>0;
+  const hasAny   = active.length > 0;
+  const hasPoint = !!incidentLatLon;
   document.getElementById('btn-kml-dl').disabled  = !hasAny;
   document.getElementById('btn-kml-net').disabled = !hasAny;
   document.getElementById('btn-tak-dp').disabled  = !hasAny;
   document.getElementById('btn-tak-push').disabled = !hasAny;
+  document.getElementById('btn-tak-facilities').disabled  = !hasPoint;
+  document.getElementById('btn-tak-timeseries').disabled  = !hasAny;
   document.getElementById('export-summary').textContent = hasAny ? `Exporting: ${active.join(' + ')}` : 'No overlays computed yet.';
 }
 
@@ -4825,6 +4855,84 @@ async function pushToTAK() {
   } finally {
     btn.textContent = orig;
     btn.disabled = false;
+  }
+}
+
+async function pushFacilitiesToTAK() {
+  if (!incidentLatLon) { toast('Place an incident first', 2000); return; }
+  const btn = document.getElementById('btn-tak-facilities');
+  btn.disabled = true; btn.textContent = '⟳ Pushing…';
+  const radius_km = parseFloat(document.getElementById('sel-fac-radius').value) || 10;
+  try {
+    const r = await fetch(`${API}/api/tak-push-facilities`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lat: incidentLatLon.lat, lon: incidentLatLon.lng, radius_km }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d.success) {
+      toast(`✓ Pushed ${d.sent} of ${d.total_facilities} facilities within ${radius_km} km to TAK`, 5000);
+    } else {
+      toast(`✗ Facility push failed: ${d.error || 'unknown error'}`, 5000);
+    }
+  } catch(e) {
+    toast(`✗ Facility push error: ${e.message}`, 4000);
+  } finally {
+    btn.disabled = false; btn.textContent = '🏭 Push Facilities';
+  }
+}
+
+async function pushEvacToTAK() {
+  if (!_evacRouteData.length) { toast('Load evac routes first', 2000); return; }
+  const btn = document.getElementById('btn-evac-tak');
+  btn.disabled = true; btn.textContent = '⟳ Pushing…';
+  try {
+    const r = await fetch(`${API}/api/tak-push-evac`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ routes: _evacRouteData }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d.success) {
+      toast(`✓ Pushed ${d.sent} evac route segments to TAK`, 4000);
+    } else {
+      toast(`✗ Evac push failed: ${d.error || 'unknown error'}`, 5000);
+    }
+  } catch(e) {
+    toast(`✗ Evac push error: ${e.message}`, 4000);
+  } finally {
+    btn.disabled = false; btn.textContent = '📡 Push to TAK';
+  }
+}
+
+async function pushTimeseriesToTAK() {
+  if (!incidentLatLon || !selectedChem) { toast('Run the plume model first', 2000); return; }
+  const btn = document.getElementById('btn-tak-timeseries');
+  btn.disabled = true; btn.textContent = '⟳ Computing…';
+  const body = {
+    lat: incidentLatLon.lat, lon: incidentLatLon.lng,
+    chemical_id: selectedChem.id,
+    use_aegl: document.getElementById('chk-aegl').checked,
+    release_rate_kg_min: parseFloat(document.getElementById('sl-rate').value),
+    release_height_m:    parseFloat(document.getElementById('sl-height').value),
+  };
+  try {
+    const r = await fetch(`${API}/api/plume/timeseries/push`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d.success) {
+      const note = d.note ? ` — ${d.note}` : '';
+      toast(`✓ ${d.hours}-hr time steps pushed to TAK as animated KMZ · ${d.chemical}${note}\nCheck ATAK for import prompt`, 7000);
+    } else {
+      toast(`✗ Timeseries push failed: ${d.error || 'unknown error'}`, 5000);
+    }
+  } catch(e) {
+    toast(`✗ Timeseries push error: ${e.message}`, 4000);
+  } finally {
+    btn.disabled = false; btn.textContent = '⏱ Push Time Steps';
   }
 }
 

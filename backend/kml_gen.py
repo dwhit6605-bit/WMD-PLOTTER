@@ -702,3 +702,106 @@ def build_plume_kml(source_lat, source_lon, chemical_name, contours,
         "computed_at": datetime.now(timezone.utc).isoformat(),
     }
     return build_combined_kml({"plume": state})
+
+
+def build_timeseries_kml(steps: list, chemical_name: str,
+                          source_lat: float, source_lon: float) -> str:
+    """
+    Build a time-stamped KML for a 24-hr NWS plume time series.
+    Each hour gets its own <Folder> with a <TimeSpan> so ATAK's / Google
+    Earth's time slider animates through the hourly forecast plumes.
+
+    steps: list of dicts from POST /api/plume/timeseries — each must have
+      start_time (ISO-8601), wind_speed_mph, wind_dir_label, stability_class,
+      short_forecast, geojson.features (plume contour polygons).
+    """
+    from datetime import timedelta
+    import re
+
+    def _iso_to_kml(iso: str) -> str:
+        return iso.replace("+00:00", "Z").rstrip("Z") + "Z"
+
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    level_colors = {"high": "#f85149", "medium": "#FF8C00", "low": "#FFD700"}
+    level_fill   = {"high": 55, "medium": 45, "low": 35}
+
+    # Collect all unique styles once (same 3 levels repeat each hour)
+    all_styles = ""
+    for level, color in level_colors.items():
+        all_styles += _kml_style(f"ts_{level}", color, level_fill[level])
+
+    # Source point
+    source_pm = _point_placemark(
+        name=f"[CHEM] {chemical_name} — Source",
+        desc=f"<b>{chemical_name}</b><br/>24-hr NWS forecast plume time series<br/>Generated: {now_str}",
+        lat=source_lat,
+        lon=source_lon,
+    )
+
+    hour_folders = ""
+    for step in steps:
+        hour      = step["hour"]
+        t_begin   = _iso_to_kml(step["start_time"])
+        # stale after next hour
+        t_end_re  = re.sub(r'T(\d{2}):', lambda m: f"T{(int(m.group(1))+1)%24:02d}:", t_begin, count=1)
+
+        wind_label = f"{step['wind_dir_label']} {step['wind_speed_mph']:.1f} mph · PG-{step['stability_class']}"
+        folder_name = f"+{hour}h · {wind_label}"
+        placemarks = ""
+
+        for feat in step.get("geojson", {}).get("features", []):
+            props = feat.get("properties", {})
+            level = props.get("level")
+            if not level:
+                continue
+            coords_list = feat.get("geometry", {}).get("coordinates", [[]])
+            if not coords_list:
+                continue
+            ring = coords_list[0]
+            coords_str = " ".join(f"{pt[0]:.6f},{pt[1]:.6f},0" for pt in ring)
+            desc = (
+                f"<b>{props.get('label','')}</b><br/>"
+                f"Max downwind: {props.get('max_downwind_m',0)/1000:.2f} km<br/>"
+                f"Wind: {wind_label}<br/>"
+                f"Forecast: {step.get('short_forecast','')}"
+            )
+            placemarks += _polygon_placemark(
+                name=props.get("label", level),
+                desc=desc,
+                style_id=f"ts_{level}",
+                coords_str=coords_str,
+            )
+
+        if not placemarks:
+            placemarks = "<!-- no contours this hour -->"
+
+        hour_folders += f"""
+  <Folder>
+    <name>{_xml_escape(folder_name)}</name>
+    <TimeSpan><begin>{t_begin}</begin><end>{t_end_re}</end></TimeSpan>
+    <visibility>0</visibility>
+    {placemarks}
+  </Folder>"""
+
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document id="wmd-timeseries-root">
+  <name>{_xml_escape(f"WMD PLOTTER — {chemical_name} 24-hr Forecast Plumes")}</name>
+  <description><![CDATA[
+    <b>WHITWERX WMD Display — Plume Time Series</b><br/>
+    Chemical: {_xml_escape(chemical_name)}<br/>
+    24-hr NWS hourly forecast, one plume per hour.<br/>
+    Use the ATAK / Google Earth time slider to step through frames.<br/>
+    Generated: {now_str}<br/>
+    <b>FOR PLANNING USE ONLY — NOT OFFICIAL EMERGENCY GUIDANCE</b>
+  ]]></description>
+  <open>1</open>
+  {all_styles}
+  <Folder>
+    <name>Source</name>
+    {source_pm}
+  </Folder>
+  {hour_folders}
+</Document>
+</kml>"""

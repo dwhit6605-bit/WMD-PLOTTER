@@ -16,7 +16,7 @@ import time
 import threading
 from typing import Optional
 
-from tak_dp import _polygon_cot_event, point_cot_event
+from tak_dp import _polygon_cot_event, point_cot_event, facility_cot_event, line_cot_event
 
 
 def _build_events(overlay_state: dict, tools: Optional[list] = None) -> list[str]:
@@ -253,3 +253,99 @@ def push_test_point(config: dict, lat: float = 0.0, lon: float = 0.0,
         return {"success": True, "error": None}
     except Exception as exc:
         return {"success": False, "error": str(exc)}
+
+
+def push_facilities(config: dict, facilities: list) -> dict:
+    """
+    Push a list of facility dicts as typed SA CoT markers.
+    Each dict must have: name, facility_type, lat, lon, notes (optional).
+    """
+    if not facilities:
+        return {"success": False, "sent": 0, "error": "No facilities to push"}
+    events = [
+        facility_cot_event(
+            lat=f["lat"], lon=f["lon"],
+            name=f["name"], fac_type=f.get("facility_type", ""),
+            notes=f.get("notes", ""),
+        )
+        for f in facilities
+    ]
+    results = [None] * len(events)
+    threads = [
+        threading.Thread(
+            target=_send_one_event,
+            args=(
+                (config.get("host") or "").strip(),
+                int(config.get("port") or 8087),
+                bool(config.get("ssl")),
+                config.get("cert_p12"),
+                config.get("cert_pass") or "",
+                ev, results, i,
+            ),
+            daemon=True,
+        )
+        for i, ev in enumerate(events)
+    ]
+    for t in threads: t.start()
+    for t in threads: t.join(timeout=20)
+    sent   = sum(1 for r in results if r is True)
+    errors = [r for r in results if isinstance(r, str)]
+    if sent == 0:
+        return {"success": False, "sent": 0, "error": errors[0] if errors else "All sends failed"}
+    return {"success": True, "sent": sent, "total": len(events),
+            "error": errors[0] if errors else None}
+
+
+_EVAC_COLORS = {
+    "hot":    "#FF3B3B",
+    "warm":   "#FF8C00",
+    "cold":   "#FFD700",
+    "egress": "#00FF88",
+    "clear":  "#00CC55",
+}
+
+
+def push_evac_routes(config: dict, routes: list) -> dict:
+    """
+    Push evac route polylines as CoT line events (u-d-r-w).
+    routes: list of {label, level, latlngs: [[lat,lon],...]}
+    """
+    if not routes:
+        return {"success": False, "sent": 0, "error": "No routes to push"}
+    events = []
+    for i, r in enumerate(routes):
+        latlngs = r.get("latlngs", [])
+        if len(latlngs) < 2:
+            continue
+        level  = r.get("level", "clear")
+        color  = _EVAC_COLORS.get(level, "#AAAAAA")
+        label  = r.get("label", f"{level.upper()} road")
+        uid    = f"wmd-evac-{i}-{abs(hash(label)) % 0xFFFF:04x}"
+        events.append(line_cot_event(uid, label, color, latlngs))
+
+    if not events:
+        return {"success": False, "sent": 0, "error": "No valid route geometries"}
+
+    host    = (config.get("host") or "").strip()
+    port    = int(config.get("port") or 8087)
+    use_ssl = bool(config.get("ssl"))
+    cert_p12  = config.get("cert_p12")
+    cert_pass = config.get("cert_pass") or ""
+
+    results = [None] * len(events)
+    threads = [
+        threading.Thread(
+            target=_send_one_event,
+            args=(host, port, use_ssl, cert_p12, cert_pass, ev, results, i),
+            daemon=True,
+        )
+        for i, ev in enumerate(events)
+    ]
+    for t in threads: t.start()
+    for t in threads: t.join(timeout=20)
+    sent   = sum(1 for r in results if r is True)
+    errors = [r for r in results if isinstance(r, str)]
+    if sent == 0:
+        return {"success": False, "sent": 0, "error": errors[0] if errors else "All sends failed"}
+    return {"success": True, "sent": sent, "total": len(events),
+            "error": errors[0] if errors else None}
