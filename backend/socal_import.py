@@ -3,13 +3,17 @@ Southern California open-source facility & infrastructure import.
 
 Data sources:
   HIFLD (ArcGIS REST) — hospitals, petroleum refineries, water treatment,
-                         chemical storage, power plants
-  EPA TRI (efservice)  — toxic-chemical-handling facilities (SIC 28/29/33/49)
-                         across SoCal counties
+                         chemical storage, power plants, schools
+  EPA ECHO (web services) — chemical (SIC 28) and petroleum (SIC 29)
+                             facilities within 150 mi of SoCal center
+
+All external requests run in parallel via asyncio.gather so the whole
+import completes in the time of the slowest single response (~10s).
 
 Called by POST /api/admin/facilities/import/socal
 """
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -20,10 +24,9 @@ logger = logging.getLogger(__name__)
 # SoCal bounding box (WGS-84)
 XMIN, YMIN, XMAX, YMAX = -120.5, 32.5, -114.0, 34.9
 
-SOCAL_COUNTIES = [
-    "LOS ANGELES", "ORANGE", "SAN DIEGO",
-    "RIVERSIDE", "SAN BERNARDINO", "VENTURA", "IMPERIAL",
-]
+# Center of SoCal for radius-based queries (ECHO API)
+SOCAL_LAT, SOCAL_LON = 33.9, -117.7  # approx centroid of LA/OC/IE/SD
+SOCAL_RADIUS_MI = 150                  # covers LA→San Diego + IE + Ventura
 
 # HIFLD feature service layers — failed layers are silently skipped
 HIFLD_LAYERS = [
@@ -33,8 +36,8 @@ HIFLD_LAYERS = [
             "https://services1.arcgis.com/0MSEUqKaxRlEPj5g"
             "/arcgis/rest/services/Hospitals2/FeatureServer/0/query"
         ),
-        "fac_type":   "hospital",
-        "name_field": "NAME",
+        "fac_type":    "hospital",
+        "name_field":  "NAME",
         "note_fields": ["BEDS", "TRAUMA", "TYPE"],
     },
     {
@@ -43,9 +46,9 @@ HIFLD_LAYERS = [
             "https://services1.arcgis.com/Hp6G80Pky0om7QvQ"
             "/arcgis/rest/services/Petroleum_Refineries/FeatureServer/0/query"
         ),
-        "fac_type":   "refinery",
-        "name_field": "NAME",
-        "note_fields": ["OPERATOR", "NAICS_CODE", "CAPACITY"],
+        "fac_type":    "refinery",
+        "name_field":  "NAME",
+        "note_fields": ["OPERATOR", "NAICS_CODE"],
     },
     {
         "label": "Water Treatment Plants (HIFLD)",
@@ -53,8 +56,8 @@ HIFLD_LAYERS = [
             "https://services1.arcgis.com/Hp6G80Pky0om7QvQ"
             "/arcgis/rest/services/Water_Treatment_Plants_US/FeatureServer/0/query"
         ),
-        "fac_type":   "water",
-        "name_field": "NAME",
+        "fac_type":    "water",
+        "name_field":  "NAME",
         "note_fields": ["OWNER_TYPE", "CAPACITY"],
     },
     {
@@ -63,28 +66,38 @@ HIFLD_LAYERS = [
             "https://services1.arcgis.com/Hp6G80Pky0om7QvQ"
             "/arcgis/rest/services/Chemical_Storage_Facilities/FeatureServer/0/query"
         ),
-        "fac_type":   "chemical",
-        "name_field": "NAME",
+        "fac_type":    "chemical",
+        "name_field":  "NAME",
         "note_fields": ["NAICS_CODE"],
     },
     {
-        "label": "Power Plants (EIA/HIFLD)",
+        "label": "Power Plants (HIFLD/EIA)",
         "url": (
             "https://services1.arcgis.com/Hp6G80Pky0om7QvQ"
             "/arcgis/rest/services/Power_Plants/FeatureServer/0/query"
         ),
-        "fac_type":   "industrial",
-        "name_field": "Plant_Name",
+        "fac_type":    "industrial",
+        "name_field":  "Plant_Name",
         "note_fields": ["PrimSource", "Total_MW", "Utility_Na"],
     },
     {
-        "label": "Urgent Care (HIFLD)",
+        "label": "Natural Gas Compressor Stations (HIFLD)",
+        "url": (
+            "https://services1.arcgis.com/Hp6G80Pky0om7QvQ"
+            "/arcgis/rest/services/Natural_Gas_Compressor_Stations/FeatureServer/0/query"
+        ),
+        "fac_type":    "industrial",
+        "name_field":  "NAME",
+        "note_fields": ["OPERATOR"],
+    },
+    {
+        "label": "Urgent Care Facilities (HIFLD)",
         "url": (
             "https://services1.arcgis.com/wQnFk5ouCfPzTlPw"
             "/arcgis/rest/services/Urgent_Care_Facilities/FeatureServer/0/query"
         ),
-        "fac_type":   "hospital",
-        "name_field": "NAME",
+        "fac_type":    "hospital",
+        "name_field":  "NAME",
         "note_fields": [],
     },
     {
@@ -93,26 +106,21 @@ HIFLD_LAYERS = [
             "https://services1.arcgis.com/cRvLdSPAsRupRo7I"
             "/arcgis/rest/services/Public_Schools_/FeatureServer/0/query"
         ),
-        "fac_type":   "school",
-        "name_field": "NAME",
+        "fac_type":    "school",
+        "name_field":  "NAME",
         "note_fields": ["ENROLLMENT", "LEVEL_"],
-    },
-    {
-        "label": "Natural Gas Compressor Stations (HIFLD)",
-        "url": (
-            "https://services1.arcgis.com/Hp6G80Pky0om7QvQ"
-            "/arcgis/rest/services/Natural_Gas_Compressor_Stations/FeatureServer/0/query"
-        ),
-        "fac_type":   "industrial",
-        "name_field": "NAME",
-        "note_fields": ["OPERATOR"],
     },
 ]
 
-# TRI SIC 2-digit prefixes considered CBRN-relevant
-TRI_SIC_PREFIXES = {"28", "29", "33", "49"}
+# EPA ECHO — SIC 2-digit prefixes to pull separately (radius-based, CA only)
+ECHO_SIC_GROUPS = [
+    ("28", "chemical",    "Chemicals (SIC 28)"),
+    ("29", "refinery",    "Petroleum (SIC 29)"),
+    ("33", "industrial",  "Primary Metals (SIC 33)"),
+    ("49", "industrial",  "Utilities (SIC 49)"),
+]
 
-EPA_TRI_URL = "https://data.epa.gov/efservice/tri_facility/state_abbr/=CA/county_name/={county}/rows/0:500/JSON"
+ECHO_SEARCH_URL = "https://echo.epa.gov/tools/web-services/facility-search-data/search"
 
 
 # ── HIFLD fetch ───────────────────────────────────────────────────────────────
@@ -121,12 +129,13 @@ def _build_notes(attrs: dict, fields: list) -> str:
     parts = []
     for f in fields:
         v = attrs.get(f)
-        if v is not None and str(v).strip() and str(v) != "-9999":
+        if v is not None and str(v).strip() and str(v) not in ("-9999", "None", ""):
             parts.append(f"{f}: {v}")
     return " · ".join(parts)
 
 
-async def _fetch_hifld_layer(client: httpx.AsyncClient, layer: dict) -> list[dict]:
+async def _fetch_hifld_layer(client: httpx.AsyncClient, layer: dict) -> tuple:
+    """Returns (label, records_list) or raises on error."""
     params = {
         "where":             "1=1",
         "geometry":          f"{XMIN},{YMIN},{XMAX},{YMAX}",
@@ -139,11 +148,14 @@ async def _fetch_hifld_layer(client: httpx.AsyncClient, layer: dict) -> list[dic
         "returnGeometry":    "true",
         "f":                 "json",
     }
-    r = await client.get(layer["url"], params=params, timeout=20)
+    r = await client.get(layer["url"], params=params, timeout=12)
     r.raise_for_status()
     data = r.json()
 
-    results = []
+    if "error" in data:
+        raise ValueError(data["error"].get("message", "ArcGIS error"))
+
+    records = []
     for feat in data.get("features", []):
         attrs = feat.get("attributes") or {}
         geom  = feat.get("geometry")  or {}
@@ -154,41 +166,60 @@ async def _fetch_hifld_layer(client: httpx.AsyncClient, layer: dict) -> list[dic
         if not (XMIN <= lon <= XMAX and YMIN <= lat <= YMAX):
             continue
 
-        name_field = layer["name_field"]
-        name = str(attrs.get(name_field) or attrs.get("NAME") or "Unknown").strip()
-        if not name or name.upper() in ("NONE", "NULL", "UNKNOWN", "N/A"):
+        name = str(
+            attrs.get(layer["name_field"]) or attrs.get("NAME") or ""
+        ).strip()
+        if not name or name.upper() in ("NONE", "NULL", "N/A", "UNKNOWN", "-"):
             continue
 
         notes = _build_notes(attrs, layer.get("note_fields", []))
-        results.append({
+        records.append({
             "name":     name,
             "fac_type": layer["fac_type"],
             "lat":      round(float(lat), 6),
             "lon":      round(float(lon), 6),
-            "notes":    f"[{layer['label']}] {notes}".strip(" ·"),
+            "notes":    f"[{layer['label']}]{' ' + notes if notes else ''}",
         })
-    return results
+    return layer["label"], records
 
 
-# ── EPA TRI fetch ─────────────────────────────────────────────────────────────
+# ── EPA ECHO fetch ────────────────────────────────────────────────────────────
 
-async def _fetch_tri_county(client: httpx.AsyncClient, county: str) -> list[dict]:
-    url = EPA_TRI_URL.format(county=county.replace(" ", "%20"))
-    r = await client.get(url, timeout=30)
+async def _fetch_echo(
+    client: httpx.AsyncClient,
+    sic2: str,
+    fac_type: str,
+    label: str,
+) -> tuple:
+    """Returns (label, records_list) or raises on error."""
+    params = {
+        "output":       "JSON",
+        "p_lat":        str(SOCAL_LAT),
+        "p_lon":        str(SOCAL_LON),
+        "p_radius":     str(SOCAL_RADIUS_MI),
+        "p_st":         "CA",
+        "p_sic2":       sic2,
+        "responseset":  "500",
+    }
+    r = await client.get(ECHO_SEARCH_URL, params=params, timeout=20)
     r.raise_for_status()
+    data = r.json()
 
-    raw = r.json()
-    # efservice returns a list of dicts with uppercase column names
-    results = []
-    for row in raw:
-        # Filter to CBRN-relevant SIC codes
-        sic = str(row.get("PRIMARY_SIC") or row.get("primary_sic") or "").strip()
-        if sic[:2] not in TRI_SIC_PREFIXES:
+    facilities = (
+        data.get("Results", {}).get("Facilities") or
+        data.get("results", {}).get("facilities") or
+        []
+    )
+
+    records = []
+    for fac in facilities:
+        name = str(fac.get("FacilityName") or fac.get("facility_name") or "").strip()
+        if not name:
             continue
 
         try:
-            lat = float(row.get("LATITUDE")  or row.get("latitude")  or 0)
-            lon = float(row.get("LONGITUDE") or row.get("longitude") or 0)
+            lat = float(fac.get("Latitude83") or fac.get("Latitude82") or fac.get("latitude") or 0)
+            lon = float(fac.get("Longitude83") or fac.get("Longitude82") or fac.get("longitude") or 0)
         except (TypeError, ValueError):
             continue
         if not lat or not lon:
@@ -196,39 +227,21 @@ async def _fetch_tri_county(client: httpx.AsyncClient, county: str) -> list[dict
         if not (XMIN <= lon <= XMAX and YMIN <= lat <= YMAX):
             continue
 
-        name = str(row.get("FACILITY_NAME") or row.get("facility_name") or "").strip()
-        if not name:
-            continue
-
-        city    = str(row.get("CITY") or row.get("city") or "").strip().title()
-        sic_str = sic
-
-        # Map SIC to facility type
-        if sic[:2] == "29":
-            fac_type = "refinery"
-        elif sic[:2] == "28":
-            fac_type = "chemical"
-        elif sic[:2] == "33":
-            fac_type = "industrial"
-        elif sic[:2] == "49":
-            fac_type = "industrial"
-        else:
-            fac_type = "industrial"
-
-        results.append({
+        city = str(fac.get("FacilityCity") or fac.get("city") or "").strip().title()
+        sic  = str(fac.get("PrimarySICCode") or fac.get("sic") or sic2).strip()
+        records.append({
             "name":     name,
             "fac_type": fac_type,
             "lat":      round(lat, 6),
             "lon":      round(lon, 6),
-            "notes":    f"[EPA TRI] SIC {sic_str} · {city}, CA",
+            "notes":    f"[EPA ECHO {label}] SIC {sic} · {city}, CA",
         })
-    return results
+    return label, records
 
 
 # ── Deduplication ─────────────────────────────────────────────────────────────
 
-def _dedupe(candidates: list[dict], existing_names: set) -> list[dict]:
-    """Remove candidates whose name already exists (case-insensitive) and internal dupes."""
+def _dedupe(candidates: list, existing_names: set) -> list:
     seen: set = set()
     out = []
     for c in candidates:
@@ -244,42 +257,36 @@ def _dedupe(candidates: list[dict], existing_names: set) -> list[dict]:
 
 async def import_socal_facilities(created_by_id: int) -> dict:
     """
-    Fetch SoCal facilities from all sources and insert into the DB.
-    Returns {added, skipped, sources}.
+    Fetch SoCal facilities from all sources in parallel and insert into the DB.
+    Returns {added, skipped, sources, errors}.
     """
     from db import create_facility, list_facilities
 
-    # Snapshot existing facility names so we don't duplicate
     existing = {f["name"].upper().strip() for f in list_facilities()}
 
-    candidates: list[dict] = []
-    source_counts: dict[str, int] = {}
-    errors: list[str] = []
+    candidates = []
+    source_counts: dict = {}
+    errors = []
 
     async with httpx.AsyncClient() as client:
-        # HIFLD layers
-        for layer in HIFLD_LAYERS:
-            try:
-                items = await _fetch_hifld_layer(client, layer)
-                source_counts[layer["label"]] = len(items)
-                candidates.extend(items)
-                logger.info("HIFLD %s: %d records", layer["label"], len(items))
-            except Exception as exc:
-                errors.append(f"{layer['label']}: {exc}")
-                logger.warning("HIFLD layer failed — %s: %s", layer["label"], exc)
+        # ── Fire all requests in parallel ─────────────────────────────────────
+        hifld_coros = [_fetch_hifld_layer(client, layer) for layer in HIFLD_LAYERS]
+        echo_coros  = [_fetch_echo(client, sic, ft, lbl) for sic, ft, lbl in ECHO_SIC_GROUPS]
 
-        # EPA TRI by county
-        tri_total = 0
-        for county in SOCAL_COUNTIES:
-            try:
-                items = await _fetch_tri_county(client, county)
-                tri_total += len(items)
-                candidates.extend(items)
-            except Exception as exc:
-                errors.append(f"EPA TRI {county}: {exc}")
-                logger.warning("EPA TRI county failed — %s: %s", county, exc)
-        if tri_total:
-            source_counts["EPA TRI (SIC 28/29/33/49)"] = tri_total
+        results = await asyncio.gather(
+            *hifld_coros, *echo_coros,
+            return_exceptions=True,
+        )
+
+        for res in results:
+            if isinstance(res, Exception):
+                errors.append(str(res))
+                logger.debug("socal_import: source failed — %s", res)
+            else:
+                label, records = res
+                if records:
+                    source_counts[label] = len(records)
+                    candidates.extend(records)
 
     to_add = _dedupe(candidates, existing)
 
@@ -298,5 +305,5 @@ async def import_socal_facilities(created_by_id: int) -> dict:
         "added":   added,
         "skipped": len(candidates) - added,
         "sources": source_counts,
-        "errors":  errors,
+        "errors":  [e for e in errors if e],  # omit blank
     }
