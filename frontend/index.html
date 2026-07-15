@@ -148,7 +148,7 @@ input:checked+.slider:before{transform:translateX(16px)}
   #map-overlay,#legend,#toast,#mobile-fab,#mobile-overlay,
   .btn,#hdr-status,#geo-status,.slot-tabs,.coord-hint,
   #section-toolpicker,#section-add-overlay,#panel-weather,.tool-panel,
-  #section-location .row2,#btn-use-location,#anim-section,#header,#status-bar,#pwa-install-banner{display:none!important}
+  #section-location .row2,#btn-use-location,#anim-section,#timeseries-section,#header,#status-bar,#pwa-install-banner{display:none!important}
   html,body{height:auto!important;overflow:visible!important}
   #app{display:block!important;height:auto!important}
   #body{display:block!important;height:auto!important;overflow:visible!important}
@@ -583,6 +583,9 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn btn-ghost" style="flex:1;font-size:11px" onclick="startPlumeAnimation()">🎬 Animate</button>
           <button class="btn btn-ghost" id="btn-forecast-plume" style="flex:1;font-size:11px" onclick="fetchForecastPlume()">🌬 Forecast</button>
+          <button class="btn btn-ghost" id="btn-timeseries-plume" style="flex:1;font-size:11px" onclick="fetchTimeseriesPlume()">⏱ Step</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn btn-ghost" style="flex:1;font-size:11px" onclick="activateTool('evac_routes')">🛣 Evac</button>
         </div>
       </div>
@@ -610,6 +613,30 @@ input:checked+.slider:before{transform:translateX(16px)}
                  oninput="seekAnimation(parseInt(this.value))"/>
           <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:2px">
             <span>T+0</span><span>T+30m</span><span>T+1hr</span><span>T+2hr</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- PLUME TIMESERIES -->
+      <div class="section" id="timeseries-section" style="display:none">
+        <div class="section-hdr">⏱ Hourly Plume Stepping</div>
+        <div id="ts-status" style="font-size:11px;color:var(--muted);margin-bottom:6px"></div>
+        <div id="ts-ctrl" style="display:none">
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:11px;line-height:1.6">
+            <div style="font-size:13px;font-weight:700;color:var(--accent2);margin-bottom:2px" id="ts-time-label">+1h</div>
+            <div id="ts-wx-summary" style="color:var(--muted)"></div>
+          </div>
+          <input type="range" id="ts-slider" min="0" max="23" value="0" step="1"
+                 style="width:100%;accent-color:var(--accent2);cursor:pointer;margin-bottom:4px"
+                 oninput="seekTimeseries(parseInt(this.value))"/>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:6px">
+            <span>+1h</span><span>+6h</span><span>+12h</span><span>+18h</span><span>+24h</span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="stepTimeseries(-1)">◀</button>
+            <button class="btn btn-ghost" style="flex:1;font-size:12px" id="btn-ts-play" onclick="toggleTimeseries()">▶ Play</button>
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="stepTimeseries(1)">▶</button>
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="clearTimeseries()">✕</button>
           </div>
         </div>
       </div>
@@ -1237,6 +1264,7 @@ function switchSlot(newIdx) {
   _updateWeatherStepBody();
   _animStop();
   document.getElementById('anim-section').style.display = 'none';
+  if (typeof _tsStop === 'function') { _tsStop(); document.getElementById('timeseries-section').style.display = 'none'; }
 
   if (incidentLatLon) {
     document.getElementById('step1-badge').classList.add('done');
@@ -1654,6 +1682,7 @@ function clearIncident() {
   document.getElementById('wx-step-body').innerHTML = '';
   document.getElementById('anim-section').style.display = 'none';
   _animStop();
+  if (typeof _tsStop === 'function') { _tsStop(); document.getElementById('timeseries-section').style.display = 'none'; }
   _slots[_activeSlot] = null;
   _updateSlotTabs();
   Object.keys(_activeOverlays).forEach(k => _activeOverlays[k] = false);
@@ -2462,6 +2491,128 @@ function clearForecastLayers() {
   Object.keys(_forecastLayers).forEach(k => delete _forecastLayers[k]);
   forecastData = null;
   document.getElementById('forecast-section').style.display = 'none';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plume Timeseries (hourly NWS stepping)
+// ─────────────────────────────────────────────────────────────────────────────
+let _tsSteps = null;
+let _tsIdx   = 0;
+let _tsPlaying = false;
+let _tsTimer   = null;
+const _tsLayers = [];
+
+async function fetchTimeseriesPlume() {
+  if (!incidentLatLon || !selectedChem) { toast('Run the plume model first', 2000); return; }
+  const btn = document.getElementById('btn-timeseries-plume');
+  const sec = document.getElementById('timeseries-section');
+  const status = document.getElementById('ts-status');
+  const ctrl = document.getElementById('ts-ctrl');
+  btn.disabled = true; btn.textContent = '⟳ Fetching…';
+  sec.style.display = 'block';
+  ctrl.style.display = 'none';
+  status.textContent = '⟳ Fetching 24-hr NWS forecast & computing plumes…';
+  _tsStop();
+
+  const body = {
+    lat: incidentLatLon.lat, lon: incidentLatLon.lon,
+    chemical_id: selectedChem.id,
+    use_aegl: document.getElementById('chk-aegl').checked,
+    release_rate_kg_min: parseFloat(document.getElementById('sl-rate').value),
+    release_height_m:    parseFloat(document.getElementById('sl-height').value),
+    manual_weather: false,
+  };
+
+  try {
+    const r = await fetch(`${API}/api/plume/timeseries`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(()=>({detail:r.statusText}));
+      throw new Error(err.detail || r.statusText);
+    }
+    const data = await r.json();
+    _tsSteps = data.steps;
+    _tsIdx = 0;
+    document.getElementById('ts-slider').max = _tsSteps.length - 1;
+    status.textContent = `${_tsSteps.length} hourly frames · ${data.chemical}`;
+    ctrl.style.display = 'block';
+    _renderTsFrame(0);
+    if (isMobile()) setTimeout(()=>sec.scrollIntoView({behavior:'smooth'}),200);
+  } catch(e) {
+    status.textContent = `⚠ ${e.message}`;
+    toast(`Time step failed: ${e.message}`, 4000);
+  } finally {
+    btn.disabled = false; btn.textContent = '⏱ Step';
+  }
+}
+
+function _renderTsFrame(idx) {
+  _tsIdx = idx;
+  const step = _tsSteps?.[idx];
+  if (!step) return;
+
+  _tsLayers.forEach(l => map.removeLayer(l)); _tsLayers.length = 0;
+
+  const order = ['low','medium','high'];
+  const sorted = order
+    .map(lv => step.geojson.features.find(f => f.properties.level === lv))
+    .filter(Boolean);
+
+  for (const feat of sorted) {
+    const p = feat.properties;
+    const l = L.geoJSON(feat, {
+      style: { color:p.color, weight:2, fillColor:p.color, fillOpacity:.3, opacity:.95 },
+    }).bindTooltip(
+      `+${step.hour}h · ${p.label}<br/>${step.wind_dir_label} ${step.wind_speed_mph.toFixed(1)} mph · PG-${step.stability_class}`,
+      { sticky:true, className:'leaflet-tooltip' }
+    ).addTo(map);
+    _tsLayers.push(l);
+  }
+
+  const timeLabel = new Date(step.start_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  document.getElementById('ts-time-label').textContent =
+    `+${step.hour}h  ·  ${timeLabel}`;
+  document.getElementById('ts-wx-summary').innerHTML =
+    `${step.wind_dir_label} ${step.wind_speed_mph.toFixed(1)} mph · PG-${step.stability_class} · ${step.short_forecast}`;
+  document.getElementById('ts-slider').value = idx;
+}
+
+function seekTimeseries(idx) { _tsStop(false); _renderTsFrame(idx); }
+
+function stepTimeseries(delta) {
+  if (!_tsSteps) return;
+  _tsStop(false);
+  _renderTsFrame(Math.max(0, Math.min(_tsSteps.length - 1, _tsIdx + delta)));
+}
+
+function toggleTimeseries() {
+  if (_tsPlaying) { _tsStop(false); return; }
+  if (!_tsSteps) return;
+  _tsPlaying = true;
+  document.getElementById('btn-ts-play').textContent = '⏸ Pause';
+  function step() {
+    if (!_tsPlaying) return;
+    const next = (_tsIdx + 1) % _tsSteps.length;
+    _renderTsFrame(next);
+    if (next < _tsSteps.length - 1) { _tsTimer = setTimeout(step, 1200); }
+    else { _tsPlaying = false; document.getElementById('btn-ts-play').textContent = '▶ Play'; }
+  }
+  _tsTimer = setTimeout(step, 1200);
+}
+
+function _tsStop(clearLayers=true) {
+  clearTimeout(_tsTimer); _tsTimer=null; _tsPlaying=false;
+  const btn = document.getElementById('btn-ts-play');
+  if (btn) btn.textContent = '▶ Play';
+  if (clearLayers) { _tsLayers.forEach(l=>map.removeLayer(l)); _tsLayers.length=0; }
+}
+
+function clearTimeseries() {
+  _tsStop();
+  _tsSteps = null;
+  document.getElementById('timeseries-section').style.display = 'none';
+  document.getElementById('btn-timeseries-plume').textContent = '⏱ Step';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

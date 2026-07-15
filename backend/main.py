@@ -979,6 +979,83 @@ async def plume_forecast(req: PlumeRequest, user: dict = Depends(current_user)):
     return JSONResponse({"chemical": chem["name"], "periods": results})
 
 
+@app.post("/api/plume/timeseries")
+async def plume_timeseries(req: PlumeRequest, user: dict = Depends(current_user)):
+    """
+    Compute plume contours for each of the next 24 NWS hourly forecast periods.
+    Returns ordered array for interactive hour-by-hour stepping on the map.
+    """
+    chem = get_chemical(req.chemical_id)
+    if not chem:
+        raise HTTPException(status_code=404, detail=f"Chemical '{req.chemical_id}' not found.")
+
+    try:
+        periods = await fetch_nws_forecast(req.lat, req.lon)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"NWS forecast unavailable: {e}")
+
+    thresholds = get_thresholds(chem, use_aegl=req.use_aegl)
+    if not thresholds:
+        raise HTTPException(status_code=422, detail="No hazard thresholds for this chemical.")
+
+    Q_gs = req.release_rate_kg_min * 1000 / 60.0
+    steps = []
+
+    for i, p in enumerate(periods):
+        wind_ms   = max(p["wind_speed_ms"], 0.5)
+        wind_from = p["wind_dir_from_deg"]
+        stability = p["stability_class"]
+
+        contours = compute_all_contours(
+            Q_gs=Q_gs,
+            u_ms=wind_ms,
+            stability=stability,
+            mw=chem["mw"],
+            thresholds=thresholds,
+            source_lat=req.lat,
+            source_lon=req.lon,
+            wind_from_deg=wind_from,
+            H_m=req.release_height_m,
+        )
+
+        features = []
+        for level, info in contours.items():
+            latlon = info.get("latlon", [])
+            if not latlon:
+                continue
+            coords = [[ln, lt] for lt, ln in latlon]
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [coords]},
+                "properties": {
+                    "level":          level,
+                    "label":          info["label"],
+                    "color":          info["color"],
+                    "threshold_ppm":  info["threshold_ppm"],
+                    "max_downwind_m": round(info.get("max_downwind_m", 0)),
+                    "max_width_m":    round(info.get("max_width_m", 0)),
+                },
+            })
+
+        steps.append({
+            "hour":              i + 1,
+            "start_time":        p["startTime"],
+            "wind_speed_ms":     p["wind_speed_ms"],
+            "wind_speed_mph":    p["wind_speed_mph"],
+            "wind_dir_from_deg": wind_from,
+            "wind_dir_label":    p["wind_dir_label"],
+            "stability_class":   stability,
+            "short_forecast":    p["short_forecast"],
+            "is_daytime":        p["is_daytime"],
+            "geojson": {
+                "type": "FeatureCollection",
+                "features": features,
+            },
+        })
+
+    return JSONResponse({"chemical": chem["name"], "steps": steps, "Q_gs": Q_gs})
+
+
 @app.post("/api/plume/animate")
 async def animate_plume(req: PlumeRequest):
     """
