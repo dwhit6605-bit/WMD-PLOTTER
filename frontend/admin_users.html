@@ -376,8 +376,12 @@
   <div class="card" id="fac-card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <h3 style="margin:0">Facility / Infrastructure Library</h3>
-      <button class="btn btn-green" onclick="openFacModal()">+ Add Facility</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-outline" id="btn-import-socal" onclick="importSocal()" title="Bulk-import Southern California infrastructure from HIFLD + EPA TRI">⬇ Import SoCal</button>
+        <button class="btn btn-green" onclick="openFacModal()">+ Add Facility</button>
+      </div>
     </div>
+    <span id="import-socal-msg" style="font-size:11px;color:var(--muted);display:block;margin-bottom:10px"></span>
     <div id="fac-list"><div class="muted" style="font-size:12px;padding:8px 0">Loading…</div></div>
     <div class="msg" id="fac-msg"></div>
   </div>
@@ -1046,6 +1050,33 @@ async function submitPwReset() {
 }
 
 // ── Facility Library ─────────────────────────────────────────────────────────
+
+async function importSocal() {
+  const btn = document.getElementById('btn-import-socal');
+  const msg = document.getElementById('import-socal-msg');
+  btn.disabled = true;
+  btn.textContent = '⏳ Importing…';
+  msg.textContent = 'Fetching from HIFLD + EPA TRI — this may take 20–30 seconds…';
+  msg.style.color = 'var(--muted)';
+  try {
+    const r = await fetch('/api/admin/facilities/import/socal', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) {
+      const src = Object.entries(d.sources || {}).map(([k,v]) => `${k}: ${v}`).join(' · ');
+      msg.textContent = `✓ Added ${d.added} facilities, skipped ${d.skipped} duplicates. Sources — ${src}`;
+      msg.style.color = 'var(--green)';
+      loadFacilities();
+    } else {
+      msg.textContent = `✕ ${d.detail || 'Import failed'}`;
+      msg.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    msg.textContent = '✕ Network error';
+    msg.style.color = 'var(--red)';
+  }
+  btn.disabled = false;
+  btn.textContent = '⬇ Import SoCal';
+}
 
 let _facEditingId = null;
 let _chemicals    = [];

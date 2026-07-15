@@ -67,6 +67,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  set_user_org, set_user_role, set_user_status, update_user_email, list_orgs, create_org, update_org, delete_org
 from email_notify import notify_access_request, notify_access_approved, send_test, \
                          notify_access_request_sms, send_test_sms
+from socal_import import import_socal_facilities
 from tak_push import push_cot, push_test_point, push_bftr
 from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
@@ -2248,6 +2249,12 @@ async def put_facility(facility_id: int, body: FacilityUpdate,
 async def del_facility(facility_id: int, _: dict = Depends(require_admin)):
     if not delete_facility(facility_id):
         raise HTTPException(status_code=404, detail="Facility not found")
+
+@app.post("/api/admin/facilities/import/socal")
+async def import_socal(admin: dict = Depends(require_admin)):
+    """Fetch SoCal infrastructure from HIFLD + EPA TRI and bulk-insert into facility library."""
+    result = await import_socal_facilities(admin["id"])
+    return result
 
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
