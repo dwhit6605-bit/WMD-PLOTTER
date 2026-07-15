@@ -223,20 +223,21 @@ def facility_cot_event(lat: float, lon: float, name: str,
 </event>"""
 
 
-def line_cot_event(uid: str, label: str, color: str,
-                   latlngs: list, line_type: str = "u-d-r-w") -> str:
+def line_cot_event(uid: str, label: str, color: str, latlngs: list) -> str:
     """
-    CoT polyline event (open polygon = route/road).
+    CoT polyline event for ATAK drawn lines (evac routes, roads).
+    Uses type u-d-f + closed="false" — same type as filled polygons but
+    open, which is how ATAK natively represents drawn line segments.
     latlngs: list of [lat, lon] pairs.
-    line_type: u-d-r-w (user-drawn route), default for evac roads.
     """
     now   = datetime.now(timezone.utc)
     stale = now + timedelta(hours=8)
     stroke = _hex_to_argb_int(color, 220)
+    fill   = _hex_to_argb_int(color, 0)   # transparent fill for lines
     vertices = "\n        ".join(
         f'<vertex lat="{pt[0]:.6f}" lon="{pt[1]:.6f}" hae="0"/>' for pt in latlngs
     )
-    return f"""<event version="2.0" uid="{uid}" type="{line_type}" how="h-e"
+    return f"""<event version="2.0" uid="{uid}" type="u-d-f" how="h-e"
        time="{_cot_time(now)}" start="{_cot_time(now)}" stale="{_cot_time(stale)}">
   <point lat="{latlngs[0][0]:.6f}" lon="{latlngs[0][1]:.6f}" hae="0" ce="9999999.0" le="9999999.0"/>
   <detail>
@@ -245,9 +246,11 @@ def line_cot_event(uid: str, label: str, color: str,
         {vertices}
       </polyline>
     </shape>
+    <color value="{stroke}"/>
     <strokeColor value="{stroke}"/>
     <strokeWeight value="3.0"/>
     <strokeStyle value="solid"/>
+    <fillColor value="{fill}"/>
     <archive/>
     <remarks>{label}</remarks>
     <contact callsign="WMD PLOTTER"/>
