@@ -105,6 +105,7 @@ async def auth_middleware(request: Request, call_next):
 
     try:
         payload = decode_token(token)
+        payload["id"] = int(payload["sub"])   # convenience alias used throughout main.py
         request.state.user = payload
     except jwt.ExpiredSignatureError:
         resp = RedirectResponse(url="/login?reason=expired", status_code=302)
