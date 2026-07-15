@@ -65,7 +65,8 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  create_incident, list_incidents, update_incident, \
                  list_facilities, create_facility, update_facility, delete_facility, \
                  set_user_org, set_user_role, set_user_status, update_user_email, list_orgs, create_org, update_org, delete_org
-from email_notify import notify_access_request, notify_access_approved, send_test
+from email_notify import notify_access_request, notify_access_approved, send_test, \
+                         notify_access_request_sms, send_test_sms
 from tak_push import push_cot, push_test_point, push_bftr
 from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
@@ -367,6 +368,7 @@ async def auth_request_access(request: Request):
     create_user(username, hash_password(password), role="user", email=email,
                 status="pending", display_name=display_name, access_reason=access_reason)
     notify_access_request(display_name, username, access_reason, email)
+    notify_access_request_sms(display_name, username, access_reason, get_setting("sms_notify_phone"))
     return JSONResponse({"ok": True}, status_code=201)
 
 
@@ -2099,18 +2101,20 @@ async def admin_reset_password(user_id: int, body: AdminPasswordReset,
 
 @app.get("/api/admin/settings/email")
 async def get_email_settings(_: dict = Depends(require_admin)):
-    """Return current email config. API key is never returned — only whether it's set."""
+    """Return current email/SMS config. API key is never returned — only whether it's set."""
     return {
-        "key_set":     bool(get_setting("email_brevo_key")),
-        "notify_to":   get_setting("email_notify_to")  or "",
-        "notify_from": get_setting("email_notify_from") or "",
+        "key_set":      bool(get_setting("email_brevo_key")),
+        "notify_to":    get_setting("email_notify_to")   or "",
+        "notify_from":  get_setting("email_notify_from") or "",
+        "notify_phone": get_setting("sms_notify_phone")  or "",
     }
 
 
 class EmailSettingsPatch(BaseModel):
-    api_key:     Optional[str] = None
-    notify_to:   Optional[str] = None
-    notify_from: Optional[str] = None
+    api_key:      Optional[str] = None
+    notify_to:    Optional[str] = None
+    notify_from:  Optional[str] = None
+    notify_phone: Optional[str] = None
 
 @app.patch("/api/admin/settings/email")
 async def patch_email_settings(body: EmailSettingsPatch, _: dict = Depends(require_admin)):
@@ -2122,6 +2126,8 @@ async def patch_email_settings(body: EmailSettingsPatch, _: dict = Depends(requi
         set_setting("email_notify_to", body.notify_to.strip())
     if body.notify_from is not None:
         set_setting("email_notify_from", body.notify_from.strip())
+    if body.notify_phone is not None:
+        set_setting("sms_notify_phone", body.notify_phone.strip())
     return {"ok": True}
 
 
@@ -2134,6 +2140,17 @@ async def test_email(admin: dict = Depends(require_admin)):
     if not ok:
         raise HTTPException(status_code=400, detail="API key or From address not configured.")
     return {"ok": True, "sent_to": notify_to}
+
+
+@app.post("/api/admin/settings/email/test-sms")
+async def test_sms(admin: dict = Depends(require_admin)):
+    phone = get_setting("sms_notify_phone") or ""
+    if not phone:
+        raise HTTPException(status_code=400, detail="Notify Phone is not configured.")
+    ok = send_test_sms(phone)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Brevo API key not configured.")
+    return {"ok": True, "sent_to": phone}
 
 
 # ── Incidents ─────────────────────────────────────────────────────────────────

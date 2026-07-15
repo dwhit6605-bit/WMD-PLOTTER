@@ -25,6 +25,7 @@ _ENV_NOTIFY_TO   = os.environ.get("NOTIFY_EMAIL", "")
 _ENV_NOTIFY_FROM = os.environ.get("NOTIFY_FROM", "")
 
 BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email"
+BREVO_SMS_URL  = "https://api.brevo.com/v3/transactionalSMS/sms"
 
 
 def _get_config() -> tuple:
@@ -40,7 +41,7 @@ def _get_config() -> tuple:
 
 
 def _send(payload: dict, api_key: str) -> None:
-    """Blocking Brevo call — always run in a daemon thread."""
+    """Blocking Brevo email call — always run in a daemon thread."""
     try:
         with httpx.Client(timeout=10) as client:
             r = client.post(
@@ -52,6 +53,21 @@ def _send(payload: dict, api_key: str) -> None:
             logger.warning("Brevo API returned %s: %s", r.status_code, r.text[:200])
     except Exception as exc:
         logger.warning("email_notify: send failed — %s", exc)
+
+
+def _send_sms(payload: dict, api_key: str) -> None:
+    """Blocking Brevo SMS call — always run in a daemon thread."""
+    try:
+        with httpx.Client(timeout=10) as client:
+            r = client.post(
+                BREVO_SMS_URL,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json=payload,
+            )
+        if r.status_code not in (200, 201, 202):
+            logger.warning("Brevo SMS returned %s: %s", r.status_code, r.text[:200])
+    except Exception as exc:
+        logger.warning("email_notify: sms send failed — %s", exc)
 
 
 def send_test(to_email: str) -> bool:
@@ -86,6 +102,47 @@ def send_test(to_email: str) -> bool:
     t = threading.Thread(target=_send, args=(payload, api_key), daemon=True)
     t.start()
     return True
+
+
+def send_test_sms(to_phone: str) -> bool:
+    """Send a test SMS. Returns True if dispatched."""
+    api_key, _, _ = _get_config()
+    if not api_key or not to_phone:
+        return False
+    payload = {
+        "sender":    "WMDPlotter",
+        "recipient": to_phone,
+        "content":   "[WMD Plotter] Test SMS — configuration OK. Access request alerts will be sent to this number.",
+    }
+    t = threading.Thread(target=_send_sms, args=(payload, api_key), daemon=True)
+    t.start()
+    return True
+
+
+def notify_access_request_sms(
+    display_name: str,
+    username: str,
+    access_reason: str,
+    to_phone: Optional[str],
+) -> None:
+    """Fire-and-forget SMS to admin when a new access request is submitted."""
+    if not to_phone:
+        return
+    api_key, _, _ = _get_config()
+    if not api_key:
+        return
+    # SMS content: keep it concise (160 chars ideal)
+    content = (
+        f"[WMD Plotter] New access request from {display_name} (@{username}). "
+        f"Review at wmdplotter.whitwerx.net/admin/users"
+    )
+    payload = {
+        "sender":    "WMDPlotter",
+        "recipient": to_phone,
+        "content":   content,
+    }
+    t = threading.Thread(target=_send_sms, args=(payload, api_key), daemon=True)
+    t.start()
 
 
 def notify_access_approved(
