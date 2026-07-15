@@ -4867,7 +4867,7 @@ async function pushFacilitiesToTAK() {
     const r = await fetch(`${API}/api/tak-push-facilities`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lat: incidentLatLon.lat, lon: incidentLatLon.lng, radius_km }),
+      body: JSON.stringify({ lat: incidentLatLon.lat, lon: incidentLatLon.lon, radius_km }),
     });
     const d = await r.json().catch(() => ({}));
     if (d.success) {
@@ -4910,7 +4910,7 @@ async function pushTimeseriesToTAK() {
   const btn = document.getElementById('btn-tak-timeseries');
   btn.disabled = true; btn.textContent = '⟳ Computing…';
   const body = {
-    lat: incidentLatLon.lat, lon: incidentLatLon.lng,
+    lat: incidentLatLon.lat, lon: incidentLatLon.lon,
     chemical_id: selectedChem.id,
     use_aegl: document.getElementById('chk-aegl').checked,
     release_rate_kg_min: parseFloat(document.getElementById('sl-rate').value),
