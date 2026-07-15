@@ -65,7 +65,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  create_incident, list_incidents, update_incident, \
                  list_facilities, create_facility, update_facility, delete_facility, \
                  set_user_org, set_user_role, set_user_status, update_user_email, list_orgs, create_org, update_org, delete_org
-from email_notify import notify_access_request, notify_access_approved
+from email_notify import notify_access_request, notify_access_approved, send_test
 from tak_push import push_cot, push_test_point, push_bftr
 from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
@@ -2094,6 +2094,47 @@ async def admin_reset_password(user_id: int, body: AdminPasswordReset,
     from auth import hash_password
     update_password(user_id, hash_password(body.new_password))
     return {"ok": True}
+
+# ── Admin: email / notification settings ─────────────────────────────────────
+
+@app.get("/api/admin/settings/email")
+async def get_email_settings(_: dict = Depends(require_admin)):
+    """Return current email config. API key is never returned — only whether it's set."""
+    return {
+        "key_set":     bool(get_setting("email_brevo_key")),
+        "notify_to":   get_setting("email_notify_to")  or "",
+        "notify_from": get_setting("email_notify_from") or "",
+    }
+
+
+class EmailSettingsPatch(BaseModel):
+    api_key:     Optional[str] = None
+    notify_to:   Optional[str] = None
+    notify_from: Optional[str] = None
+
+@app.patch("/api/admin/settings/email")
+async def patch_email_settings(body: EmailSettingsPatch, _: dict = Depends(require_admin)):
+    if body.api_key is not None:
+        val = body.api_key.strip()
+        if val:
+            set_setting("email_brevo_key", val)
+    if body.notify_to is not None:
+        set_setting("email_notify_to", body.notify_to.strip())
+    if body.notify_from is not None:
+        set_setting("email_notify_from", body.notify_from.strip())
+    return {"ok": True}
+
+
+@app.post("/api/admin/settings/email/test")
+async def test_email(admin: dict = Depends(require_admin)):
+    notify_to = get_setting("email_notify_to") or ""
+    if not notify_to:
+        raise HTTPException(status_code=400, detail="Notify To address is not configured.")
+    ok = send_test(notify_to)
+    if not ok:
+        raise HTTPException(status_code=400, detail="API key or From address not configured.")
+    return {"ok": True, "sent_to": notify_to}
+
 
 # ── Incidents ─────────────────────────────────────────────────────────────────
 

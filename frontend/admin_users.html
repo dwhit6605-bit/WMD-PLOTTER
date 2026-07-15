@@ -278,6 +278,45 @@
     </div>
   </div>
 
+  <!-- Email / Notification Settings (admin only) -->
+  <div class="card" id="email-settings-card" style="display:none">
+    <h3 style="margin-bottom:4px">📧 Email Notifications</h3>
+    <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Brevo SMTP relay — controls access-request and approval emails</p>
+
+    <div style="display:grid;gap:12px">
+      <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+        Brevo API Key
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="password" id="email-api-key" placeholder="Enter new key to update…"
+                 autocomplete="off" spellcheck="false"
+                 style="flex:1;font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+          <span id="email-key-badge" style="font-size:10px;white-space:nowrap"></span>
+        </div>
+        <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none">Leave blank to keep existing key</span>
+      </label>
+
+      <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+        Notify To (admin address)
+        <input type="email" id="email-notify-to" placeholder="Dave@WHITWERX.net"
+               style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+        <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none">Receives new access-request alerts</span>
+      </label>
+
+      <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+        From Address (verified in Brevo)
+        <input type="email" id="email-notify-from" placeholder="Dave@WHITWERX.net"
+               style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+        <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none">Must be a verified sender in your Brevo account</span>
+      </label>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:16px;align-items:center">
+      <button class="btn btn-green" onclick="saveEmailSettings()">Save Settings</button>
+      <button class="btn btn-outline" onclick="testEmail()">Send Test Email</button>
+      <span id="email-msg" style="font-size:11px;color:var(--muted)"></span>
+    </div>
+  </div>
+
   <!-- Facility Library -->
   <div class="card" id="fac-card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
@@ -395,6 +434,12 @@ async function init() {
     document.querySelectorAll('.main > div[style*="padding:0"]').forEach(el => el.style.display = 'none');
     loadProfiles();
     return;
+  }
+
+  // Full admin gets the email settings card
+  if (_me.role === 'admin') {
+    document.getElementById('email-settings-card').style.display = 'block';
+    loadEmailSettings();
   }
 
   await loadOrgs();
@@ -555,6 +600,59 @@ async function deleteUser(id, name) {
   const r = await fetch(`/api/admin/users/${id}`, {method:'DELETE'});
   if (r.ok) { loadUsers(); }
   else { const d = await r.json().catch(()=>({})); alert(d.detail || 'Delete failed.'); }
+}
+
+// ── Email settings ────────────────────────────────────────────────────────────
+async function loadEmailSettings() {
+  const r = await fetch('/api/admin/settings/email');
+  if (!r.ok) return;
+  const d = await r.json();
+  document.getElementById('email-notify-to').value   = d.notify_to   || '';
+  document.getElementById('email-notify-from').value = d.notify_from || '';
+  const badge = document.getElementById('email-key-badge');
+  badge.textContent   = d.key_set ? '✓ API key saved' : '⚠ Not set';
+  badge.style.color   = d.key_set ? 'var(--green)' : 'var(--warn)';
+}
+
+async function saveEmailSettings() {
+  const api_key     = document.getElementById('email-api-key').value.trim();
+  const notify_to   = document.getElementById('email-notify-to').value.trim();
+  const notify_from = document.getElementById('email-notify-from').value.trim();
+
+  const body = { notify_to, notify_from };
+  if (api_key) body.api_key = api_key;
+
+  const r = await fetch('/api/admin/settings/email', {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  const msg = document.getElementById('email-msg');
+  if (r.ok) {
+    document.getElementById('email-api-key').value = '';
+    msg.textContent = '✓ Settings saved';
+    msg.style.color = 'var(--green)';
+    loadEmailSettings();
+  } else {
+    msg.textContent = '✕ Save failed';
+    msg.style.color = 'var(--red)';
+  }
+  setTimeout(() => { msg.textContent = ''; }, 3000);
+}
+
+async function testEmail() {
+  const msg = document.getElementById('email-msg');
+  msg.textContent = 'Sending…';
+  msg.style.color = 'var(--muted)';
+  const r = await fetch('/api/admin/settings/email/test', { method: 'POST' });
+  const d = await r.json().catch(() => ({}));
+  if (r.ok) {
+    msg.textContent = `✓ Test sent to ${d.sent_to}`;
+    msg.style.color = 'var(--green)';
+  } else {
+    msg.textContent = `✕ ${d.detail || 'Failed'}`;
+    msg.style.color = 'var(--red)';
+  }
+  setTimeout(() => { msg.textContent = ''; }, 4000);
 }
 
 async function doLogout() {
