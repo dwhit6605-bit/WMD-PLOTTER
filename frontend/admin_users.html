@@ -280,50 +280,96 @@
 
   <!-- Email / Notification Settings (admin only) -->
   <div class="card" id="email-settings-card" style="display:none">
-    <h3 style="margin-bottom:4px">📧 Email &amp; SMS Notifications</h3>
-    <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Brevo API — controls access-request alerts (email + SMS) and approval emails</p>
+
+    <!-- SMTP Email -->
+    <h3 style="margin-bottom:4px">📧 Email Notifications (SMTP)</h3>
+    <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Compatible with Brevo relay, SendGrid, Gmail App Passwords, etc.</p>
 
     <div style="display:grid;gap:12px">
-      <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
-        Brevo API Key
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="password" id="email-api-key" placeholder="Enter new key to update…"
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+          Recipients (TO) — comma-separated
+          <input type="text" id="email-notify-to" placeholder="you@agency.gov, other@agency.gov"
+                 spellcheck="false"
+                 style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+        </label>
+        <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+          Sender Email (FROM)
+          <input type="email" id="email-notify-from" placeholder="noreply@agency.gov"
+                 style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+        </label>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 120px;gap:10px">
+        <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+          SMTP Host
+          <input type="text" id="smtp-host" placeholder="smtp-relay.brevo.com"
+                 spellcheck="false"
+                 style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+        </label>
+        <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+          SMTP Port
+          <input type="text" id="smtp-port" placeholder="587"
+                 style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+        </label>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+          SMTP Username
+          <input type="text" id="smtp-username" placeholder="a5c8c2001@smtp-brevo.com"
                  autocomplete="off" spellcheck="false"
-                 style="flex:1;font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
-          <span id="email-key-badge" style="font-size:10px;white-space:nowrap"></span>
-        </div>
-        <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none">Leave blank to keep existing key · used for both email and SMS</span>
-      </label>
-
-      <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
-        Notify To (admin email)
-        <input type="email" id="email-notify-to" placeholder="Dave@WHITWERX.net"
-               style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
-        <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none">Receives new access-request alert emails</span>
-      </label>
-
-      <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
-        From Address (verified in Brevo)
-        <input type="email" id="email-notify-from" placeholder="Dave@WHITWERX.net"
-               style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
-        <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none">Must be a verified sender in your Brevo account</span>
-      </label>
-
-      <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
-        Notify Phone (SMS alerts)
-        <input type="tel" id="sms-notify-phone" placeholder="+12025551234"
-               autocomplete="off" spellcheck="false"
-               style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
-        <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none">E.164 format — +1 then 10 digits (e.g. +12025551234) · requires Brevo SMS credits</span>
-      </label>
+                 style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+        </label>
+        <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+          SMTP Password / API Key
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="password" id="smtp-password" placeholder="Leave blank to keep existing"
+                   autocomplete="new-password"
+                   style="flex:1;font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+            <span id="smtp-pw-badge" style="font-size:10px;white-space:nowrap"></span>
+          </div>
+        </label>
+      </div>
     </div>
 
-    <div style="display:flex;gap:8px;margin-top:16px;align-items:center;flex-wrap:wrap">
+    <div style="display:flex;gap:8px;margin-top:14px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-green" onclick="saveEmailSettings()">Save Settings</button>
-      <button class="btn btn-outline" onclick="testEmail()">Test Email</button>
-      <button class="btn btn-outline" onclick="testSms()">Test SMS</button>
+      <button class="btn btn-outline" onclick="testEmail()">Send Test Email</button>
       <span id="email-msg" style="font-size:11px;color:var(--muted)"></span>
     </div>
+
+    <!-- SMS -->
+    <div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border)">
+      <h3 style="margin-bottom:4px">📱 SMS Notifications (Brevo)</h3>
+      <p style="font-size:11px;color:var(--muted);margin-bottom:14px">Instant text alert when an access request is submitted — requires Brevo SMS credits</p>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+          Notify Phone
+          <input type="tel" id="sms-notify-phone" placeholder="+12025551234"
+                 autocomplete="off" spellcheck="false"
+                 style="font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+          <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none">E.164 format — +1 then 10 digits</span>
+        </label>
+        <label style="font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;display:flex;flex-direction:column;gap:5px">
+          Brevo SMS API Key
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="password" id="sms-api-key" placeholder="Leave blank to keep existing"
+                   autocomplete="new-password"
+                   style="flex:1;font-size:12px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:inherit"/>
+            <span id="sms-key-badge" style="font-size:10px;white-space:nowrap"></span>
+          </div>
+        </label>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:14px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-green" onclick="saveSmsSettings()">Save SMS</button>
+        <button class="btn btn-outline" onclick="testSms()">Send Test SMS</button>
+        <span id="sms-msg" style="font-size:11px;color:var(--muted)"></span>
+      </div>
+    </div>
+
   </div>
 
   <!-- Facility Library -->
@@ -616,69 +662,85 @@ async function loadEmailSettings() {
   const r = await fetch('/api/admin/settings/email');
   if (!r.ok) return;
   const d = await r.json();
-  document.getElementById('email-notify-to').value   = d.notify_to    || '';
-  document.getElementById('email-notify-from').value = d.notify_from  || '';
-  document.getElementById('sms-notify-phone').value  = d.notify_phone || '';
-  const badge = document.getElementById('email-key-badge');
-  badge.textContent   = d.key_set ? '✓ API key saved' : '⚠ Not set';
-  badge.style.color   = d.key_set ? 'var(--green)' : 'var(--warn)';
+  document.getElementById('smtp-host').value         = d.smtp_host     || '';
+  document.getElementById('smtp-port').value         = d.smtp_port     || '587';
+  document.getElementById('smtp-username').value     = d.smtp_username || '';
+  document.getElementById('email-notify-to').value   = d.notify_to     || '';
+  document.getElementById('email-notify-from').value = d.notify_from   || '';
+  document.getElementById('sms-notify-phone').value  = d.notify_phone  || '';
+
+  const pwBadge = document.getElementById('smtp-pw-badge');
+  pwBadge.textContent = d.smtp_password_set ? '✓ set' : '⚠ not set';
+  pwBadge.style.color = d.smtp_password_set ? 'var(--green)' : 'var(--warn)';
+
+  const smsBadge = document.getElementById('sms-key-badge');
+  smsBadge.textContent = d.sms_key_set ? '✓ set' : '⚠ not set';
+  smsBadge.style.color = d.sms_key_set ? 'var(--green)' : 'var(--warn)';
 }
 
 async function saveEmailSettings() {
-  const api_key      = document.getElementById('email-api-key').value.trim();
-  const notify_to    = document.getElementById('email-notify-to').value.trim();
-  const notify_from  = document.getElementById('email-notify-from').value.trim();
-  const notify_phone = document.getElementById('sms-notify-phone').value.trim();
+  const body = {
+    smtp_host:     document.getElementById('smtp-host').value.trim(),
+    smtp_port:     document.getElementById('smtp-port').value.trim(),
+    smtp_username: document.getElementById('smtp-username').value.trim(),
+    notify_to:     document.getElementById('email-notify-to').value.trim(),
+    notify_from:   document.getElementById('email-notify-from').value.trim(),
+  };
+  const pw = document.getElementById('smtp-password').value.trim();
+  if (pw) body.smtp_password = pw;
 
-  const body = { notify_to, notify_from, notify_phone };
-  if (api_key) body.api_key = api_key;
-
+  const msg = document.getElementById('email-msg');
   const r = await fetch('/api/admin/settings/email', {
     method: 'PATCH', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(body),
   });
-  const msg = document.getElementById('email-msg');
   if (r.ok) {
-    document.getElementById('email-api-key').value = '';
-    msg.textContent = '✓ Settings saved';
-    msg.style.color = 'var(--green)';
+    document.getElementById('smtp-password').value = '';
+    msg.textContent = '✓ Saved'; msg.style.color = 'var(--green)';
     loadEmailSettings();
   } else {
-    msg.textContent = '✕ Save failed';
-    msg.style.color = 'var(--red)';
+    msg.textContent = '✕ Save failed'; msg.style.color = 'var(--red)';
+  }
+  setTimeout(() => { msg.textContent = ''; }, 3000);
+}
+
+async function saveSmsSettings() {
+  const body = { notify_phone: document.getElementById('sms-notify-phone').value.trim() };
+  const key = document.getElementById('sms-api-key').value.trim();
+  if (key) body.sms_api_key = key;
+
+  const msg = document.getElementById('sms-msg');
+  const r = await fetch('/api/admin/settings/email', {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (r.ok) {
+    document.getElementById('sms-api-key').value = '';
+    msg.textContent = '✓ Saved'; msg.style.color = 'var(--green)';
+    loadEmailSettings();
+  } else {
+    msg.textContent = '✕ Save failed'; msg.style.color = 'var(--red)';
   }
   setTimeout(() => { msg.textContent = ''; }, 3000);
 }
 
 async function testEmail() {
   const msg = document.getElementById('email-msg');
-  msg.textContent = 'Sending…';
-  msg.style.color = 'var(--muted)';
+  msg.textContent = 'Sending…'; msg.style.color = 'var(--muted)';
   const r = await fetch('/api/admin/settings/email/test', { method: 'POST' });
   const d = await r.json().catch(() => ({}));
-  if (r.ok) {
-    msg.textContent = `✓ Email sent to ${d.sent_to}`;
-    msg.style.color = 'var(--green)';
-  } else {
-    msg.textContent = `✕ ${d.detail || 'Failed'}`;
-    msg.style.color = 'var(--red)';
-  }
+  if (r.ok) { msg.textContent = `✓ Sent to ${d.sent_to}`; msg.style.color = 'var(--green)'; }
+  else       { msg.textContent = `✕ ${d.detail || 'Failed'}`; msg.style.color = 'var(--red)'; }
   setTimeout(() => { msg.textContent = ''; }, 4000);
 }
 
 async function testSms() {
-  const msg = document.getElementById('email-msg');
-  msg.textContent = 'Sending SMS…';
-  msg.style.color = 'var(--muted)';
+  const msg = document.getElementById('sms-msg');
+  msg.textContent = 'Sending…'; msg.style.color = 'var(--muted)';
   const r = await fetch('/api/admin/settings/email/test-sms', { method: 'POST' });
   const d = await r.json().catch(() => ({}));
-  if (r.ok) {
-    msg.textContent = `✓ SMS sent to ${d.sent_to}`;
-    msg.style.color = 'var(--green)';
-  } else {
-    msg.textContent = `✕ ${d.detail || 'Failed'}`;
-    msg.style.color = 'var(--red)';
-  }
+  if (r.ok) { msg.textContent = `✓ Sent to ${d.sent_to}`; msg.style.color = 'var(--green)'; }
+  else       { msg.textContent = `✕ ${d.detail || 'Failed'}`; msg.style.color = 'var(--red)'; }
   setTimeout(() => { msg.textContent = ''; }, 4000);
 }
 

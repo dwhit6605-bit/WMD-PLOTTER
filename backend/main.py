@@ -2101,31 +2101,49 @@ async def admin_reset_password(user_id: int, body: AdminPasswordReset,
 
 @app.get("/api/admin/settings/email")
 async def get_email_settings(_: dict = Depends(require_admin)):
-    """Return current email/SMS config. API key is never returned — only whether it's set."""
+    """Return current SMTP/SMS config. Passwords/keys never returned — only whether set."""
     return {
-        "key_set":      bool(get_setting("email_brevo_key")),
-        "notify_to":    get_setting("email_notify_to")   or "",
-        "notify_from":  get_setting("email_notify_from") or "",
-        "notify_phone": get_setting("sms_notify_phone")  or "",
+        "smtp_host":         get_setting("smtp_host")     or "",
+        "smtp_port":         get_setting("smtp_port")     or "587",
+        "smtp_username":     get_setting("smtp_username") or "",
+        "smtp_password_set": bool(get_setting("smtp_password")),
+        "notify_to":         get_setting("email_notify_to")  or "",
+        "notify_from":       get_setting("email_notify_from") or "",
+        "sms_key_set":       bool(get_setting("sms_brevo_key")),
+        "notify_phone":      get_setting("sms_notify_phone")  or "",
     }
 
 
 class EmailSettingsPatch(BaseModel):
-    api_key:      Optional[str] = None
-    notify_to:    Optional[str] = None
-    notify_from:  Optional[str] = None
-    notify_phone: Optional[str] = None
+    smtp_host:     Optional[str] = None
+    smtp_port:     Optional[str] = None
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+    notify_to:     Optional[str] = None
+    notify_from:   Optional[str] = None
+    sms_api_key:   Optional[str] = None
+    notify_phone:  Optional[str] = None
 
 @app.patch("/api/admin/settings/email")
 async def patch_email_settings(body: EmailSettingsPatch, _: dict = Depends(require_admin)):
-    if body.api_key is not None:
-        val = body.api_key.strip()
+    if body.smtp_host is not None:
+        set_setting("smtp_host", body.smtp_host.strip())
+    if body.smtp_port is not None:
+        set_setting("smtp_port", body.smtp_port.strip())
+    if body.smtp_username is not None:
+        set_setting("smtp_username", body.smtp_username.strip())
+    if body.smtp_password is not None:
+        val = body.smtp_password.strip()
         if val:
-            set_setting("email_brevo_key", val)
+            set_setting("smtp_password", val)
     if body.notify_to is not None:
         set_setting("email_notify_to", body.notify_to.strip())
     if body.notify_from is not None:
         set_setting("email_notify_from", body.notify_from.strip())
+    if body.sms_api_key is not None:
+        val = body.sms_api_key.strip()
+        if val:
+            set_setting("sms_brevo_key", val)
     if body.notify_phone is not None:
         set_setting("sms_notify_phone", body.notify_phone.strip())
     return {"ok": True}
@@ -2135,11 +2153,11 @@ async def patch_email_settings(body: EmailSettingsPatch, _: dict = Depends(requi
 async def test_email(admin: dict = Depends(require_admin)):
     notify_to = get_setting("email_notify_to") or ""
     if not notify_to:
-        raise HTTPException(status_code=400, detail="Notify To address is not configured.")
-    ok = send_test(notify_to)
+        raise HTTPException(status_code=400, detail="Recipients (TO) not configured.")
+    ok = send_test(notify_to.split(",")[0].strip())
     if not ok:
-        raise HTTPException(status_code=400, detail="API key or From address not configured.")
-    return {"ok": True, "sent_to": notify_to}
+        raise HTTPException(status_code=400, detail="SMTP settings incomplete — check host, username, and password.")
+    return {"ok": True, "sent_to": notify_to.split(",")[0].strip()}
 
 
 @app.post("/api/admin/settings/email/test-sms")
@@ -2149,7 +2167,7 @@ async def test_sms(admin: dict = Depends(require_admin)):
         raise HTTPException(status_code=400, detail="Notify Phone is not configured.")
     ok = send_test_sms(phone)
     if not ok:
-        raise HTTPException(status_code=400, detail="Brevo API key not configured.")
+        raise HTTPException(status_code=400, detail="SMS API key not configured.")
     return {"ok": True, "sent_to": phone}
 
 

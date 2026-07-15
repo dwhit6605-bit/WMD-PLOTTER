@@ -1,59 +1,89 @@
 """
-Brevo (formerly Sendinblue) transactional email notifications.
+Transactional notifications for WMD Plotter.
 
-Config is read from the settings table at send time (admin-configurable via
-the admin panel). Falls back to env vars if DB values are not set.
+EMAIL — sent via SMTP (Brevo relay, SendGrid, Gmail App Passwords, etc.)
+  DB settings: smtp_host, smtp_port, smtp_username, smtp_password,
+               email_notify_to (comma-separated), email_notify_from
 
-  email_brevo_key   — Brevo API key
-  email_notify_to   — address that receives admin notifications
-  email_notify_from — verified sender address in your Brevo account
+SMS — sent via Brevo transactional SMS REST API
+  DB settings: sms_brevo_key, sms_notify_phone
+
+All settings are configurable from Admin → User Management.
 """
 
 import os
 import logging
+import smtplib
 import threading
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-# Env-var fallbacks (still honoured if DB values aren't set)
-_ENV_API_KEY     = os.environ.get("BREVO_API_KEY", "")
-_ENV_NOTIFY_TO   = os.environ.get("NOTIFY_EMAIL", "")
-_ENV_NOTIFY_FROM = os.environ.get("NOTIFY_FROM", "")
-
-BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email"
-BREVO_SMS_URL  = "https://api.brevo.com/v3/transactionalSMS/sms"
+BREVO_SMS_URL = "https://api.brevo.com/v3/transactionalSMS/sms"
 
 
-def _get_config() -> tuple:
-    """Return (api_key, notify_to, notify_from) from DB, falling back to env vars."""
+# ── Config readers ────────────────────────────────────────────────────────────
+
+def _get_smtp_config() -> dict:
     try:
         from db import get_setting
-        api_key     = get_setting("email_brevo_key")  or _ENV_API_KEY
-        notify_to   = get_setting("email_notify_to")  or _ENV_NOTIFY_TO
-        notify_from = get_setting("email_notify_from") or _ENV_NOTIFY_FROM
+        return {
+            "host":        get_setting("smtp_host")     or os.environ.get("SMTP_HOST", ""),
+            "port":        int(get_setting("smtp_port") or os.environ.get("SMTP_PORT", "587")),
+            "username":    get_setting("smtp_username") or os.environ.get("SMTP_USERNAME", ""),
+            "password":    get_setting("smtp_password") or os.environ.get("SMTP_PASSWORD", ""),
+            "notify_to":   get_setting("email_notify_to")  or os.environ.get("NOTIFY_EMAIL", ""),
+            "notify_from": get_setting("email_notify_from") or os.environ.get("NOTIFY_FROM", ""),
+        }
     except Exception:
-        api_key, notify_to, notify_from = _ENV_API_KEY, _ENV_NOTIFY_TO, _ENV_NOTIFY_FROM
-    return api_key, notify_to, notify_from
+        return {
+            "host":        os.environ.get("SMTP_HOST", ""),
+            "port":        int(os.environ.get("SMTP_PORT", "587")),
+            "username":    os.environ.get("SMTP_USERNAME", ""),
+            "password":    os.environ.get("SMTP_PASSWORD", ""),
+            "notify_to":   os.environ.get("NOTIFY_EMAIL", ""),
+            "notify_from": os.environ.get("NOTIFY_FROM", ""),
+        }
 
 
-def _send(payload: dict, api_key: str) -> None:
-    """Blocking Brevo email call — always run in a daemon thread."""
+def _get_sms_config() -> tuple:
+    """Return (api_key, notify_phone)."""
     try:
-        with httpx.Client(timeout=10) as client:
-            r = client.post(
-                BREVO_SEND_URL,
-                headers={"api-key": api_key, "Content-Type": "application/json"},
-                json=payload,
-            )
-        if r.status_code not in (200, 201, 202):
-            logger.warning("Brevo API returned %s: %s", r.status_code, r.text[:200])
-    except Exception as exc:
-        logger.warning("email_notify: send failed — %s", exc)
+        from db import get_setting
+        api_key = get_setting("sms_brevo_key") or os.environ.get("BREVO_API_KEY", "")
+        phone   = get_setting("sms_notify_phone") or ""
+    except Exception:
+        api_key = os.environ.get("BREVO_API_KEY", "")
+        phone   = ""
+    return api_key, phone
 
+
+# ── SMTP send ─────────────────────────────────────────────────────────────────
+
+def _send_smtp(to_addresses: list, subject: str, html: str, cfg: dict) -> None:
+    """Blocking SMTP send — always run in a daemon thread."""
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = cfg["notify_from"]
+        msg["To"]      = ", ".join(to_addresses)
+        msg.attach(MIMEText(html, "html", "utf-8"))
+
+        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(cfg["username"], cfg["password"])
+            server.sendmail(cfg["notify_from"], to_addresses, msg.as_string())
+    except Exception as exc:
+        logger.warning("email_notify: SMTP send failed — %s", exc)
+
+
+# ── SMS send ──────────────────────────────────────────────────────────────────
 
 def _send_sms(payload: dict, api_key: str) -> None:
     """Blocking Brevo SMS call — always run in a daemon thread."""
@@ -67,46 +97,46 @@ def _send_sms(payload: dict, api_key: str) -> None:
         if r.status_code not in (200, 201, 202):
             logger.warning("Brevo SMS returned %s: %s", r.status_code, r.text[:200])
     except Exception as exc:
-        logger.warning("email_notify: sms send failed — %s", exc)
+        logger.warning("email_notify: SMS send failed — %s", exc)
 
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 def send_test(to_email: str) -> bool:
-    """Send a test email. Returns True if dispatched (not necessarily delivered)."""
-    api_key, _, notify_from = _get_config()
-    if not api_key or not notify_from:
+    """Send a test email. Returns True if dispatched."""
+    cfg = _get_smtp_config()
+    if not cfg["host"] or not cfg["username"] or not cfg["password"] or not cfg["notify_from"]:
         return False
 
-    payload = {
-        "sender":  {"name": "WMD Plotter", "email": notify_from},
-        "to":      [{"email": to_email}],
-        "subject": "[WMD Plotter] Test Email — Configuration OK",
-        "htmlContent": """
+    html = """
 <div style="font-family:'Courier New',monospace;background:#0d1117;color:#c9d1d9;padding:24px">
   <div style="max-width:480px;margin:0 auto;background:#161b22;border:1px solid #21262d;
               border-radius:10px;overflow:hidden">
     <div style="background:#0a0f14;padding:18px 24px;border-bottom:1px solid #21262d">
       <h1 style="margin:0;font-size:15px;font-weight:800;color:#00ff88">
-        ✓ Email Configuration Working
+        &#10003; Email Configuration Working
       </h1>
-      <p style="margin:4px 0 0;font-size:11px;color:#8b949e">
-        WMD Plotter · WHITWERX
-      </p>
+      <p style="margin:4px 0 0;font-size:11px;color:#8b949e">WMD Plotter &middot; WHITWERX</p>
     </div>
     <div style="padding:24px;font-size:13px;line-height:1.7">
-      Your Brevo email settings are configured correctly.<br>
+      Your SMTP settings are configured correctly.<br>
       Access request notifications and approval emails will be delivered.
     </div>
   </div>
-</div>""",
-    }
-    t = threading.Thread(target=_send, args=(payload, api_key), daemon=True)
+</div>"""
+
+    t = threading.Thread(
+        target=_send_smtp,
+        args=([to_email], "[WMD Plotter] Test Email — Configuration OK", html, cfg),
+        daemon=True,
+    )
     t.start()
     return True
 
 
 def send_test_sms(to_phone: str) -> bool:
     """Send a test SMS. Returns True if dispatched."""
-    api_key, _, _ = _get_config()
+    api_key, _ = _get_sms_config()
     if not api_key or not to_phone:
         return False
     payload = {
@@ -119,32 +149,6 @@ def send_test_sms(to_phone: str) -> bool:
     return True
 
 
-def notify_access_request_sms(
-    display_name: str,
-    username: str,
-    access_reason: str,
-    to_phone: Optional[str],
-) -> None:
-    """Fire-and-forget SMS to admin when a new access request is submitted."""
-    if not to_phone:
-        return
-    api_key, _, _ = _get_config()
-    if not api_key:
-        return
-    # SMS content: keep it concise (160 chars ideal)
-    content = (
-        f"[WMD Plotter] New access request from {display_name} (@{username}). "
-        f"Review at wmdplotter.whitwerx.net/admin/users"
-    )
-    payload = {
-        "sender":    "WMDPlotter",
-        "recipient": to_phone,
-        "content":   content,
-    }
-    t = threading.Thread(target=_send_sms, args=(payload, api_key), daemon=True)
-    t.start()
-
-
 def notify_access_approved(
     display_name: str,
     username: str,
@@ -153,8 +157,8 @@ def notify_access_approved(
     """Fire-and-forget email to the requester when an admin approves their account."""
     if not to_email:
         return
-    api_key, _, notify_from = _get_config()
-    if not api_key or not notify_from:
+    cfg = _get_smtp_config()
+    if not cfg["host"] or not cfg["username"] or not cfg["password"]:
         return
 
     html = f"""
@@ -178,15 +182,15 @@ def notify_access_approved(
 <body>
 <div class="card">
   <div class="hdr">
-    <h1>✓ Access Approved — WMD Plotter</h1>
-    <p>WHITWERX · Model Display (WMD) · CBRN Planning System</p>
+    <h1>&#10003; Access Approved &mdash; WMD Plotter</h1>
+    <p>WHITWERX &middot; Model Display (WMD) &middot; CBRN Planning System</p>
   </div>
   <div class="body">
     <p>Hi {display_name},</p>
     <p>Your access request has been reviewed and <strong style="color:#00ff88">approved</strong>.
        You can now sign in using your username and the password you created when you submitted your request.</p>
     <p><strong>Username:</strong> {username}</p>
-    <a class="btn" href="https://wmdplotter.whitwerx.net/login">Sign In →</a>
+    <a class="btn" href="https://wmdplotter.whitwerx.net/login">Sign In &rarr;</a>
     <div class="footer">
       WMD Plotter is restricted to authorized personnel only.<br>
       If you did not request this account, contact Dave@WHITWERX.net.
@@ -196,13 +200,11 @@ def notify_access_approved(
 </body>
 </html>"""
 
-    payload = {
-        "sender":  {"name": "WHITWERX WMD Plotter", "email": notify_from},
-        "to":      [{"email": to_email, "name": display_name}],
-        "subject": "Your WMD Plotter access has been approved",
-        "htmlContent": html,
-    }
-    t = threading.Thread(target=_send, args=(payload, api_key), daemon=True)
+    t = threading.Thread(
+        target=_send_smtp,
+        args=([to_email], "Your WMD Plotter access has been approved", html, cfg),
+        daemon=True,
+    )
     t.start()
 
 
@@ -212,9 +214,9 @@ def notify_access_request(
     access_reason: str,
     email: Optional[str],
 ) -> None:
-    """Fire-and-forget notification to admin when a new access request is submitted."""
-    api_key, notify_to, notify_from = _get_config()
-    if not api_key or not notify_to or not notify_from:
+    """Fire-and-forget notification to admin(s) when a new access request is submitted."""
+    cfg = _get_smtp_config()
+    if not cfg["host"] or not cfg["username"] or not cfg["password"] or not cfg["notify_to"]:
         return
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -244,7 +246,7 @@ def notify_access_request(
 <body>
 <div class="card">
   <div class="hdr">
-    <h1>⚠ New Access Request — WMD Plotter</h1>
+    <h1>&#9888; New Access Request &mdash; WMD Plotter</h1>
     <p>A user has requested access and is awaiting your approval.</p>
   </div>
   <div class="body">
@@ -256,7 +258,7 @@ def notify_access_request(
       <div class="reason">{access_reason}</div>
     </div>
     <div class="row" style="margin-top:20px">
-      <a class="btn" href="https://wmdplotter.whitwerx.net/admin/users">Review in Admin Panel →</a>
+      <a class="btn" href="https://wmdplotter.whitwerx.net/admin/users">Review in Admin Panel &rarr;</a>
     </div>
     <div class="ts">Submitted {ts}</div>
   </div>
@@ -264,11 +266,35 @@ def notify_access_request(
 </body>
 </html>"""
 
+    notify_to_list = [a.strip() for a in cfg["notify_to"].split(",") if a.strip()]
+    t = threading.Thread(
+        target=_send_smtp,
+        args=(notify_to_list, f"[WMD Plotter] Access Request — {display_name}", html, cfg),
+        daemon=True,
+    )
+    t.start()
+
+
+def notify_access_request_sms(
+    display_name: str,
+    username: str,
+    access_reason: str,
+    to_phone: Optional[str],
+) -> None:
+    """Fire-and-forget SMS to admin when a new access request is submitted."""
+    if not to_phone:
+        return
+    api_key, _ = _get_sms_config()
+    if not api_key:
+        return
+    content = (
+        f"[WMD Plotter] New access request from {display_name} (@{username}). "
+        f"Review at wmdplotter.whitwerx.net/admin/users"
+    )
     payload = {
-        "sender":  {"name": "WMD Plotter", "email": notify_from},
-        "to":      [{"email": notify_to}],
-        "subject": f"[WMD Plotter] Access Request — {display_name}",
-        "htmlContent": html,
+        "sender":    "WMDPlotter",
+        "recipient": to_phone,
+        "content":   content,
     }
-    t = threading.Thread(target=_send, args=(payload, api_key), daemon=True)
+    t = threading.Thread(target=_send_sms, args=(payload, api_key), daemon=True)
     t.start()
