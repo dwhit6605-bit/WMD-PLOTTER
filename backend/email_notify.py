@@ -42,6 +42,73 @@ def _send(payload: dict) -> None:
         logger.warning("email_notify: failed to send — %s", exc)
 
 
+def notify_access_approved(
+    display_name: str,
+    username: str,
+    to_email: Optional[str],
+) -> None:
+    """
+    Fire-and-forget email to the requester when an admin approves their account.
+    Silently skipped if the user didn't provide an email or env vars aren't set.
+    """
+    if not BREVO_API_KEY or not NOTIFY_FROM or not to_email:
+        return
+
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<style>
+  body   {{ font-family: 'Courier New', monospace; background:#0d1117; color:#c9d1d9; margin:0; padding:24px; }}
+  .card  {{ max-width:480px; margin:0 auto; background:#161b22; border:1px solid #21262d;
+            border-radius:10px; overflow:hidden; }}
+  .hdr   {{ background:#0a0f14; padding:18px 24px; border-bottom:1px solid #21262d; }}
+  .hdr h1{{ margin:0; font-size:15px; font-weight:800; letter-spacing:.08em; color:#00ff88; }}
+  .hdr p {{ margin:4px 0 0; font-size:11px; color:#8b949e; }}
+  .body  {{ padding:24px; }}
+  .body p{{ font-size:13px; color:#c9d1d9; line-height:1.7; margin:0 0 16px; }}
+  .btn   {{ display:inline-block; padding:12px 28px; background:#00ff88; color:#000;
+            font-family:'Courier New',monospace; font-size:12px; font-weight:700;
+            letter-spacing:1px; text-decoration:none; border-radius:7px;
+            text-transform:uppercase; }}
+  .footer{{ font-size:10px; color:#8b949e; margin-top:20px; padding-top:14px;
+            border-top:1px solid #21262d; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="hdr">
+    <h1>✓ Access Approved — WMD Plotter</h1>
+    <p>WHITWERX · Model Display (WMD) · CBRN Planning System</p>
+  </div>
+  <div class="body">
+    <p>Hi {display_name},</p>
+    <p>Your access request has been reviewed and <strong style="color:#00ff88">approved</strong>.
+       You can now sign in using your username and the password you created when you submitted your request.</p>
+    <p><strong>Username:</strong> {username}</p>
+    <a class="btn" href="https://wmdplotter.whitwerx.net/login">Sign In →</a>
+    <div class="footer">
+      WMD Plotter is restricted to authorized personnel only.<br>
+      If you did not request this account, contact Dave@WHITWERX.net.
+    </div>
+  </div>
+</div>
+</body>
+</html>
+"""
+
+    payload = {
+        "sender":  {"name": "WHITWERX WMD Plotter", "email": NOTIFY_FROM},
+        "to":      [{"email": to_email, "name": display_name}],
+        "subject": "Your WMD Plotter access has been approved",
+        "htmlContent": html,
+    }
+
+    t = threading.Thread(target=_send, args=(payload,), daemon=True)
+    t.start()
+
+
 def notify_access_request(
     display_name: str,
     username: str,
