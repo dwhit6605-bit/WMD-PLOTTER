@@ -1,0 +1,22 @@
+node_modules/
+
+# Capacitor copies www/ here on every sync — generated, not source
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/capacitor-cordova-android-plugins/
+
+# Gradle build outputs
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+
+# Signing material — NEVER commit. Losing this keystore means you can never
+# ship an update to an existing Play listing; leaking it means someone else can.
+*.jks
+*.keystore
+keystore.properties

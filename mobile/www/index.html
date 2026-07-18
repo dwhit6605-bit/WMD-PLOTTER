@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>WHITWERX Model Display</title>
+  <style>
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #0d1117;
+      color: #c9d1d9;
+      font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    h1 { font-size: 17px; margin: 0 0 8px; color: #f0f6fc; }
+    p  { margin: 0; color: #8b949e; }
+  </style>
+</head>
+<body>
+  <!--
+    Placeholder only. capacitor.config.ts sets server.url, so the WebView loads
+    https://wmd.whitwerx.net directly and this file is never rendered in a normal
+    launch. Capacitor's CLI requires webDir to exist and be non-empty, and this
+    is what it points at. If you ever drop server.url to bundle the frontend into
+    the APK, this is the file that gets replaced by the real app shell.
+  -->
+  <div>
+    <h1>WHITWERX Model Display</h1>
+    <p>Connecting&hellip;</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "appId": "net.whitwerx.wmd",
+  "appName": "WHITWERX Model Display",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "appendUserAgent": "WMDPlotterAndroid"
+  },
+  "server": {
+    "url": "https://wmd.whitwerx.net",
+    "androidScheme": "https",
+    "cleartext": false,
+    "allowNavigation": ["wmd.whitwerx.net"]
+  },
+  "plugins": {
+    "StatusBar": {
+      "backgroundColor": "#0d1117",
+      "style": "DARK"
+    }
+  }
+}
