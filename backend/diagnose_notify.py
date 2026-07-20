@@ -96,6 +96,44 @@ def main() -> int:
         bad("Notify TO is empty — access-request alerts have nowhere to go.")
         info("This alone stops enrollment notifications, even if everything else is right.")
 
+    # ── 1b. DB vs .env conflicts ───────────────────────────────────────────
+    # Every setting reads "DB value or environment value", so a stale DB entry
+    # silently overrides a correct .env — with nothing anywhere reporting that
+    # the two disagree. That exact case (a hostname in the DB beating a valid
+    # address in .env) is what made this failure hard to see.
+    print(f"\n{B}1b. Configuration sources{X}")
+    PAIRS = [
+        ("SMTP host",     "smtp_host",         "SMTP_HOST"),
+        ("SMTP port",     "smtp_port",         "SMTP_PORT"),
+        ("SMTP username", "smtp_username",     "SMTP_USERNAME"),
+        ("SMTP password", "smtp_password",     "SMTP_PASSWORD"),
+        ("From address",  "email_notify_from", "NOTIFY_FROM"),
+        ("Notify TO",     "email_notify_to",   "NOTIFY_EMAIL"),
+        ("SMS API key",   "sms_brevo_key",     "BREVO_API_KEY"),
+        ("Notify phone",  "sms_notify_phone",  "NOTIFY_PHONE"),
+    ]
+    SECRET = {"smtp_password", "sms_brevo_key"}
+    conflicts = 0
+    for label, db_key, env_key in PAIRS:
+        dbv  = (get_setting(db_key) or "").strip()
+        envv = (os.environ.get(env_key) or "").strip()
+        show = lambda v: "<set>" if db_key in SECRET and v else (v or "<unset>")
+        if dbv and envv and dbv.lower() != envv.lower():
+            conflicts += 1
+            bad(f"{label:14} CONFLICT — database wins")
+            info(f"{'':14} database: {show(dbv)}   <-- in effect")
+            info(f"{'':14} .env:     {show(envv)}   <-- ignored")
+        elif dbv:
+            ok(f"{label:14} from database: {show(dbv)}")
+        elif envv:
+            ok(f"{label:14} from .env: {show(envv)}")
+        else:
+            info(f"{label:14} not set in either")
+    if conflicts:
+        print()
+        info("The database always wins. Change the value in Admin -> User")
+        info("Management, or clear it there so the .env value takes over.")
+
     # ── 2. Brevo-specific sanity checks ────────────────────────────────────
     print(f"\n{B}2. Brevo specifics{X}")
     host = (cfg.get("host") or "").lower()
