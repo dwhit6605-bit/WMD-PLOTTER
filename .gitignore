@@ -23,3 +23,6 @@ backend/users.db-shm
 
 # Claude Code launch config (local only)
 .claude/launch.json
+
+# Test artifacts
+tests/__pycache__/
