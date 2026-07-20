@@ -87,7 +87,7 @@ def main() -> int:
     print()
     if problem:
         bad(problem)
-        info("Nothing will be sent until these are filled in.")
+        info("Nothing will be sent until this is corrected.")
     else:
         ok("All required email fields are present.")
 
