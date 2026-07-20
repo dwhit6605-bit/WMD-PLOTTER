@@ -1740,16 +1740,57 @@ def _profile_to_config(p: dict) -> dict:
 
 
 def _caller_org_id(user: dict) -> Optional[int]:
-    """Return the org_id scope for this caller: None for global admin, their org for org_admin."""
+    """The org scope for this caller: None for global admin, else their org.
+
+    Reads org membership from the database rather than the JWT. The token
+    carries org_id and lives JWT_EXPIRE_DAYS (7), so a user moved between
+    organizations would keep resolving to their previous org for up to a week —
+    and TAK pushes carry operational incident data to a specific agency's
+    server, so a stale value sends it to the wrong organization entirely.
+    """
     if user.get("role") == "admin":
-        return None  # global admin sees/touches everything
-    return user.get("org_id")  # org_admin is scoped to their org
+        return None  # global admin operates at global scope
+    row = get_user_by_id(user["id"])
+    return row.get("org_id") if row else None
+
+def _tak_profile_for(user: dict):
+    """The active TAK profile this caller may push to, or None.
+
+    Global profiles (org_id IS NULL) belong to the site admin — they are not a
+    shared default. So a non-admin with no organization resolves to nothing
+    rather than inheriting the admin's TAK server, which would send one
+    agency's incident data to another's.
+    """
+    if user.get("role") == "admin":
+        return get_active_tak_profile(org_id=None)
+    org_id = _caller_org_id(user)
+    if org_id is None:
+        return None
+    return get_active_tak_profile(org_id=org_id)
+
+def _tak_profile_named(profile_id, user: dict):
+    """Resolve an explicitly requested profile id, enforcing the same scope.
+
+    Several push endpoints accept an optional profile_id to override the active
+    profile. Without this check that override reads any row by id, so a member
+    of one agency could push incident data to another agency's TAK server — or
+    the site admin's — simply by passing its id.
+    """
+    p = get_tak_profile(int(profile_id))
+    if not p:
+        raise HTTPException(status_code=404, detail="TAK profile not found")
+    if user.get("role") == "admin":
+        return p
+    caller_org = _caller_org_id(user)
+    if caller_org is None or p.get("org_id") != caller_org:
+        raise HTTPException(status_code=403, detail="That TAK profile belongs to another organization")
+    return p
 
 def _assert_profile_ownership(profile: dict, user: dict) -> None:
     """Raise 403 if an org_admin tries to touch a profile outside their org."""
     if user.get("role") == "admin":
         return
-    caller_org = user.get("org_id")
+    caller_org = _caller_org_id(user)
     if profile.get("org_id") != caller_org:
         raise HTTPException(status_code=403, detail="Cannot modify another org's TAK profile")
 
@@ -1758,7 +1799,7 @@ async def api_list_tak_profiles(user: dict = Depends(require_org_admin)):
     if user.get("role") == "admin":
         return {"profiles": list_tak_profiles()}
     # org_admin: only their org's profiles
-    return {"profiles": list_tak_profiles(org_id=user.get("org_id"), org_scoped=True)}
+    return {"profiles": list_tak_profiles(org_id=_caller_org_id(user), org_scoped=True)}
 
 
 @app.post("/api/admin/tak-profiles")
@@ -1840,11 +1881,22 @@ async def api_activate_tak_profile(profile_id: int, user: dict = Depends(require
 
 @app.get("/api/tak-status")
 async def tak_status(user: dict = Depends(current_user)):
-    p = get_active_tak_profile(org_id=user.get("org_id"))
+    org_id = _caller_org_id(user)
+    p = _tak_profile_for(user)
     if not p:
-        return {"configured": False, "host": "", "port": "8089"}
+        # TAK profiles are strictly per-organization, so say which case this is
+        # rather than a bare "not configured" — the fix differs, and neither is
+        # something an ordinary user can resolve themselves.
+        if user.get("role") != "admin" and org_id is None:
+            reason = ("Your account is not assigned to an organization. "
+                      "TAK servers are configured per organization.")
+        else:
+            reason = ("No TAK server is configured for your organization. "
+                      "An organization administrator can add one in Admin → TAK Server Settings.")
+        return {"configured": False, "host": "", "port": "8089",
+                "reason": reason, "org_id": org_id}
     return {"configured": bool(p.get("host")), "host": p.get("host") or "", "port": str(p.get("port") or 8089),
-            "profile_name": p.get("name") or ""}
+            "profile_name": p.get("name") or "", "org_id": org_id}
 
 
 @app.post("/api/tak-push")
@@ -1856,7 +1908,7 @@ async def tak_push(request: Request, user: dict = Depends(current_user)):
              "error": "No model data — run a model first, then push."},
             status_code=400,
         )
-    p = get_active_tak_profile(org_id=user.get("org_id"))
+    p = _tak_profile_for(user)
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "sent": 0, "error": "No TAK server profile configured"}, status_code=400)
     result = push_cot(_profile_to_config(p), _overlay_state)
@@ -1901,7 +1953,7 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
         pass
     profile_id    = body.get("profile_id")
     annotations_kml = body.get("annotations_kml", "")
-    p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile(org_id=user.get("org_id"))
+    p = _tak_profile_named(profile_id, user) if profile_id else _tak_profile_for(user)
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
     config = _profile_to_config(p)
@@ -1997,7 +2049,7 @@ async def tak_push_facilities_endpoint(request: Request, user: dict = Depends(cu
     if not lat and not lon:
         return JSONResponse({"success": False, "error": "lat/lon required"}, status_code=400)
 
-    p = get_active_tak_profile(org_id=user.get("org_id"))
+    p = _tak_profile_for(user)
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
 
@@ -2039,7 +2091,7 @@ async def tak_push_evac_endpoint(request: Request, user: dict = Depends(current_
     if not routes:
         return JSONResponse({"success": False, "error": "No routes provided"}, status_code=400)
 
-    p = get_active_tak_profile(org_id=user.get("org_id"))
+    p = _tak_profile_for(user)
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
 
@@ -2077,7 +2129,7 @@ async def push_plume_timeseries(request: Request, user: dict = Depends(current_u
     if not lat and not lon:
         return JSONResponse({"success": False, "error": "lat/lon required"}, status_code=400)
 
-    p = get_active_tak_profile(org_id=user.get("org_id"))
+    p = _tak_profile_for(user)
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
 
@@ -2170,7 +2222,7 @@ async def tak_test_point(request: Request, user: dict = Depends(require_org_admi
     lat  = float(body.get("lat", 0.0))
     lon  = float(body.get("lon", 0.0))
     profile_id = body.get("profile_id")
-    p = get_tak_profile(int(profile_id)) if profile_id else get_active_tak_profile(org_id=user.get("org_id"))
+    p = _tak_profile_named(profile_id, user) if profile_id else _tak_profile_for(user)
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "error": "No TAK server profile configured"}, status_code=400)
 

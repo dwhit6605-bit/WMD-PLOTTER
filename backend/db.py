@@ -245,26 +245,26 @@ def get_tak_profile(profile_id: int) -> Optional[dict]:
 
 
 def get_active_tak_profile(org_id: Optional[int] = None) -> Optional[dict]:
+    """Active TAK profile for exactly this scope. No cross-scope fallback.
+
+    Scoping is strict: an organization uses only its own profiles, and a caller
+    with no organization (including the global admin) uses only global ones
+    (org_id IS NULL). Previously an org with no profile of its own silently fell
+    back to the global profile, so a member of one agency could push incident
+    data to whatever TAK server the site admin had configured — a different
+    agency's server. An org with no profile now gets nothing, which surfaces as
+    "not configured" rather than as a push to somewhere unexpected.
+
+    `IS ?` rather than `= ?` so a NULL org_id matches the global scope; `=` never
+    matches NULL in SQL.
+    """
     conn = _connect()
-    # Try org-specific active profile first
-    if org_id is not None:
-        row = conn.execute(
-            "SELECT * FROM tak_profiles WHERE org_id=? AND is_active=1 LIMIT 1", (org_id,)
-        ).fetchone()
-        if not row:
-            row = conn.execute(
-                "SELECT * FROM tak_profiles WHERE org_id=? ORDER BY id LIMIT 1", (org_id,)
-            ).fetchone()
-        if row:
-            conn.close()
-            return dict(row)
-    # Fall back to global (org_id IS NULL)
     row = conn.execute(
-        "SELECT * FROM tak_profiles WHERE org_id IS NULL AND is_active=1 LIMIT 1"
+        "SELECT * FROM tak_profiles WHERE org_id IS ? AND is_active=1 LIMIT 1", (org_id,)
     ).fetchone()
     if not row:
         row = conn.execute(
-            "SELECT * FROM tak_profiles WHERE org_id IS NULL ORDER BY id LIMIT 1"
+            "SELECT * FROM tak_profiles WHERE org_id IS ? ORDER BY id LIMIT 1", (org_id,)
         ).fetchone()
     conn.close()
     return dict(row) if row else None
