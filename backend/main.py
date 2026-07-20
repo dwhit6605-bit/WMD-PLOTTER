@@ -22,7 +22,7 @@ import secrets
 import logging
 import threading
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -60,7 +60,9 @@ from nws_forecast import fetch_nws_forecast
 from hifld import fetch_hifld_infra
 from nifc import fetch_nifc_perimeters
 from aegl_db import get_aegl
-from db   import init_db, count_users, create_user, get_user_by_username, \
+from db   import init_db, count_users, create_user, get_user_by_username, get_user_by_email, \
+                 create_password_reset, consume_password_reset, peek_password_reset, \
+                 invalidate_password_resets, purge_expired_password_resets, \
                  get_user_by_id, update_last_login, list_users, delete_user, update_password, \
                  get_setting, set_setting, \
                  list_tak_profiles, get_tak_profile, get_active_tak_profile, \
@@ -70,7 +72,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  list_facilities, create_facility, update_facility, delete_facility, \
                  set_user_org, set_user_role, set_user_status, update_user_email, list_orgs, create_org, update_org, delete_org
 from email_notify import notify_access_request, notify_access_approved, send_test, \
-                         notify_access_request_sms, send_test_sms, smtp_problem
+                         notify_access_request_sms, send_test_sms, smtp_problem, send_password_reset
 from socal_import import import_socal_facilities
 from tak_push import push_cot, push_test_point, push_bftr, push_facilities, push_evac_routes
 from tak_marti import push_via_marti, push_cot_http, get_contacts
@@ -379,6 +381,12 @@ async def request_access_page():
     return HTMLResponse((FRONTEND_DIR / "request_access.html").read_text())
 
 
+@app.get("/reset-password", response_class=HTMLResponse)
+async def reset_password_page():
+    """Serves both the 'email me a link' form and, with ?token=, the new-password form."""
+    return HTMLResponse((FRONTEND_DIR / "reset_password.html").read_text())
+
+
 # ── Auth API ──────────────────────────────────────────────────────────────────
 
 @app.post("/auth/login")
@@ -476,6 +484,121 @@ async def auth_request_access(request: Request):
     notify_access_request(display_name, username, access_reason, email)
     notify_access_request_sms(display_name, username, access_reason, get_setting("sms_notify_phone"))
     return JSONResponse({"ok": True}, status_code=201)
+
+
+# ── Password reset ────────────────────────────────────────────────────────────
+#
+# Threat model, in order of what actually matters here:
+#
+#  - The reset form must not reveal whether an account exists, so it always
+#    answers the same way regardless of what happens internally.
+#  - The token is emailed, so only its hash is stored: a leaked users.db must
+#    not yield working reset links.
+#  - Tokens are single-use, short-lived, and superseded by any newer request.
+#  - It is an unauthenticated endpoint that sends mail, so it is rate limited
+#    per client address to stop it being used to spam a mailbox.
+
+_RESET_TTL_MINUTES = int(os.environ.get("RESET_TTL_MINUTES", "60"))
+_RESET_RATE_MAX    = 5           # requests per window, per client address
+_RESET_RATE_WINDOW = 900         # 15 minutes
+_reset_hits: "OrderedDict[str, list]" = OrderedDict()
+_reset_rate_lock = threading.Lock()
+
+
+def _reset_token_hash(token: str) -> str:
+    """Store only this. sha256 is right here: the token is 32 random bytes, so
+    it needs no stretching — unlike a password, it cannot be guessed."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _reset_rate_ok(client_ip: str) -> bool:
+    now = time.time()
+    with _reset_rate_lock:
+        hits = [t for t in _reset_hits.get(client_ip, []) if now - t < _RESET_RATE_WINDOW]
+        if len(hits) >= _RESET_RATE_MAX:
+            _reset_hits[client_ip] = hits
+            return False
+        hits.append(now)
+        _reset_hits[client_ip] = hits
+        _reset_hits.move_to_end(client_ip)
+        while len(_reset_hits) > 1000:
+            _reset_hits.popitem(last=False)
+    return True
+
+
+class ForgotPasswordRequest(BaseModel):
+    identifier: str = Field(min_length=1, max_length=254)   # username or email
+
+
+@app.post("/auth/forgot-password")
+async def auth_forgot_password(body: ForgotPasswordRequest, request: Request):
+    """Start a password reset. Always reports success.
+
+    The response is deliberately identical whether or not the account exists,
+    has an email on file, or the mail actually sent — anything else lets an
+    attacker enumerate accounts. Real failures go to the log and to
+    notify_last_error, where an admin can see them.
+    """
+    generic = {"ok": True, "message":
+               "If that account exists and has an email on file, a reset link is on its way."}
+
+    client_ip = (request.client.host if request.client else "unknown")
+    if not _reset_rate_ok(client_ip):
+        # Deliberately not 429 with a distinct body — same shape as success, so
+        # probing cannot distinguish "rate limited" from "no such account".
+        logger.warning("password reset rate limit hit from %s", client_ip)
+        return generic
+
+    ident = body.identifier.strip()
+    user = get_user_by_username(ident) or get_user_by_email(ident)
+    if not user or not user.get("email"):
+        logger.info("password reset requested for unknown/emailless identifier")
+        return generic
+
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=_RESET_TTL_MINUTES)) \
+        .strftime("%Y-%m-%d %H:%M:%S")
+    create_password_reset(user["id"], _reset_token_hash(token), expires)
+    purge_expired_password_resets()
+
+    base = (os.environ.get("PUBLIC_BASE_URL") or get_setting("site_url")
+            or str(request.base_url).rstrip("/")).rstrip("/")
+    send_password_reset(
+        display_name=user.get("display_name") or user["username"],
+        username=user["username"],
+        to_email=user["email"],
+        reset_url=f"{base}/reset-password?token={token}",
+        valid_minutes=_RESET_TTL_MINUTES,
+    )
+    return generic
+
+
+@app.get("/auth/reset-password/check")
+async def auth_reset_check(token: str = Query(...)):
+    """Whether a reset link is still good, so the page can say so up front."""
+    return {"valid": peek_password_reset(_reset_token_hash(token))}
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=8, max_length=512)
+    new_password: str = Field(min_length=8, max_length=256)
+
+
+@app.post("/auth/reset-password")
+async def auth_reset_password(body: ResetPasswordRequest):
+    """Redeem a reset token and set a new password."""
+    user_id = consume_password_reset(_reset_token_hash(body.token))
+    if user_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="This reset link is invalid, already used, or expired. Request a new one.",
+        )
+    update_password(user_id, hash_password(body.new_password))
+    # Any other outstanding links for this account are now moot.
+    invalidate_password_resets(user_id)
+    user = get_user_by_id(user_id)
+    logger.info("password reset completed for user id %s", user_id)
+    return {"ok": True, "username": (user or {}).get("username", "")}
 
 
 @app.get("/auth/me")

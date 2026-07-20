@@ -330,6 +330,77 @@ def notify_access_approved(
     return True
 
 
+def send_password_reset(
+    display_name: str,
+    username: str,
+    to_email: str,
+    reset_url: str,
+    valid_minutes: int,
+) -> bool:
+    """Email a password reset link. Returns whether it was dispatched.
+
+    The caller must NOT vary its response on this result — doing so would turn
+    the reset form into an account-existence oracle.
+    """
+    if not to_email:
+        return False
+    cfg = _get_smtp_config()
+    problem = smtp_problem(cfg)
+    if problem:
+        _record(False, f"password reset for @{username} not sent — {problem}")
+        logger.warning("email_notify: password reset for @%s not sent — %s", username, problem)
+        return False
+
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"/>
+<style>
+  body{{font-family:'Courier New',monospace;background:#0d1117;color:#c9d1d9;margin:0;padding:24px}}
+  .card{{max-width:480px;margin:0 auto;background:#161b22;border:1px solid #21262d;border-radius:10px;overflow:hidden}}
+  .hdr{{background:#0a0f14;padding:18px 24px;border-bottom:1px solid #21262d}}
+  .hdr h1{{margin:0;font-size:15px;font-weight:800;letter-spacing:.08em;color:#c9d1d9}}
+  .hdr p{{margin:4px 0 0;font-size:11px;color:#8b949e}}
+  .body{{padding:24px}}
+  .body p{{font-size:13px;color:#c9d1d9;line-height:1.7;margin:0 0 16px}}
+  .btn{{display:inline-block;padding:12px 28px;background:#00ff88;color:#000;
+        font-family:'Courier New',monospace;font-size:12px;font-weight:700;
+        letter-spacing:1px;text-decoration:none;border-radius:7px;text-transform:uppercase}}
+  .url{{font-size:10px;color:#8b949e;word-break:break-all;margin-top:14px;line-height:1.5}}
+  .footer{{font-size:10px;color:#8b949e;margin-top:20px;padding-top:14px;border-top:1px solid #21262d;line-height:1.6}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="hdr">
+    <h1>Password Reset &mdash; WMD Plotter</h1>
+    <p>WHITWERX &middot; Model Display (WMD)</p>
+  </div>
+  <div class="body">
+    <p>Hi {display_name},</p>
+    <p>A password reset was requested for <strong>{username}</strong>.
+       Use the button below to choose a new one.</p>
+    <a class="btn" href="{reset_url}">Reset Password &rarr;</a>
+    <div class="url">Or paste this into your browser:<br/>{reset_url}</div>
+    <div class="footer">
+      This link expires in {valid_minutes} minutes and can be used once.<br/>
+      If you did not request this, you can ignore this email — your password
+      has not changed.
+    </div>
+  </div>
+</div>
+</body>
+</html>"""
+
+    t = threading.Thread(
+        target=_send_smtp,
+        args=([to_email], "Reset your WMD Plotter password", html, cfg),
+        daemon=True,
+    )
+    t.start()
+    return True
+
+
 def notify_access_request(
     display_name: str,
     username: str,

@@ -65,6 +65,11 @@ def decode_token(token: str) -> dict:
 # Paths that don't require authentication — enumerate explicitly so /auth/me stays protected
 _PUBLIC_EXACT = {
     "/login", "/register", "/request-access",
+    # Password reset — by definition reachable without a session. The reset
+    # endpoints carry their own protections: a single-use hashed token, and a
+    # rate limit on the request form.
+    "/reset-password",
+    "/auth/forgot-password", "/auth/reset-password", "/auth/reset-password/check",
     "/sw.js", "/manifest.json",
     # Auth actions that work without a cookie
     "/auth/login", "/auth/logout", "/auth/register", "/auth/registration-status",

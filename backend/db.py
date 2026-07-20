@@ -123,6 +123,23 @@ def init_db() -> None:
         )
     """)
 
+    # Password reset tokens.
+    #
+    # token_hash, never the token itself: the raw value exists only in the
+    # email. Anyone who reads this table — a leaked backup, a stray copy of
+    # users.db — therefore cannot mint a working reset link, only see that one
+    # was requested.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS password_resets (
+            token_hash TEXT    PRIMARY KEY,
+            user_id    INTEGER NOT NULL,
+            expires_at TEXT    NOT NULL,
+            used_at    TEXT,
+            created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_resets_user ON password_resets(user_id)")
+
     # Idempotent migrations
     for col, typedef in [
         ("incident_id", "INTEGER"),
@@ -351,6 +368,18 @@ def get_user_by_username(username: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def get_user_by_email(email: str) -> Optional[dict]:
+    """Look up by email, case-insensitively. Used by password reset."""
+    if not email:
+        return None
+    conn = _connect()
+    row = conn.execute(
+        "SELECT * FROM users WHERE email IS NOT NULL AND lower(email) = lower(?)", (email.strip(),)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def get_user_by_id(user_id: int) -> Optional[dict]:
     conn = _connect()
     row = conn.execute(
@@ -430,6 +459,88 @@ def delete_user(user_id: int) -> bool:
     deleted = cur.rowcount > 0
     conn.close()
     return deleted
+
+
+# ── Password reset tokens ─────────────────────────────────────────────────────
+
+def create_password_reset(user_id: int, token_hash: str, expires_at: str) -> None:
+    """Record a reset token and invalidate any earlier ones for this user.
+
+    Only the newest link works — requesting a second one silently retires the
+    first, so an email forwarded or intercepted earlier stops being useful.
+    """
+    conn = _connect()
+    conn.execute(
+        "UPDATE password_resets SET used_at = datetime('now') "
+        "WHERE user_id = ? AND used_at IS NULL",
+        (user_id,),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO password_resets (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+        (token_hash, user_id, expires_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def consume_password_reset(token_hash: str) -> Optional[int]:
+    """Redeem a reset token, returning its user id, or None if unusable.
+
+    Marks it used in the same statement that checks it, so two simultaneous
+    submissions of the same link cannot both succeed.
+    """
+    conn = _connect()
+    cur = conn.execute(
+        "UPDATE password_resets SET used_at = datetime('now') "
+        "WHERE token_hash = ? AND used_at IS NULL AND expires_at > datetime('now')",
+        (token_hash,),
+    )
+    claimed = cur.rowcount > 0
+    row = conn.execute(
+        "SELECT user_id FROM password_resets WHERE token_hash = ?", (token_hash,)
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    return row["user_id"] if (claimed and row) else None
+
+
+def peek_password_reset(token_hash: str) -> bool:
+    """Whether a token is currently redeemable, without consuming it.
+
+    Lets the reset page reject a dead link before the user retypes a password.
+    """
+    conn = _connect()
+    row = conn.execute(
+        "SELECT 1 FROM password_resets "
+        "WHERE token_hash = ? AND used_at IS NULL AND expires_at > datetime('now')",
+        (token_hash,),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def invalidate_password_resets(user_id: int) -> None:
+    """Retire every outstanding reset for a user (call after any password change)."""
+    conn = _connect()
+    conn.execute(
+        "UPDATE password_resets SET used_at = datetime('now') "
+        "WHERE user_id = ? AND used_at IS NULL",
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def purge_expired_password_resets() -> int:
+    """Delete long-dead rows so the table does not grow forever."""
+    conn = _connect()
+    cur = conn.execute(
+        "DELETE FROM password_resets WHERE expires_at < datetime('now', '-7 days')"
+    )
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return n
 
 
 def update_password(user_id: int, password_hash: str) -> None:
