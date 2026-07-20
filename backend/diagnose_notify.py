@@ -2,9 +2,11 @@
 """
 Diagnose Brevo email/SMS notification delivery.
 
-Run this ON THE VPS, where the real settings live:
+Run this ON THE VPS, where the real settings live. Use the service's
+virtualenv interpreter, not system python3 — the app's dependencies are
+installed there (see ExecStart in the wmd-plotter systemd unit):
 
-    cd /opt/wmd-plotter/backend && python3 diagnose_notify.py
+    cd /opt/wmd-plotter/backend && /opt/wmd-plotter/.venv/bin/python diagnose_notify.py
 
 It reports what is configured, connects to the SMTP server and shows the real
 handshake, and optionally sends a live test message. Secrets are never printed —
@@ -15,6 +17,7 @@ only whether they are set and how long they are.
 """
 
 import argparse
+import os
 import smtplib
 import ssl
 import sys
@@ -25,6 +28,19 @@ sys.path.insert(0, ".")
 try:
     from db import get_setting
     import email_notify as en
+except ModuleNotFoundError as exc:
+    # Almost always means this was run with system python3 instead of the
+    # service's virtualenv, where the app's dependencies actually live.
+    venv = "/opt/wmd-plotter/.venv/bin/python"
+    print(f"\nMissing dependency: {exc.name}\n")
+    if os.path.exists(venv):
+        print("You are running system python3, which does not have the app's")
+        print("dependencies. Use the service's interpreter instead:\n")
+        print(f"    cd /opt/wmd-plotter/backend && {venv} diagnose_notify.py\n")
+    else:
+        print("Run this with the same interpreter the service uses. Find it with:\n")
+        print("    systemctl show -p ExecStart --value wmd-plotter\n")
+    sys.exit(1)
 except Exception as exc:  # pragma: no cover
     print(f"Could not import the app modules: {exc}")
     print("Run this from the backend directory (cd /opt/wmd-plotter/backend).")
