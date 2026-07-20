@@ -612,8 +612,21 @@ async function setUserEmail(id, email) {
 async function approveUser(id, name) {
   if (!confirm(`Approve access for ${name}?`)) return;
   const r = await fetch(`/api/admin/users/${id}/approve`, { method: 'POST' });
-  if (r.ok) loadUsers();
-  else alert('Failed to approve user');
+  if (!r.ok) { alert('Failed to approve user'); return; }
+
+  // Say whether the user was actually notified. The approval itself succeeding
+  // tells you nothing about whether they were told, and they have no other way
+  // to learn their account is live.
+  const d = await r.json().catch(() => ({}));
+  if (d.email_sent) {
+    alert(`${name} approved — notification sent to ${d.email}.`);
+  } else {
+    alert(`${name} approved, but NO email was sent.\n\n` +
+          `Either they have no email on file, or email delivery is ` +
+          `misconfigured. Check Email Settings for the last error — ` +
+          `they will not know their account is active.`);
+  }
+  loadUsers();
 }
 
 async function denyUser(id, name) {

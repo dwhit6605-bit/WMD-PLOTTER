@@ -2337,12 +2337,14 @@ async def approve_user(user_id: int, _: dict = Depends(require_admin)):
     user = get_user_by_id(user_id)
     if not user or not set_user_status(user_id, "active"):
         raise HTTPException(status_code=404, detail="User not found")
-    notify_access_approved(
+    sent = notify_access_approved(
         user.get("display_name") or user["username"],
         user["username"],
         user.get("email"),
     )
-    return {"ok": True}
+    # Report whether the user was actually told. Approving someone with no email
+    # on file, or while SMTP is misconfigured, otherwise looks like success.
+    return {"ok": True, "email_sent": bool(sent), "email": user.get("email") or ""}
 
 
 @app.delete("/api/admin/users/{user_id}/deny")

@@ -261,15 +261,26 @@ def notify_access_approved(
     display_name: str,
     username: str,
     to_email: Optional[str],
-) -> None:
-    """Fire-and-forget email to the requester when an admin approves their account."""
+) -> bool:
+    """Email the requester when an admin approves their account.
+
+    Returns whether the message was DISPATCHED — the send itself runs on a
+    daemon thread, so delivery success lands in notify_last_ok/notify_last_error
+    rather than here. The caller uses this to tell the admin whether anyone was
+    actually contacted, instead of reporting a bare success.
+    """
     if not to_email:
-        return
+        # The enrollment form requires an email, but the API does not, so an
+        # admin-created account can reach approval with none on file. Silently
+        # notifying nobody looks identical to success from the admin UI.
+        _record(False, f"@{username} approved but has no email on file — not notified")
+        logger.warning("email_notify: approval for @%s not sent — no email on file", username)
+        return False
     cfg = _get_smtp_config()
     problem = smtp_problem(cfg)
     if problem:
         _record(False, f"approval email to {to_email} not sent — {problem}")
-        return
+        return False
 
     html = f"""
 <!DOCTYPE html>
@@ -316,6 +327,7 @@ def notify_access_approved(
         daemon=True,
     )
     t.start()
+    return True
 
 
 def notify_access_request(
