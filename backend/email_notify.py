@@ -56,11 +56,71 @@ def _get_sms_config() -> tuple:
     try:
         from db import get_setting
         api_key = get_setting("sms_brevo_key") or os.environ.get("BREVO_API_KEY", "")
-        phone   = get_setting("sms_notify_phone") or ""
+        # NOTIFY_PHONE fallback added for symmetry with the API key above: it was
+        # DB-only, so setting BREVO_API_KEY in .env looked like a complete SMS
+        # setup while the destination number was silently empty.
+        phone   = get_setting("sms_notify_phone") or os.environ.get("NOTIFY_PHONE", "")
     except Exception:
         api_key = os.environ.get("BREVO_API_KEY", "")
-        phone   = ""
+        phone   = os.environ.get("NOTIFY_PHONE", "")
     return api_key, phone
+
+
+def _site_url() -> str:
+    """Public base URL for links in outgoing messages.
+
+    Was hardcoded to wmdplotter.whitwerx.net, which is not the deployed domain —
+    every link in every notification was dead. Note this is deliberately NOT
+    WMD_PUBLIC_URL: that one is http:// on purpose so ATAK (which does not trust
+    Let's Encrypt) can fetch data packages, and we want https:// in email.
+    """
+    try:
+        from db import get_setting
+        configured = get_setting("site_url")
+    except Exception:
+        configured = None
+    return (configured or os.environ.get("PUBLIC_BASE_URL") or "https://wmd.whitwerx.net").rstrip("/")
+
+
+# ── Delivery outcome tracking ────────────────────────────────────────────────
+# Every send is fire-and-forget on a daemon thread, so a failure never reaches
+# the caller — the enrollment endpoint returns 201 whether or not the admin was
+# actually notified. Persisting the last outcome is what makes "it's not
+# working" diagnosable from the admin UI instead of only from journalctl.
+
+_ERR_KEY = "notify_last_error"
+_OK_KEY  = "notify_last_ok"
+
+
+def _record(ok: bool, detail: str) -> None:
+    try:
+        from db import set_setting
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        if ok:
+            set_setting(_OK_KEY, f"{stamp} — {detail}")
+            set_setting(_ERR_KEY, "")
+        else:
+            set_setting(_ERR_KEY, f"{stamp} — {detail}")
+    except Exception:
+        pass
+
+
+def smtp_problem(cfg: Optional[dict] = None) -> Optional[str]:
+    """Why SMTP cannot send, or None if the config looks complete.
+
+    Shared by the test button and the real notification path so the two can no
+    longer disagree about what counts as configured — previously the test
+    checked notify_from while the real path checked notify_to, so a passing test
+    did not imply a working enrollment email.
+    """
+    cfg = cfg or _get_smtp_config()
+    missing = [label for label, key in (
+        ("SMTP host",            "host"),
+        ("SMTP username",        "username"),
+        ("SMTP password/key",    "password"),
+        ("From address",         "notify_from"),
+    ) if not cfg.get(key)]
+    return ("Not configured: " + ", ".join(missing)) if missing else None
 
 
 # ── SMTP send ─────────────────────────────────────────────────────────────────
@@ -74,12 +134,43 @@ def _send_smtp(to_addresses: list, subject: str, html: str, cfg: dict) -> None:
         msg["To"]      = ", ".join(to_addresses)
         msg.attach(MIMEText(html, "html", "utf-8"))
 
-        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=15) as server:
+        port = int(cfg["port"])
+        # Port 465 is implicit TLS — the connection is encrypted from the first
+        # byte, so STARTTLS is a protocol error there. Only 587 (and 25) begin
+        # in the clear and upgrade. Previously every port took the STARTTLS
+        # path, so configuring Brevo's 465 endpoint could never work.
+        if port == 465:
+            server_ctx = smtplib.SMTP_SSL(cfg["host"], port, timeout=20)
+        else:
+            server_ctx = smtplib.SMTP(cfg["host"], port, timeout=20)
+
+        with server_ctx as server:
             server.ehlo()
-            server.starttls()
+            if port != 465:
+                server.starttls()
+                server.ehlo()
             server.login(cfg["username"], cfg["password"])
             server.sendmail(cfg["notify_from"], to_addresses, msg.as_string())
+
+        _record(True, f"email to {', '.join(to_addresses)}")
+        logger.info("email_notify: sent '%s' to %s", subject, ", ".join(to_addresses))
+
+    except smtplib.SMTPAuthenticationError as exc:
+        # Overwhelmingly the most common Brevo failure: the SMTP login is the
+        # Brevo *SMTP key*, not the account password, and the username is the
+        # login email — not the sender address.
+        _record(False, f"SMTP auth rejected ({exc.smtp_code}). Use your Brevo SMTP key "
+                       f"as the password, and your Brevo login email as the username.")
+        logger.warning("email_notify: SMTP auth failed — %s", exc)
+    except smtplib.SMTPSenderRefused as exc:
+        _record(False, f"Sender {cfg['notify_from']} refused ({exc.smtp_code}). "
+                       f"Verify this address as a sender in Brevo first.")
+        logger.warning("email_notify: sender refused — %s", exc)
+    except smtplib.SMTPRecipientsRefused as exc:
+        _record(False, f"Recipient refused: {exc.recipients}")
+        logger.warning("email_notify: recipients refused — %s", exc)
     except Exception as exc:
+        _record(False, f"{type(exc).__name__}: {exc}")
         logger.warning("email_notify: SMTP send failed — %s", exc)
 
 
@@ -94,9 +185,15 @@ def _send_sms(payload: dict, api_key: str) -> None:
                 headers={"api-key": api_key, "Content-Type": "application/json"},
                 json=payload,
             )
-        if r.status_code not in (200, 201, 202):
+        if r.status_code in (200, 201, 202):
+            _record(True, f"SMS to {payload.get('recipient')}")
+        else:
+            # Brevo's body explains the reason (unverified sender, no SMS
+            # credits, bad number format — it wants E.164 like +15551234567).
+            _record(False, f"Brevo SMS HTTP {r.status_code}: {r.text[:180]}")
             logger.warning("Brevo SMS returned %s: %s", r.status_code, r.text[:200])
     except Exception as exc:
+        _record(False, f"SMS {type(exc).__name__}: {exc}")
         logger.warning("email_notify: SMS send failed — %s", exc)
 
 
@@ -105,7 +202,7 @@ def _send_sms(payload: dict, api_key: str) -> None:
 def send_test(to_email: str) -> bool:
     """Send a test email. Returns True if dispatched."""
     cfg = _get_smtp_config()
-    if not cfg["host"] or not cfg["username"] or not cfg["password"] or not cfg["notify_from"]:
+    if smtp_problem(cfg):
         return False
 
     html = """
@@ -158,7 +255,9 @@ def notify_access_approved(
     if not to_email:
         return
     cfg = _get_smtp_config()
-    if not cfg["host"] or not cfg["username"] or not cfg["password"]:
+    problem = smtp_problem(cfg)
+    if problem:
+        _record(False, f"approval email to {to_email} not sent — {problem}")
         return
 
     html = f"""
@@ -190,7 +289,7 @@ def notify_access_approved(
     <p>Your access request has been reviewed and <strong style="color:#00ff88">approved</strong>.
        You can now sign in using your username and the password you created when you submitted your request.</p>
     <p><strong>Username:</strong> {username}</p>
-    <a class="btn" href="https://wmdplotter.whitwerx.net/login">Sign In &rarr;</a>
+    <a class="btn" href="{_site_url()}/login">Sign In &rarr;</a>
     <div class="footer">
       WMD Plotter is restricted to authorized personnel only.<br>
       If you did not request this account, contact Dave@WHITWERX.net.
@@ -216,7 +315,14 @@ def notify_access_request(
 ) -> None:
     """Fire-and-forget notification to admin(s) when a new access request is submitted."""
     cfg = _get_smtp_config()
-    if not cfg["host"] or not cfg["username"] or not cfg["password"] or not cfg["notify_to"]:
+    problem = smtp_problem(cfg)
+    if problem:
+        _record(False, f"access request from @{username} — {problem}")
+        logger.warning("email_notify: access-request email skipped — %s", problem)
+        return
+    if not cfg["notify_to"]:
+        _record(False, f"access request from @{username} — no recipient set (Notify TO is empty)")
+        logger.warning("email_notify: access-request email skipped — no notify_to")
         return
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -258,7 +364,7 @@ def notify_access_request(
       <div class="reason">{access_reason}</div>
     </div>
     <div class="row" style="margin-top:20px">
-      <a class="btn" href="https://wmdplotter.whitwerx.net/admin/users">Review in Admin Panel &rarr;</a>
+      <a class="btn" href="{_site_url()}/admin/users">Review in Admin Panel &rarr;</a>
     </div>
     <div class="ts">Submitted {ts}</div>
   </div>
@@ -282,14 +388,20 @@ def notify_access_request_sms(
     to_phone: Optional[str],
 ) -> None:
     """Fire-and-forget SMS to admin when a new access request is submitted."""
+    api_key, fallback_phone = _get_sms_config()
+    to_phone = to_phone or fallback_phone
     if not to_phone:
+        _record(False, f"access request from @{username} — SMS skipped, no notify phone set")
+        logger.warning("email_notify: SMS skipped — no notify phone configured")
         return
-    api_key, _ = _get_sms_config()
     if not api_key:
+        _record(False, f"access request from @{username} — SMS skipped, no Brevo API key set")
+        logger.warning("email_notify: SMS skipped — no Brevo API key configured")
         return
+    host = _site_url().split("://", 1)[-1]
     content = (
         f"[WMD Plotter] New access request from {display_name} (@{username}). "
-        f"Review at wmdplotter.whitwerx.net/admin/users"
+        f"Review at {host}/admin/users"
     )
     payload = {
         "sender":    "WMDPlotter",

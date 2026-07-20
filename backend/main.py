@@ -66,7 +66,7 @@ from db   import init_db, count_users, create_user, get_user_by_username, \
                  list_facilities, create_facility, update_facility, delete_facility, \
                  set_user_org, set_user_role, set_user_status, update_user_email, list_orgs, create_org, update_org, delete_org
 from email_notify import notify_access_request, notify_access_approved, send_test, \
-                         notify_access_request_sms, send_test_sms
+                         notify_access_request_sms, send_test_sms, smtp_problem
 from socal_import import import_socal_facilities
 from tak_push import push_cot, push_test_point, push_bftr, push_facilities, push_evac_routes
 from tak_marti import push_via_marti, push_cot_http, get_contacts
@@ -2373,6 +2373,13 @@ async def get_email_settings(_: dict = Depends(require_admin)):
         "notify_from":       get_setting("email_notify_from") or "",
         "sms_key_set":       bool(get_setting("sms_brevo_key")),
         "notify_phone":      get_setting("sms_notify_phone")  or "",
+        "site_url":          get_setting("site_url") or "",
+        # Sends are fire-and-forget on daemon threads, so failures never reach a
+        # response. These surface the last outcome so a silent misconfiguration
+        # is visible in the admin UI instead of only in journalctl.
+        "config_problem":    smtp_problem() or "",
+        "last_error":        get_setting("notify_last_error") or "",
+        "last_ok":           get_setting("notify_last_ok") or "",
     }
 
 
@@ -2385,6 +2392,7 @@ class EmailSettingsPatch(BaseModel):
     notify_from:   Optional[str] = None
     sms_api_key:   Optional[str] = None
     notify_phone:  Optional[str] = None
+    site_url:      Optional[str] = None
 
 @app.patch("/api/admin/settings/email")
 async def patch_email_settings(body: EmailSettingsPatch, _: dict = Depends(require_admin)):
@@ -2408,6 +2416,8 @@ async def patch_email_settings(body: EmailSettingsPatch, _: dict = Depends(requi
             set_setting("sms_brevo_key", val)
     if body.notify_phone is not None:
         set_setting("sms_notify_phone", body.notify_phone.strip())
+    if body.site_url is not None:
+        set_setting("site_url", body.site_url.strip().rstrip("/"))
     return {"ok": True}
 
 
@@ -2416,10 +2426,20 @@ async def test_email(admin: dict = Depends(require_admin)):
     notify_to = get_setting("email_notify_to") or ""
     if not notify_to:
         raise HTTPException(status_code=400, detail="Recipients (TO) not configured.")
+    problem = smtp_problem()
+    if problem:
+        # Report exactly which field is missing rather than a generic message.
+        raise HTTPException(status_code=400, detail=problem)
     ok = send_test(notify_to.split(",")[0].strip())
     if not ok:
-        raise HTTPException(status_code=400, detail="SMTP settings incomplete — check host, username, and password.")
-    return {"ok": True, "sent_to": notify_to.split(",")[0].strip()}
+        raise HTTPException(status_code=400, detail="SMTP settings incomplete.")
+    # The send runs on a daemon thread, so a 200 here means "dispatched", not
+    # "delivered". Tell the caller where to look for the real outcome.
+    return {
+        "ok": True,
+        "sent_to": notify_to.split(",")[0].strip(),
+        "note": "Dispatched. Re-open this page to see delivery status (last_error / last_ok).",
+    }
 
 
 @app.post("/api/admin/settings/email/test-sms")

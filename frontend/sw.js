@@ -9,7 +9,7 @@
  * Bump CACHE_VERSION on every deploy to invalidate stale shells.
  */
 
-const CACHE_VERSION = "wmd-v2";
+const CACHE_VERSION = "wmd-v3";
 const CACHE_NAME    = `wmd-plotter-${CACHE_VERSION}`;
 
 // Resources that form the "app shell" — cached on install
@@ -84,7 +84,12 @@ self.addEventListener("fetch", (event) => {
       const networkFetch = fetch(event.request)
         .then((response) => {
           if (response && response.status === 200 && response.type !== "opaque") {
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response.clone()));
+            // Clone BEFORE awaiting caches.open(). That promise resolves on a
+            // later microtask, by which point `return response` below has handed
+            // the body to the page and consumed it — cloning there throws
+            // "Response body is already used" and every cache.put silently fails.
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
           }
           return response;
         })
