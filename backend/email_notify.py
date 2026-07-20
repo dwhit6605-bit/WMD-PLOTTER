@@ -120,7 +120,18 @@ def smtp_problem(cfg: Optional[dict] = None) -> Optional[str]:
         ("SMTP password/key",    "password"),
         ("From address",         "notify_from"),
     ) if not cfg.get(key)]
-    return ("Not configured: " + ", ".join(missing)) if missing else None
+    if missing:
+        return "Not configured: " + ", ".join(missing)
+
+    # The From address is a sender mailbox, not a hostname. Putting the SMTP
+    # relay host here is an easy confusion and Brevo rejects it at MAIL FROM
+    # with a 501 that used to disappear into the log — catch it up front.
+    sender = cfg["notify_from"].strip()
+    if "@" not in sender:
+        return (f"From address '{sender}' is not an email address. This is the "
+                f"sender mailbox (e.g. noreply@yourdomain.com), not the SMTP "
+                f"host — and it must be a verified sender in Brevo.")
+    return None
 
 
 # ── SMTP send ─────────────────────────────────────────────────────────────────

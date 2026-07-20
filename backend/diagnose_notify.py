@@ -70,7 +70,15 @@ def main() -> int:
                        ("SMTP username", "username"), ("From address", "notify_from"),
                        ("Notify TO", "notify_to")):
         val = cfg.get(key)
-        (ok if val else bad)(f"{label:16} {val if val else '<not set>'}")
+        if not val:
+            bad(f"{label:16} <not set>")
+        elif key in ("notify_from", "notify_to") and "@" not in str(val):
+            # A hostname here (e.g. the SMTP relay) is rejected at MAIL FROM
+            # with a 501 — surface it before a send is even attempted.
+            bad(f"{label:16} {val}")
+            info(f"{'':16} ^ not an email address — this field is a mailbox, not a host")
+        else:
+            ok(f"{label:16} {val}")
 
     pw = cfg.get("password") or ""
     (ok if pw else bad)(f"{'SMTP password':16} {'<set, %d chars>' % len(pw) if pw else '<not set>'}")
