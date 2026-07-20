@@ -267,6 +267,13 @@ sudo journalctl -u wmd-plotter -f
 
 Expected health response:
 ```json
+{"status":"ok"}
+```
+
+Model results are per-user, so an unauthenticated health check reports liveness
+only. Called with a valid session cookie it also returns that user's overlays:
+
+```json
 {"status":"ok","active_overlays":{"plume":false,"blast":false,...}}
 ```
 

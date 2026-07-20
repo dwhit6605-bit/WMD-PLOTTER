@@ -95,6 +95,20 @@ async def auth_middleware(request: Request, call_next):
     - Page paths redirect to /login on failure.
     """
     if _is_public(request.url.path):
+        # Public paths never *require* a session, but if the caller happens to
+        # have a valid one, decode it so endpoints can serve per-user data.
+        # Without this, request.state.user is unset even for a signed-in user,
+        # and any Depends(current_user) under a public prefix (e.g. /kml/)
+        # rejects everyone. Failures here are ignored on purpose — a bad or
+        # absent cookie simply means anonymous.
+        token = request.cookies.get(COOKIE_NAME)
+        if token:
+            try:
+                payload = decode_token(token)
+                payload["id"] = int(payload["sub"])
+                request.state.user = payload
+            except Exception:
+                pass
         return await call_next(request)
 
     token = request.cookies.get(COOKIE_NAME)

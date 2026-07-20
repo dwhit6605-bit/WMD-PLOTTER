@@ -15,9 +15,13 @@ import os
 import sys
 import json
 import math
+import time
+import hmac
 import hashlib
 import secrets
 import logging
+import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -73,7 +77,7 @@ from tak_marti import push_via_marti, push_cot_http, get_contacts
 from auth import (
     hash_password, verify_password, create_token, decode_token,
     auth_middleware, current_user, require_admin,
-    COOKIE_NAME, JWT_EXPIRE_DAYS, ALLOW_REGISTRATION, REGISTRATION_CODE,
+    COOKIE_NAME, JWT_EXPIRE_DAYS, ALLOW_REGISTRATION, REGISTRATION_CODE, JWT_SECRET,
 )
 
 async def require_org_admin(user: dict = Depends(current_user)) -> dict:
@@ -118,19 +122,120 @@ if FRONTEND_DIR.exists():
 # ── Shared overlay state (all tools write here; KML endpoints read it) ───────
 # Adding a new tool: store its result under a new key and add a folder
 # builder to kml_gen._FOLDER_BUILDERS. Nothing else needs to change.
-_live_kmz_cache: Optional[bytes] = None  # served at /kml/live.kmz for b-f-t-r downloads
+# ── TAK data package store ───────────────────────────────────────────────────
+#
+# /kml/ must stay unauthenticated: ATAK downloads data packages over plain HTTP
+# and cannot present the session cookie (see _PUBLIC_PREFIXES in auth.py).
+# Previously that meant one global cache on one constant URL, so the most
+# recently pushed package — belonging to whichever organization pushed last —
+# was retrievable by any other organization, and by anyone on the internet who
+# knew the path.
+#
+# Each push now gets its own unguessable token and the token IS the capability,
+# the same model as a signed download URL. Packages expire, so a leaked link
+# stops working, and the store is bounded so a busy server cannot grow without
+# limit. Held in memory deliberately: these are transient and must not outlive a
+# restart.
+_KMZ_TTL_SECONDS = int(os.environ.get("KMZ_TTL_SECONDS", "3600"))
+_KMZ_MAX_ENTRIES = 32
+_kmz_store: "OrderedDict[str, tuple]" = OrderedDict()   # token -> (bytes, filename, expires_at)
+_kmz_lock = threading.Lock()
 
-_overlay_state: dict = {
-    "plume": {},
-    "blast": {},
-    "radiation": {},
-    "bleve": {},
-    "erg": {},
-    "dense_gas": {},
-    "fire_smoke": {},
-    "population": {},
-    "infra": {},
-}
+
+def _kmz_evict() -> None:
+    """Drop expired entries. Caller must hold _kmz_lock."""
+    now = time.time()
+    for tok in [t for t, (_, _, exp) in _kmz_store.items() if exp <= now]:
+        _kmz_store.pop(tok, None)
+
+
+def _kmz_put(data: bytes, filename: str) -> str:
+    """Store a package and return its download token."""
+    token = secrets.token_urlsafe(32)
+    with _kmz_lock:
+        _kmz_evict()
+        _kmz_store[token] = (data, filename, time.time() + _KMZ_TTL_SECONDS)
+        while len(_kmz_store) > _KMZ_MAX_ENTRIES:
+            _kmz_store.popitem(last=False)   # oldest first
+    return token
+
+
+def _kmz_get(token: str):
+    """Return (bytes, filename) for a live token, or None."""
+    with _kmz_lock:
+        _kmz_evict()
+        entry = _kmz_store.get(token)
+    return (entry[0], entry[1]) if entry else None
+
+
+# ── Google Earth feed tokens ─────────────────────────────────────────────────
+#
+# Google Earth polls the live KML on a timer and cannot send the session
+# cookie, so the URL itself has to carry the identity. Derived by HMAC over
+# JWT_SECRET instead of stored in a table: stable across restarts, O(1) to
+# verify, nothing to clean up, and rotating JWT_SECRET revokes every
+# outstanding feed exactly as it revokes every session.
+
+def _kml_link_token(user_id: int) -> str:
+    sig = hmac.new(JWT_SECRET.encode(), f"kml-feed:{user_id}".encode(),
+                   hashlib.sha256).hexdigest()[:32]
+    return f"{user_id}.{sig}"
+
+
+def _kml_user_from_token(token: str) -> Optional[int]:
+    """The user id a feed token belongs to, or None if it does not verify."""
+    try:
+        uid_str, sig = token.split(".", 1)
+        uid = int(uid_str)
+    except (ValueError, AttributeError):
+        return None
+    expected = hmac.new(JWT_SECRET.encode(), f"kml-feed:{uid}".encode(),
+                        hashlib.sha256).hexdigest()[:32]
+    # Constant-time: this is a signature check on attacker-supplied input.
+    return uid if hmac.compare_digest(sig, expected) else None
+
+# ── Per-user overlay state ───────────────────────────────────────────────────
+#
+# Model results are held server-side so exports and TAK pushes can reuse them.
+# This used to be a single module-level dict shared by every request, so two
+# people using the site at once overwrote each other's results — and the export
+# and TAK-push endpoints then sent whichever had been written last. With
+# organizations separated that meant one agency could push another agency's
+# incident to its own TAK server.
+#
+# Keyed by user id, bounded, and evicted least-recently-used so a long-lived
+# server cannot accumulate state for every account that ever logged in. In
+# memory on purpose: these are scratch results, not records — a restart clearing
+# them is correct.
+_OVERLAY_TOOLS = (
+    "plume", "blast", "radiation", "bleve", "erg",
+    "dense_gas", "fire_smoke", "population", "infra",
+)
+_OVERLAY_MAX_USERS = 200
+_overlay_store: "OrderedDict[int, dict]" = OrderedDict()   # user_id -> {tool: {...}}
+_overlay_lock = threading.Lock()
+
+
+def _blank_overlays() -> dict:
+    return {tool: {} for tool in _OVERLAY_TOOLS}
+
+
+def _overlays(user: dict) -> dict:
+    """This caller's overlay state, creating it on first use.
+
+    Returns the live dict so existing `state[tool] = {...}` assignments keep
+    working unchanged.
+    """
+    uid = user["id"] if isinstance(user, dict) else user
+    with _overlay_lock:
+        state = _overlay_store.get(uid)
+        if state is None:
+            state = _blank_overlays()
+            _overlay_store[uid] = state
+        _overlay_store.move_to_end(uid)          # mark most-recently used
+        while len(_overlay_store) > _OVERLAY_MAX_USERS:
+            _overlay_store.popitem(last=False)   # drop the least recently used
+    return state
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -460,7 +565,7 @@ class SaveScenarioRequest(BaseModel):
 @app.post("/api/scenarios")
 async def api_save_scenario(req: SaveScenarioRequest, user: dict = Depends(current_user)):
     user_id = int(user["sub"])
-    state = _overlay_state.get(req.tool, {})
+    state = _overlays(user).get(req.tool, {})
     try:
         sid = save_scenario(
             user_id=user_id,
@@ -494,8 +599,7 @@ async def api_load_scenario(scenario_id: int, user: dict = Depends(current_user)
         response = json.loads(row["response_json"])
     except Exception:
         raise HTTPException(status_code=500, detail="Corrupt scenario data.")
-    global _overlay_state
-    _overlay_state[row["tool"]] = state
+    _overlays(user)[row["tool"]] = state
     return JSONResponse({
         "tool": row["tool"],
         "lat": row["lat"],
@@ -587,7 +691,7 @@ async def get_asos_weather(
 
 
 @app.post("/api/plume")
-async def compute_plume(req: PlumeRequest, request: Request):
+async def compute_plume(req: PlumeRequest, request: Request, user: dict = Depends(current_user)):
     """
     Compute Gaussian plume contours.
     Returns GeoJSON FeatureCollection + stats for each threshold level.
@@ -705,8 +809,7 @@ async def compute_plume(req: PlumeRequest, request: Request):
 
     # ── Cache for KML endpoint ────────────────────────────────────────────────
     base_url = str(request.base_url).rstrip("/")
-    global _overlay_state
-    _overlay_state["plume"] = {
+    _overlays(user)["plume"] = {
         "source_lat": req.lat,
         "source_lon": req.lon,
         "chemical_name": chem["name"],
@@ -741,7 +844,7 @@ async def compute_plume(req: PlumeRequest, request: Request):
 
 
 @app.post("/api/plume/line")
-async def compute_line_plume(req: LinePlumeRequest, request: Request):
+async def compute_line_plume(req: LinePlumeRequest, request: Request, user: dict = Depends(current_user)):
     """
     Line source Gaussian plume contours.
     Models a moving release (truck, train, pipeline) as N equally-spaced
@@ -846,8 +949,7 @@ async def compute_line_plume(req: LinePlumeRequest, request: Request):
         }
 
     # ── Cache for KML / TAK export ────────────────────────────────────────────
-    global _overlay_state
-    _overlay_state["plume"] = {
+    _overlays(user)["plume"] = {
         "source_lat":      mid_lat,
         "source_lon":      mid_lon,
         "chemical_name":   chem["name"],
@@ -1130,40 +1232,96 @@ async def animate_plume(req: PlumeRequest):
 
 
 @app.get("/kml/live.kml")
-async def live_kml():
-    """Combined live KML of all active overlays. Polled by Google Earth NetworkLink."""
-    if not any(_overlay_state.values()):
+async def live_kml_gone():
+    """Retired: served the shared overlay state to anyone, unauthenticated.
+
+    Google Earth polls without cookies, so this path had no way to tell callers
+    apart and simply returned whatever had been computed most recently — by
+    anyone. Replaced by /kml/live/{token}.kml, issued per user.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail="This URL has been retired. Download a fresh network link from "
+               "the app (Export → Google Earth) to get your own feed.",
+    )
+
+
+@app.get("/kml/live/{token}.kml")
+async def live_kml_by_token(token: str):
+    """A single user's live overlays, addressed by feed token.
+
+    Google Earth cannot send the session cookie, so the token is the credential.
+    It is derived by HMAC from JWT_SECRET rather than stored, so it survives
+    restarts without a table — and rotating JWT_SECRET revokes every outstanding
+    feed, exactly as it revokes every session.
+    """
+    uid = _kml_user_from_token(token)
+    if uid is None:
+        raise HTTPException(status_code=404, detail="Invalid or expired feed link.")
+    state = _overlays({"id": uid})
+    if not any(state.values()):
         raise HTTPException(status_code=404, detail="No overlays computed yet. Run a scenario first.")
     return Response(
-        content=build_combined_kml(_overlay_state),
+        content=build_combined_kml(state),
         media_type="application/vnd.google-earth.kml+xml",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
     )
 
 
 @app.get("/kml/live.kmz")
-async def live_kmz():
-    """Serve the most recently pushed KMZ so ATAK can download it via b-f-t-r."""
-    if _live_kmz_cache is None:
-        raise HTTPException(status_code=404, detail="No KMZ generated yet — push to TAK first.")
+async def live_kmz_gone():
+    """Retired: this served whatever any organization pushed most recently.
+
+    Kept as an explicit 410 rather than removed so a stale b-f-t-r event from
+    before the change fails legibly instead of 404-ing as if the server were
+    broken.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail="This URL has been retired. Data packages are now issued per push "
+               "at a unique link. Push to TAK again to get a current one.",
+    )
+
+
+@app.get("/kml/pkg/{token}.kmz")
+async def kmz_by_token(token: str):
+    """Serve a data package by its one-time download token.
+
+    Unauthenticated by necessity — ATAK cannot send the session cookie — so the
+    token is the capability: unguessable, tied to a single push, and expiring.
+    An invalid and an expired token are deliberately indistinguishable.
+    """
+    entry = _kmz_get(token)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Package not found or expired.")
+    data, filename = entry
     return Response(
-        content=_live_kmz_cache,
+        content=data,
         media_type="application/vnd.google-earth.kmz",
         headers={
-            "Content-Disposition": 'attachment; filename="wmd_plotter_live.kmz"',
+            "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-cache, no-store, must-revalidate",
+            # Never let a shared cache or crawler retain a capability URL.
+            "X-Robots-Tag": "noindex, nofollow",
         },
     )
 
 
 @app.get("/kml/network.kml")
-async def network_link_kml(request: Request, interval: int = Query(default=30, ge=5, le=300)):
+async def network_link_kml(request: Request, interval: int = Query(default=30, ge=5, le=300),
+                           user: dict = Depends(current_user)):
     """
     Serve a KML NetworkLink document.
     Open in Google Earth — it will auto-refresh every `interval` seconds.
+
+    Requires a session: the document embeds this user's feed token, so issuing
+    it is what grants access to their overlays.
     """
     base_url = str(request.base_url).rstrip("/")
-    live_url = f"{base_url}/kml/live.kml"
+    live_url = f"{base_url}/kml/live/{_kml_link_token(user['id'])}.kml"
     kml_content = build_network_link_kml(live_url, refresh_interval_seconds=interval)
     return Response(
         content=kml_content,
@@ -1173,39 +1331,39 @@ async def network_link_kml(request: Request, interval: int = Query(default=30, g
 
 
 @app.get("/kml/download")
-async def download_kml():
+async def download_kml(user: dict = Depends(current_user)):
     """Download a static KML snapshot of all active overlays."""
-    if not any(_overlay_state.values()):
+    if not any(_overlays(user).values()):
         raise HTTPException(status_code=404, detail="No overlays computed yet.")
-    active = [k for k, v in _overlay_state.items() if v]
+    active = [k for k, v in _overlays(user).items() if v]
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"wmd_{'_'.join(active)}_{ts}.kml"
     return Response(
-        content=build_combined_kml(_overlay_state),
+        content=build_combined_kml(_overlays(user)),
         media_type="application/vnd.google-earth.kml+xml",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
 @app.delete("/api/overlay/{tool_id}")
-async def clear_overlay(tool_id: str):
+async def clear_overlay(tool_id: str, user: dict = Depends(current_user)):
     """Clear a single tool's overlay from server state (called when the user closes a tool panel)."""
-    if tool_id not in _overlay_state:
+    if tool_id not in _overlays(user):
         raise HTTPException(status_code=404, detail=f"Unknown overlay: {tool_id}")
-    _overlay_state[tool_id] = {}
+    _overlays(user)[tool_id] = {}
     return {"status": "cleared", "tool": tool_id}
 
 
 @app.delete("/api/overlay")
-async def clear_all_overlays():
+async def clear_all_overlays(user: dict = Depends(current_user)):
     """Clear all overlays (called on full scenario reset)."""
-    for key in _overlay_state:
-        _overlay_state[key] = {}
+    for key in _overlays(user):
+        _overlays(user)[key] = {}
     return {"status": "cleared"}
 
 
 @app.get("/export/tak-dp")
-async def export_tak_data_package(tools: Optional[str] = Query(default=None)):
+async def export_tak_data_package(tools: Optional[str] = Query(default=None), user: dict = Depends(current_user)):
     """Download a TAK Data Package (.zip) for import into ATAK/WinTAK/iTAK.
 
     Optional ?tools=plume,blast query param restricts which overlays are included.
@@ -1214,9 +1372,9 @@ async def export_tak_data_package(tools: Optional[str] = Query(default=None)):
     # Determine which overlays to export
     if tools:
         requested = [t.strip() for t in tools.split(",") if t.strip()]
-        export_state = {k: v for k, v in _overlay_state.items() if k in requested and v}
+        export_state = {k: v for k, v in _overlays(user).items() if k in requested and v}
     else:
-        export_state = {k: v for k, v in _overlay_state.items() if v}
+        export_state = {k: v for k, v in _overlays(user).items() if v}
 
     if not export_state:
         raise HTTPException(status_code=404, detail="No overlays computed yet.")
@@ -1238,7 +1396,7 @@ async def list_explosives():
 
 
 @app.post("/api/blast")
-async def compute_blast(req: BlastRequest):
+async def compute_blast(req: BlastRequest, user: dict = Depends(current_user)):
     """Compute blast overpressure damage zones (Brode/Hopkinson-Cranz model)."""
     from blast import EXPLOSIVES as _EXPLOSIVES
     result = compute_blast_zones(
@@ -1250,8 +1408,7 @@ async def compute_blast(req: BlastRequest):
 
     # Cache for unified KML export
     exp = next((e for e in _EXPLOSIVES if e["id"] == req.explosive_id), {})
-    global _overlay_state
-    _overlay_state["blast"] = {
+    _overlays(user)["blast"] = {
         "source_lat":    req.lat,
         "source_lon":    req.lon,
         "explosive_id":  req.explosive_id,
@@ -1280,15 +1437,14 @@ async def list_fuels():
 
 
 @app.post("/api/bleve")
-async def compute_bleve(req: BleveRequest):
+async def compute_bleve(req: BleveRequest, user: dict = Depends(current_user)):
     """Compute BLEVE fireball thermal damage zones (Roberts 1982 model)."""
     result = compute_bleve_zones(
         lat=req.lat, lon=req.lon, mass_kg=req.mass_kg, fuel_id=req.fuel_id
     )
 
     fuel = next((f for f in FUELS if f["id"] == req.fuel_id), {})
-    global _overlay_state
-    _overlay_state["bleve"] = {
+    _overlays(user)["bleve"] = {
         "source_lat":  req.lat,
         "source_lon":  req.lon,
         "fuel_id":     req.fuel_id,
@@ -1309,7 +1465,7 @@ async def compute_bleve(req: BleveRequest):
 
 
 @app.post("/api/population")
-async def compute_population(req: PopulationRequest):
+async def compute_population(req: PopulationRequest, user: dict = Depends(current_user)):
     """
     Estimate population exposure within each hazard zone.
     Uses US Census ACS 5-year county density (uniform distribution assumption).
@@ -1323,8 +1479,7 @@ async def compute_population(req: PopulationRequest):
             {**res_z, "latlon": req_z.get("latlon", [])}
             for req_z, res_z in zip(req.zones, result["zones"])
         ]
-        global _overlay_state
-        _overlay_state["population"] = {
+        _overlays(user)["population"] = {
             "source_lat":          req.lat,
             "source_lon":          req.lon,
             "county_name":         result["county_name"],
@@ -1346,7 +1501,7 @@ async def list_radionuclides():
 
 
 @app.post("/api/radiation")
-async def compute_radiation(req: RadiationRequest, request: Request):
+async def compute_radiation(req: RadiationRequest, request: Request, user: dict = Depends(current_user)):
     """
     Compute radiological dose rate contours (Gaussian plume, cloudshine pathway).
     Returns GeoJSON FeatureCollection + stats for each dose zone.
@@ -1455,8 +1610,7 @@ async def compute_radiation(req: RadiationRequest, request: Request):
     geojson = {"type": "FeatureCollection", "features": features}
 
     # ── Cache for KML ─────────────────────────────────────────────────────────
-    global _overlay_state
-    _overlay_state["radiation"] = {
+    _overlays(user)["radiation"] = {
         "source_lat": req.lat,
         "source_lon": req.lon,
         "radionuclide_name": nuclide["name"],
@@ -1494,8 +1648,19 @@ async def compute_radiation(req: RadiationRequest, request: Request):
 
 
 @app.get("/api/health")
-async def health():
-    return {"status": "ok", "active_overlays": {k: bool(v) for k, v in _overlay_state.items()}}
+async def health(request: Request):
+    """Liveness check. Public — deploy.sh and monitoring curl this unauthenticated.
+
+    Overlay state is per-user now, so there is no global set to report. An
+    authenticated caller still gets their own (the admin UI and docs expect the
+    field); an anonymous one gets liveness only, since there is no meaningful
+    answer and it must not require a session.
+    """
+    user = getattr(request.state, "user", None)
+    payload = {"status": "ok"}
+    if user:
+        payload["active_overlays"] = {k: bool(v) for k, v in _overlays(user).items()}
+    return payload
 
 
 # ── ERG 2024 ──────────────────────────────────────────────────────────────────
@@ -1543,10 +1708,9 @@ class InfraCacheRequest(BaseModel):
 
 
 @app.post("/api/infra/cache")
-async def cache_infra(req: InfraCacheRequest):
+async def cache_infra(req: InfraCacheRequest, user: dict = Depends(current_user)):
     """Cache infrastructure search results (from frontend Overpass query) for KML export."""
-    global _overlay_state
-    _overlay_state["infra"] = {
+    _overlays(user)["infra"] = {
         "source_lat": req.lat,
         "source_lon": req.lon,
         "radius":     req.radius,
@@ -1573,7 +1737,7 @@ async def erg_entry(un_number: str):
 
 
 @app.post("/api/erg/zones")
-async def erg_zones(req: ERGZonesRequest):
+async def erg_zones(req: ERGZonesRequest, user: dict = Depends(current_user)):
     """Compute ERG isolation and PAD zones as GeoJSON."""
     if req.spill_size not in ("small", "large"):
         raise HTTPException(status_code=422, detail="spill_size must be 'small' or 'large'.")
@@ -1584,8 +1748,7 @@ async def erg_zones(req: ERGZonesRequest):
     if result is None:
         raise HTTPException(status_code=404, detail=f"UN{req.un_number} not in ERG 2024 Table 1.")
 
-    global _overlay_state
-    _overlay_state["erg"] = {
+    _overlays(user)["erg"] = {
         **result,
         "source_lat": req.lat,
         "source_lon": req.lon,
@@ -1608,7 +1771,7 @@ async def list_dense_gas_chemicals():
 
 
 @app.post("/api/dense_gas/zones")
-async def compute_dense_gas(req: DenseGasRequest):
+async def compute_dense_gas(req: DenseGasRequest, user: dict = Depends(current_user)):
     """
     Compute modified-PG dense-gas dispersion zones (GeoJSON + stats).
     Weather parameters must be supplied by the caller (pre-fetched).
@@ -1629,8 +1792,7 @@ async def compute_dense_gas(req: DenseGasRequest):
         stability_class=stability,
     )
 
-    global _overlay_state
-    _overlay_state["dense_gas"] = {
+    _overlays(user)["dense_gas"] = {
         "source_lat":          req.lat,
         "source_lon":          req.lon,
         "gas_id":              req.gas_id,
@@ -1664,7 +1826,7 @@ async def list_fire_smoke_types():
 
 
 @app.post("/api/fire_smoke/zones")
-async def compute_fire_smoke(req: FireSmokeRequest):
+async def compute_fire_smoke(req: FireSmokeRequest, user: dict = Depends(current_user)):
     """
     Compute Briggs (1975) buoyant plume smoke zones (PM2.5 and CO).
     Weather parameters must be supplied by the caller (pre-fetched).
@@ -1680,8 +1842,7 @@ async def compute_fire_smoke(req: FireSmokeRequest):
         h_stack=req.h_stack,
     )
 
-    global _overlay_state
-    _overlay_state["fire_smoke"] = {
+    _overlays(user)["fire_smoke"] = {
         "source_lat":        req.lat,
         "source_lon":        req.lon,
         "fire_type_id":      req.fire_type_id,
@@ -1902,7 +2063,7 @@ async def tak_status(user: dict = Depends(current_user)):
 @app.post("/api/tak-push")
 async def tak_push(request: Request, user: dict = Depends(current_user)):
     """Stream all active overlays to the active TAK server profile as CoT events."""
-    if not any(_overlay_state.values()):
+    if not any(_overlays(user).values()):
         return JSONResponse(
             {"success": False, "sent": 0,
              "error": "No model data — run a model first, then push."},
@@ -1911,8 +2072,8 @@ async def tak_push(request: Request, user: dict = Depends(current_user)):
     p = _tak_profile_for(user)
     if not p or not p.get("host"):
         return JSONResponse({"success": False, "sent": 0, "error": "No TAK server profile configured"}, status_code=400)
-    result = push_cot(_profile_to_config(p), _overlay_state)
-    result["server_tools"] = {k: len(v.get("zones", [])) for k, v in _overlay_state.items() if v}
+    result = push_cot(_profile_to_config(p), _overlays(user))
+    result["server_tools"] = {k: len(v.get("zones", [])) for k, v in _overlays(user).items() if v}
     return JSONResponse(result, status_code=200 if result["success"] else 502)
 
 
@@ -1920,13 +2081,13 @@ async def tak_push(request: Request, user: dict = Depends(current_user)):
 async def tak_preview(user: dict = Depends(current_user)):
     """Return the raw CoT XML that would be sent on the next push — for debugging."""
     from tak_push import _build_events
-    events = _build_events(_overlay_state)
+    events = _build_events(_overlays(user))
     if not events:
         return JSONResponse({"events": [], "count": 0, "error": "No active overlays — run a model first"})
     return JSONResponse({
         "count": len(events),
         "events": events,
-        "tools": [k for k, v in _overlay_state.items() if v],
+        "tools": [k for k, v in _overlays(user).items() if v],
     })
 
 
@@ -1941,7 +2102,7 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
     """
     global _live_kmz_cache
 
-    if not any(_overlay_state.values()):
+    if not any(_overlays(user).values()):
         return JSONResponse(
             {"success": False, "error": "No model data — run a model first."},
             status_code=400,
@@ -1963,7 +2124,7 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
         # The manifest includes onReceiveImport="true" which tells ATAK to
         # auto-import on receipt. A bare KMZ (doc.kml only) lacks this and
         # ATAK reports "data package download failed" even after downloading.
-        export_state  = {k: v for k, v in _overlay_state.items() if v}
+        export_state  = {k: v for k, v in _overlays(user).items() if v}
         kml_str       = build_combined_kml(export_state)
         # Merge client-side annotations (ICS markers, drawn shapes, zones) into the KML
         if annotations_kml and annotations_kml.strip():
@@ -1972,7 +2133,7 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
         active        = list(export_state.keys())
 
         dp_bytes, dp_filename, _pkg_uid = build_tak_data_package(kml_bytes, active)
-        _live_kmz_cache = dp_bytes  # served at /kml/live.kmz
+        kmz_token = _kmz_put(dp_bytes, dp_filename)
 
         sha256 = hashlib.sha256(dp_bytes).hexdigest()
 
@@ -1982,7 +2143,7 @@ async def tak_push_marti(request: Request, user: dict = Depends(current_user)):
         public_base = (os.environ.get("WMD_PUBLIC_URL") or "").rstrip("/")
         if not public_base:
             public_base = str(request.base_url).rstrip("/")
-        kmz_url = f"{public_base}/kml/live.kmz"
+        kmz_url = f"{public_base}/kml/pkg/{kmz_token}.kmz"
 
         # 2. Query connected clients from Marti (fails gracefully → broadcast)
         contacts = await get_contacts(config)
@@ -2184,13 +2345,13 @@ async def push_plume_timeseries(request: Request, user: dict = Depends(current_u
     kml_str   = build_timeseries_kml(steps, chem["name"], lat, lon)
     kml_bytes = kml_str.encode("utf-8")
     dp_bytes, dp_filename, _pkg_uid = build_tak_data_package(kml_bytes, ["plume_timeseries"])
-    _live_kmz_cache = dp_bytes
+    kmz_token = _kmz_put(dp_bytes, dp_filename)
 
     sha256     = hashlib.sha256(dp_bytes).hexdigest()
     public_base = (os.environ.get("WMD_PUBLIC_URL") or "").rstrip("/")
     if not public_base:
         public_base = str(request.base_url).rstrip("/")
-    kmz_url    = f"{public_base}/kml/live.kmz"
+    kmz_url    = f"{public_base}/kml/pkg/{kmz_token}.kmz"
 
     config   = _profile_to_config(p)
     contacts = await get_contacts(config)
