@@ -897,6 +897,18 @@ input:checked+.slider:before{transform:translateX(16px)}
         <div id="pop-results" style="margin-top:10px"></div>
       </div>
 
+      <!-- IN THE HAZARD ZONE -->
+      <div class="section tool-panel" id="panel-in_zone" style="display:none">
+        <div class="section-hdr">⚠️ In the Hazard Zone</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Lists facilities and critical sites that fall inside the active hazard zones — assigned to the most severe zone that contains them.</div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);margin-bottom:8px;cursor:pointer">
+          <input type="checkbox" id="chk-inzone-infra" checked style="cursor:pointer"/>
+          Include HIFLD infrastructure (hospitals, schools, fire/EMS) — US only
+        </label>
+        <button class="btn btn-ghost btn-full" onclick="runImpactAssessment()">⚠️ Check Hazard Zone</button>
+        <div id="inzone-results" style="margin-top:10px"></div>
+      </div>
+
       <!-- SHELTER/EVAC -->
       <div class="section tool-panel" id="panel-shelter" style="display:none">
         <div class="section-hdr">🏠 Shelter / Evacuate</div>
@@ -1318,6 +1330,7 @@ const TOOLS = [
   { id:'probit',     icon:'☠',  label:'Probit / Casualty', desc:'Dose-response casualty estimate',  needsWeather:false, isModel:false },
   { id:'infra',      icon:'🏗',  label:'Infrastructure',   desc:'Critical facilities nearby',       needsWeather:false, isModel:false },
   { id:'population', icon:'👥', label:'Population Impact', desc:'Exposure estimates (Census)',       needsWeather:false, isModel:false },
+  { id:'in_zone',    icon:'⚠️', label:'In the Hazard Zone', desc:'Facilities & sites caught in the plume', needsWeather:false, isModel:false },
   { id:'live_data',  icon:'📡', label:'Live Data Feeds',  desc:'FIRMS · NIFC · NWS Forecast',      needsWeather:false, isModel:false },
   { id:'shelter',    icon:'🏠', label:'Shelter / Evac',    desc:'Protective action guidance',       needsWeather:false, isModel:false },
   { id:'timeline',   icon:'📅', label:'Incident Timeline', desc:'CBRN scenario log & replay',       needsWeather:false, isModel:false },
@@ -1704,6 +1717,7 @@ function clearIncident() {
   document.getElementById('anim-section').style.display = 'none';
   _animStop();
   if (typeof _tsStop === 'function') { _tsStop(); document.getElementById('timeseries-section').style.display = 'none'; }
+  if (typeof clearImpactMarkers === 'function') clearImpactMarkers();
   _slots[_activeSlot] = null;
   _updateSlotTabs();
   Object.keys(_activeOverlays).forEach(k => _activeOverlays[k] = false);
@@ -4462,6 +4476,145 @@ function renderPopulationResults(data) {
       ${data.accuracy_note}<br/>
       Source: ${data.data_source}
     </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// In the Hazard Zone — what falls inside the active plume/blast/etc. zones
+// ─────────────────────────────────────────────────────────────────────────────
+let _inzoneLayer = null;   // Leaflet layer group for the caught-point markers
+let _lastImpact  = null;
+
+// How each category renders: emoji + human label. Unknown categories fall back
+// to a generic pin, so a new HIFLD layer or facility type still shows up.
+const _INZONE_CAT = {
+  hospital:     { icon:'🏥', label:'Hospitals' },
+  school:       { icon:'🏫', label:'Schools' },
+  fire_station: { icon:'🚒', label:'Fire stations' },
+  ems:          { icon:'🚑', label:'EMS' },
+  industrial:   { icon:'🏭', label:'Industrial' },
+  refinery:     { icon:'🛢️', label:'Refineries' },
+  chemical:     { icon:'⚗️', label:'Chemical sites' },
+  water:        { icon:'💧', label:'Water systems' },
+  power:        { icon:'⚡', label:'Power' },
+  facility:     { icon:'📍', label:'Facilities' },
+};
+function _catMeta(cat) { return _INZONE_CAT[cat] || { icon:'📍', label:(cat||'other').replace(/_/g,' ') }; }
+
+async function runImpactAssessment() {
+  // No client-side zone pre-check: the endpoint reads server-side overlay state
+  // (the authoritative copy) and returns a friendly note when nothing is
+  // modelled yet. Guarding on the client's rendered zones would be a second,
+  // divergent source of truth.
+  const includeInfra = document.getElementById('chk-inzone-infra').checked;
+  document.getElementById('inzone-results').innerHTML =
+    '<div style="font-size:11px;color:var(--muted)"><span class="spin">⟳</span> Checking hazard zones…</div>';
+  try {
+    const r = await fetch(`${API}/api/impact`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ include_infra: includeInfra, infra_radius_km: 15 }),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || 'Impact check failed');
+    _lastImpact = await r.json();
+    renderImpactResults(_lastImpact);
+    _drawImpactMarkers(_lastImpact);
+  } catch(e) {
+    document.getElementById('inzone-results').innerHTML =
+      `<div style="font-size:11px;color:var(--red)">Error: ${e.message}</div>`;
+  }
+}
+
+function renderImpactResults(data) {
+  const el = document.getElementById('inzone-results');
+
+  if (data.note) {
+    // No hazard zones modelled yet — distinct from "checked, found nothing".
+    el.innerHTML = `<div style="font-size:11px;color:var(--muted);line-height:1.5">${data.note}</div>`;
+    return;
+  }
+  if (!data.total) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--green);line-height:1.5">
+      ✓ No mapped facilities or sites fall inside the active hazard zones.
+      <div style="color:var(--muted);margin-top:4px">${data.candidates_checked||0} location(s) checked.</div>
+    </div>`;
+    return;
+  }
+
+  // Headline: category tallies across every zone, most-numerous first.
+  const summary = Object.entries(data.by_category)
+    .sort((a,b)=>b[1]-a[1])
+    .map(([cat,n])=>{ const m=_catMeta(cat); return `${m.icon} ${n} ${m.label.toLowerCase()}`; })
+    .join(' · ');
+
+  // Per zone, innermost/most-severe first (as returned by the backend).
+  const zoneBlocks = data.zones.map((z,zi)=>{
+    const rows = z.points.map((p,pi)=>{
+      const m = _catMeta(p.category);
+      const dist = p.distance_m!=null ? fmtDist(p.distance_m/1000) : '';
+      return `<div class="inzone-row" onclick="_zoomImpactPoint(${zi},${pi})"
+                   style="display:flex;justify-content:space-between;gap:8px;padding:4px 6px;border-radius:4px;cursor:pointer;font-size:11px"
+                   onmouseover="this.style.background='rgba(255,255,255,.05)'"
+                   onmouseout="this.style.background='transparent'">
+        <span>${m.icon} ${p.name}</span>
+        <span style="font-family:monospace;color:var(--muted);white-space:nowrap">${dist}</span>
+      </div>`;
+    }).join('');
+    return `<div style="margin-top:8px">
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;margin-bottom:2px">
+        <span class="threshold-dot" style="background:${z.color};border:1px solid #fff4"></span>
+        ${z.label}
+        <span style="color:var(--muted);font-weight:400">— ${z.count} site${z.count!==1?'s':''}</span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join('');
+
+  const infraWarn = data.infra_error
+    ? `<div style="margin-top:8px;padding:5px 8px;background:rgba(255,165,0,0.12);border:1px solid rgba(255,165,0,0.35);border-radius:5px;font-size:10px;color:#ffa500;line-height:1.4">⚠ ${data.infra_error}</div>`
+    : '';
+
+  el.innerHTML = `
+    <div style="padding:7px 9px;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.35);border-radius:6px;font-size:11px;font-weight:700;color:#f85149;line-height:1.5">
+      ⚠ ${data.total} site${data.total!==1?'s':''} in hazard zones
+      <div style="font-weight:400;color:var(--text);margin-top:2px">${summary}</div>
+    </div>
+    ${zoneBlocks}
+    ${infraWarn}
+    <div style="margin-top:8px;font-size:10px;color:var(--muted);line-height:1.5">
+      Each site is assigned to the most severe zone containing it. Distances are from the release point. Tap a row to locate it.
+    </div>`;
+}
+
+function _drawImpactMarkers(data) {
+  if (_inzoneLayer) { map.removeLayer(_inzoneLayer); _inzoneLayer = null; }
+  if (!data.zones || !data.zones.length) return;
+  _inzoneLayer = L.layerGroup();
+  data.zones.forEach(z => {
+    z.points.forEach(p => {
+      const m = _catMeta(p.category);
+      const icon = L.divIcon({
+        className:'',
+        html:`<div style="font-size:18px;filter:drop-shadow(0 0 2px #000)">${m.icon}</div>`,
+        iconSize:[20,20], iconAnchor:[10,10],
+      });
+      L.marker([p.lat,p.lon], { icon })
+        .bindTooltip(`<b>${p.name}</b><br/>${z.label}`, { className:'leaflet-tooltip' })
+        .addTo(_inzoneLayer);
+    });
+  });
+  _inzoneLayer.addTo(map);
+}
+
+function _zoomImpactPoint(zi, pi) {
+  const p = _lastImpact?.zones?.[zi]?.points?.[pi];
+  if (!p) return;
+  map.flyTo([p.lat, p.lon], 15, { duration: 0.8 });
+}
+
+function clearImpactMarkers() {
+  if (_inzoneLayer) { map.removeLayer(_inzoneLayer); _inzoneLayer = null; }
+  _lastImpact = null;
+  const el = document.getElementById('inzone-results');
+  if (el) el.innerHTML = '';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

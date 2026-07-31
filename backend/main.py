@@ -58,6 +58,7 @@ from fire_smoke import compute_fire_smoke_zones, list_fire_types
 from firms import fetch_firms_hotspots
 from nws_forecast import fetch_nws_forecast
 from hifld import fetch_hifld_infra
+import impact
 from nifc import fetch_nifc_perimeters
 from aegl_db import get_aegl
 from db   import init_db, count_users, create_user, get_user_by_username, get_user_by_email, \
@@ -2003,6 +2004,87 @@ async def run_probit(req: ProbitRequest):
         gas_id=req.gas_id,
     )
     return JSONResponse(content=result)
+
+
+# ── Impact assessment ─────────────────────────────────────────────────────────
+
+# HIFLD layer id -> the category the impact panel groups by. Kept here rather
+# than in impact.py so that module stays a pure geometry helper with no
+# knowledge of data sources.
+_HIFLD_CATEGORY = {
+    "hospital":     "hospital",
+    "urgent_care":  "hospital",
+    "ems":          "ems",
+    "fire_station": "fire_station",
+    "school":       "school",
+}
+
+
+class ImpactRequest(BaseModel):
+    include_infra:   bool  = True    # also query HIFLD hospitals/schools/etc.
+    infra_radius_km: float = Field(default=15.0, ge=1.0, le=50.0)
+
+
+@app.post("/api/impact")
+async def assess_impact(req: ImpactRequest, user: dict = Depends(current_user)):
+    """What sits inside the active hazard zones.
+
+    Reads the caller's own overlays (per-user state), so it reflects exactly
+    what they have on the map. Candidate points come from two sources:
+
+      - the organization's facility library (local, always included)
+      - HIFLD critical infrastructure near the incident (network, optional)
+
+    Each point is assigned to the most severe zone that contains it. Returns
+    404-style empty rather than erroring when nothing is modelled yet, so the
+    UI can show "run a model first" without special-casing an exception.
+    """
+    overlays = _overlays(user)
+    zones = impact.extract_zones(overlays)
+    if not zones:
+        return {"zones": [], "total": 0, "by_category": {}, "unaffected": 0,
+                "note": "No hazard zones yet — run a model first."}
+
+    # Anchor for the HIFLD query: any zone's source point. They share an
+    # incident origin in practice, so the first is fine.
+    anchor = next(((z["source_lat"], z["source_lon"]) for z in zones
+                   if z["source_lat"] is not None and z["source_lon"] is not None), None)
+
+    points = []
+
+    # Facility library — carry the org's own typing through as the category.
+    for f in list_facilities():
+        if f.get("lat") is None or f.get("lon") is None:
+            continue
+        points.append({
+            "lat": f["lat"], "lon": f["lon"],
+            "name": f.get("name") or "Facility",
+            "category": f.get("facility_type") or "facility",
+            "source": "library",
+        })
+
+    # HIFLD infrastructure around the incident.
+    infra_error = None
+    if req.include_infra and anchor:
+        try:
+            for item in await fetch_hifld_infra(anchor[0], anchor[1], req.infra_radius_km):
+                points.append({
+                    "lat": item["lat"], "lon": item["lon"],
+                    "name": item.get("name") or item.get("type") or "Site",
+                    "category": _HIFLD_CATEGORY.get(item.get("type"), item.get("type") or "other"),
+                    "source": "hifld",
+                })
+        except Exception as e:
+            # HIFLD is a flaky external service; a failure there must not sink
+            # the whole assessment — the facility results are still useful.
+            logger.warning("impact: HIFLD fetch failed — %s", e)
+            infra_error = "Critical-infrastructure lookup was unavailable; showing facility library only."
+
+    result = impact.assess(zones, points)
+    result["candidates_checked"] = len(points)
+    if infra_error:
+        result["infra_error"] = infra_error
+    return result
 
 
 # ── CoT XML (ATAK streaming) ──────────────────────────────────────────────────

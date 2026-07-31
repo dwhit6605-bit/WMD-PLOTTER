@@ -24,6 +24,7 @@ TESTS_DIR = Path(__file__).resolve().parent
 SUITES = [
     ("TAK org scoping",   "test_tak_scoping.py"),
     ("User isolation",    "test_user_isolation.py"),
+    ("Impact assessment", "test_impact.py"),
     ("Notifications",     "test_notifications.py"),
     ("Account approval",  "test_approval.py"),
     ("Password reset",    "test_password_reset.py"),
