@@ -28,6 +28,11 @@ import dispersion as py
 import blast as py_blast
 import bleve as py_bleve
 import radiation as py_rad
+import dense_gas as py_dg
+import fire_smoke as py_fs
+import probit as py_probit
+import line_source as py_ls
+import impact as py_impact
 
 DRIVER = Path(__file__).resolve().parent / "model_port_driver.js"
 
@@ -243,6 +248,118 @@ def main():
                     ok = False
         r.check(f"{rid}: dose contours match Python (worst {vworst:.1e} deg)", ok)
 
+    # ── Dense gas: modified-σz plume geometry ───────────────────────────────
+    r.section("dense gas geometry")
+    for gid in ["cl2", "cg", "propane_v"]:
+        args = {"lat": 34.05, "lon": -118.25, "gas_id": gid, "rate": 30.0,
+                "height": 0.0, "wind": 3.0, "wind_from": 270.0, "stability": "D"}
+        py_out = py_dg.compute_dense_gas_zones(args["lat"], args["lon"], gid, args["rate"],
+                                               args["height"], args["wind"], args["wind_from"], args["stability"])
+        js_out = _run_js([{"fn": "compute_dense_gas_zones", "args": args}])[0]["value"]
+        pf, jf = py_out["geojson"]["features"], js_out["geojson"]["features"]
+        r.check(f"{gid}: identical contour geometry", len(pf) == len(jf) and _coords_match(pf, jf),
+                f"py {len(pf)} / js {len(jf)}")
+        r.check(f"{gid}: density_ratio & Q match",
+                _close(py_out["model"]["density_ratio"], js_out["model"]["density_ratio"])
+                and _close(py_out["model"]["Q_gs"], js_out["model"]["Q_gs"]))
+
+    # ── Fire / smoke: Heskestad + elevated Gaussian geometry ────────────────
+    r.section("fire/smoke geometry")
+    for fid in ["vehicle", "structure_large", "wildland_high"]:
+        args = {"lat": 34.05, "lon": -118.25, "fire_id": fid, "wind": 3.0,
+                "wind_from": 270.0, "stability": "D", "h_stack": 0.0}
+        py_out = py_fs.compute_fire_smoke_zones(args["lat"], args["lon"], fid, args["wind"],
+                                                args["wind_from"], args["stability"], args["h_stack"])
+        js_out = _run_js([{"fn": "compute_fire_smoke_zones", "args": args}])[0]["value"]
+        pf, jf = py_out["geojson"]["features"], js_out["geojson"]["features"]
+        r.check(f"{fid}: identical PM2.5+CO contour geometry",
+                len(pf) == len(jf) and _coords_match(pf, jf), f"py {len(pf)} / js {len(jf)}")
+        r.check(f"{fid}: flame height & effective height match",
+                _close(py_out["model"]["flame_height_m"], js_out["model"]["flame_height_m"])
+                and _close(py_out["model"]["H_eff_m"], js_out["model"]["H_eff_m"]))
+
+    # ── Probit: casualty integers with Python's banker's rounding ───────────
+    r.section("probit casualties")
+    test_zones = [
+        {"level": "high",   "label": "AEGL-3", "color": "#f00", "pop_estimate": 4237, "threshold_ppm": 20.0},
+        {"level": "medium", "label": "AEGL-2", "color": "#f80", "pop_estimate": 12894, "threshold_ppm": 3.0},
+        {"level": "low",    "label": "AEGL-1", "color": "#ff0", "pop_estimate": 30011, "threshold_ppm": 1.0},
+    ]
+    for gas_id in [None, "cl2", "nh3"]:
+        py_out = py_probit.compute_probit_zones(test_zones, 30.0, gas_id)
+        js_out = _run_js([{"fn": "compute_probit_zones",
+                           "args": {"zones": test_zones, "exposure_min": 30.0, "gas_id": gas_id}}])[0]["value"]
+        totals_ok = all(_close(py_out["totals"][k], js_out["totals"][k]) for k in py_out["totals"])
+        r.check(f"gas={gas_id}: casualty totals match (banker's rounding)", totals_ok,
+                f"py={py_out['totals']} js={js_out['totals']}")
+        per_zone_ok = all(
+            _close(pz["fatalities"], jz["fatalities"])
+            and _close(pz["serious_injuries"], jz["serious_injuries"])
+            and _close(pz["minor_injuries"], jz["minor_injuries"])
+            and _close(pz["lethality_pct"], jz["lethality_pct"])
+            for pz, jz in zip(py_out["zones"], js_out["zones"]))
+        r.check(f"gas={gas_id}: per-zone casualties & percentages match", per_zone_ok)
+
+    # ── Line source: grid superposition + convex hull ───────────────────────
+    r.section("line source (grid + hull)")
+    path = py_ls.interpolate_path(34.05, -118.26, 34.06, -118.24, 12)
+    lats = [p[0] for p in path]
+    lons = [p[1] for p in path]
+    ls_thresholds = {
+        "low":    {"value": 0.5, "label": "AEGL-1", "color": "#FFFF00"},
+        "medium": {"value": 2.0, "label": "AEGL-2", "color": "#FF8C00"},
+        "high":   {"value": 20.0, "label": "AEGL-3", "color": "#FF0000"},
+    }
+    py_ls_out = py_ls.compute_line_source_contours(lats, lons, 100.0, 3.0, "D", 70.9,
+                                                   ls_thresholds, 270.0, 0.0)
+    js_ls_out = _run_js([{"fn": "compute_line_source_contours",
+                          "args": {"lats": lats, "lons": lons, "Q": 100.0, "u": 3.0,
+                                   "stability": "D", "mw": 70.9, "thresholds": ls_thresholds,
+                                   "wind_from": 270.0, "H": 0.0, "grid_n": 160}}])[0]["value"]
+    r.check("same contour levels", set(py_ls_out) == set(js_ls_out),
+            f"py={sorted(py_ls_out)} js={sorted(js_ls_out)}")
+    ls_ok, ls_worst = True, 0.0
+    for level in py_ls_out:
+        pl, jl = py_ls_out[level]["latlon"], js_ls_out[level]["latlon"]
+        if len(pl) != len(jl):
+            ls_ok = False
+            print(f"     {level}: hull vertex count py={len(pl)} js={len(jl)}")
+            continue
+        for (a1, b1), (a2, b2) in zip(pl, jl):
+            ls_worst = max(ls_worst, abs(a1 - a2), abs(b1 - b2))
+            if not (_close(a1, a2) and _close(b1, b2)):
+                ls_ok = False
+    r.check(f"convex hull vertices match Python (worst {ls_worst:.1e} deg)", ls_ok)
+    for level in py_ls_out:
+        r.check(f"{level}: downwind extent matches",
+                _close(py_ls_out[level]["max_downwind_m"], js_ls_out[level]["max_downwind_m"]))
+
+    # ── Impact: geometry primitives + full assess ───────────────────────────
+    r.section("impact assessment")
+    sq = [[-1, -1], [-1, 1], [1, 1], [1, -1]]
+    for lat, lon, want in [(0, 0, True), (5, 5, False), (0.9, 0.9, True), (0, 1.5, False)]:
+        py_v = py_impact.point_in_ring(lat, lon, sq)
+        js_v = _run_js([{"fn": "impact_point_in_ring", "args": {"lat": lat, "lon": lon, "ring": sq}}])[0]["value"]
+        r.check(f"point_in_ring({lat},{lon}) agrees", py_v == js_v == want, f"py={py_v} js={js_v}")
+    r.check("haversine matches",
+            _close(py_impact.haversine_m(34.0, -118.0, 34.1, -118.1),
+                   _run_js([{"fn": "impact_haversine", "args": {"lat1": 34.0, "lon1": -118.0, "lat2": 34.1, "lon2": -118.1}}])[0]["value"]))
+
+    overlays = {"plume": {"source_lat": 0.0, "source_lon": 0.0, "contours": {
+        "high": {"latlon": [[-1, -1], [-1, 1], [1, 1], [1, -1]], "label": "AEGL-3", "color": "#f00"},
+        "low":  {"latlon": [[-2, -2], [-2, 2], [2, 2], [2, -2]], "label": "AEGL-1", "color": "#ff0"}}}}
+    points = [{"lat": 0.0, "lon": 0.0, "name": "Center", "category": "hospital"},
+              {"lat": 1.5, "lon": 0.0, "name": "Edge", "category": "school"},
+              {"lat": 9.0, "lon": 9.0, "name": "Far", "category": "industrial"}]
+    py_a = py_impact.assess(py_impact.extract_zones(overlays), points)
+    js_a = _run_js([{"fn": "impact_assess", "args": {"overlays": overlays, "points": points}}])[0]["value"]
+    r.check("assess: same total in-zone", py_a["total"] == js_a["total"] == 2, f"py={py_a['total']} js={js_a['total']}")
+    r.check("assess: same category tally", py_a["by_category"] == js_a["by_category"],
+            f"py={py_a['by_category']} js={js_a['by_category']}")
+    r.check("assess: same zone assignment (inner first)",
+            [z["label"] for z in py_a["zones"]] == [z["label"] for z in js_a["zones"]],
+            f"py={[z['label'] for z in py_a['zones']]} js={[z['label'] for z in js_a['zones']]}")
+
     return r.report()
 
 
@@ -261,7 +378,14 @@ def _coords_match(py_features, js_features):
             if not all(_close(a, b) for a, b in zip(pg["coordinates"], jg["coordinates"])):
                 return False
         else:  # Polygon
-            pring, jring = pg["coordinates"][0], jg["coordinates"][0]
+            # An unmet threshold yields empty coordinates on both sides; that is
+            # a match (both "no contour"). A mismatch in emptiness is a fail.
+            pc, jc = pg["coordinates"], jg["coordinates"]
+            if bool(pc) != bool(jc):
+                return False
+            if not pc:
+                continue
+            pring, jring = pc[0], jc[0]
             if len(pring) != len(jring):
                 return False
             for (px, pyy), (jx, jy) in zip(pring, jring):

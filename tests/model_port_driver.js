@@ -10,6 +10,11 @@ const dispersion = require(path.join(MODELS, 'dispersion.js'));
 const blast = require(path.join(MODELS, 'blast.js'));
 const bleve = require(path.join(MODELS, 'bleve.js'));
 const radiation = require(path.join(MODELS, 'radiation.js'));
+const dense_gas = require(path.join(MODELS, 'dense_gas.js'));
+const fire_smoke = require(path.join(MODELS, 'fire_smoke.js'));
+const probit = require(path.join(MODELS, 'probit.js'));
+const line_source = require(path.join(MODELS, 'line_source.js'));
+const impact = require(path.join(MODELS, 'impact.js'));
 
 const DISPATCH = {
   sigma_y:                   (a) => dispersion.sigma_y(a.x, a.stability),
@@ -39,6 +44,28 @@ const DISPATCH = {
   // radiation
   compute_radiation_contours: (a) => radiation.compute_radiation_contours(
                                        a.Q, a.u, a.stability, a.dcf, a.lat, a.lon, a.wind_from, a.H),
+
+  // dense gas
+  compute_dense_gas_zones: (a) => dense_gas.compute_dense_gas_zones(
+                                    a.lat, a.lon, a.gas_id, a.rate, a.height, a.wind, a.wind_from, a.stability),
+
+  // fire / smoke
+  compute_fire_smoke_zones: (a) => fire_smoke.compute_fire_smoke_zones(
+                                     a.lat, a.lon, a.fire_id, a.wind, a.wind_from, a.stability, a.h_stack),
+
+  // probit
+  compute_probit_zones: (a) => probit.compute_probit_zones(a.zones, a.exposure_min, a.gas_id),
+
+  // line source
+  compute_line_source_contours: (a) => line_source.compute_line_source_contours(
+                                          a.lats, a.lons, a.Q, a.u, a.stability, a.mw,
+                                          a.thresholds, a.wind_from, a.H, a.grid_n),
+
+  // impact
+  impact_point_in_ring:  (a) => impact.point_in_ring(a.lat, a.lon, a.ring),
+  impact_ring_area:      (a) => impact.ring_area_deg2(a.ring),
+  impact_haversine:      (a) => impact.haversine_m(a.lat1, a.lon1, a.lat2, a.lon2),
+  impact_assess:         (a) => impact.assess(impact.extract_zones(a.overlays), a.points),
 };
 
 let raw = '';
