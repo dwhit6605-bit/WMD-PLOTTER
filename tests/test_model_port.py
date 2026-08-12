@@ -360,6 +360,30 @@ def main():
             [z["label"] for z in py_a["zones"]] == [z["label"] for z in js_a["zones"]],
             f"py={[z['label'] for z in py_a['zones']]} js={[z['label'] for z in js_a['zones']]}")
 
+    # ── Data bundle fidelity: the generated JS must equal the Python source ──
+    r.section("offline data bundle")
+    data_js = Path(__file__).resolve().parent.parent / "frontend" / "js" / "models" / "data.js"
+    if not data_js.exists():
+        r.check("data.js exists (run tests/gen_model_data.py)", False, "missing")
+    else:
+        node = shutil.which("node")
+        proc = subprocess.run(
+            [node, "-e", f"process.stdout.write(JSON.stringify(require({json.dumps(str(data_js))})))"],
+            capture_output=True, text=True)
+        js_data = json.loads(proc.stdout)
+        import chemicals as py_chem
+        import aegl_db as py_aegl
+        import erg as py_erg
+        # Round-trip Python through json too, so both sides are plain JSON values
+        # (tuples -> lists etc.) and the comparison is apples to apples.
+        py_data = json.loads(json.dumps({
+            "CHEMICALS": py_chem.CHEMICALS, "AEGL": py_aegl.AEGL, "ERG_TABLE1": py_erg.ERG_TABLE1,
+        }, ensure_ascii=False))
+        r.check("chemicals bundle matches Python exactly", js_data["CHEMICALS"] == py_data["CHEMICALS"],
+                f"js {len(js_data['CHEMICALS'])} / py {len(py_data['CHEMICALS'])}")
+        r.check("AEGL bundle matches Python exactly", js_data["AEGL"] == py_data["AEGL"])
+        r.check("ERG bundle matches Python exactly", js_data["ERG_TABLE1"] == py_data["ERG_TABLE1"])
+
     return r.report()
 
 
