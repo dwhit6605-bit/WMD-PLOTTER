@@ -5,7 +5,11 @@
  * compares. Kept dumb on purpose — all the assertion logic lives in Python.
  */
 const path = require('path');
-const dispersion = require(path.join(__dirname, '..', 'frontend', 'js', 'models', 'dispersion.js'));
+const MODELS = path.join(__dirname, '..', 'frontend', 'js', 'models');
+const dispersion = require(path.join(MODELS, 'dispersion.js'));
+const blast = require(path.join(MODELS, 'blast.js'));
+const bleve = require(path.join(MODELS, 'bleve.js'));
+const radiation = require(path.join(MODELS, 'radiation.js'));
 
 const DISPATCH = {
   sigma_y:                   (a) => dispersion.sigma_y(a.x, a.stability),
@@ -20,6 +24,21 @@ const DISPATCH = {
   compute_all_contours:      (a) => dispersion.compute_all_contours(
                                       a.Q, a.u, a.stability, a.mw, a.thresholds,
                                       a.lat, a.lon, a.wind_from, a.H),
+
+  // blast
+  overpressure_kPa:              (a) => blast.overpressure_kPa(a.Z),
+  scaled_distance_for_pressure:  (a) => blast.scaled_distance_for_pressure(a.target_kPa),
+  compute_blast_zones:           (a) => blast.compute_blast_zones(a.lat, a.lon, a.weight_kg, a.explosive_id),
+
+  // bleve
+  fireball_params:    (a) => bleve.fireball_params(a.mass),
+  thermal_flux:       (a) => bleve.thermal_flux(a.D, a.r_f, a.h_f, a.sep),
+  distance_for_flux:  (a) => bleve.distance_for_flux(a.q, a.r_f, a.h_f, a.sep),
+  compute_bleve_zones:(a) => bleve.compute_bleve_zones(a.lat, a.lon, a.mass, a.fuel_id),
+
+  // radiation
+  compute_radiation_contours: (a) => radiation.compute_radiation_contours(
+                                       a.Q, a.u, a.stability, a.dcf, a.lat, a.lon, a.wind_from, a.H),
 };
 
 let raw = '';

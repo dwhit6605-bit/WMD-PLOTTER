@@ -25,6 +25,9 @@ from helpers import Results, add_backend_to_path
 
 add_backend_to_path()
 import dispersion as py
+import blast as py_blast
+import bleve as py_bleve
+import radiation as py_rad
 
 DRIVER = Path(__file__).resolve().parent / "model_port_driver.js"
 
@@ -108,6 +111,25 @@ def main():
                         {"u": u, "day": day, "cloud": cloud, "solar": solar},
                         py.determine_stability_class(u, day, cloud, solar))
 
+    # ── Blast: Brode overpressure + bisection solver ────────────────────────
+    for Z in [0.05, 0.2, 0.4, 0.5, 0.6, 1.0, 5.0, 20.0, 100.0, 500.0]:
+        add("overpressure_kPa", {"Z": Z}, py_blast.overpressure_kPa(Z))
+    for zone in py_blast.DAMAGE_ZONES:
+        add("scaled_distance_for_pressure", {"target_kPa": zone["kPa"]},
+            py_blast._scaled_distance_for_pressure(zone["kPa"]))
+
+    # ── BLEVE: thermal flux + distance solver ───────────────────────────────
+    for mass in [500.0, 5000.0, 29999.0, 30000.0, 80000.0]:
+        fb = py_bleve.fireball_params(mass)
+        for D in [fb["radius_m"], 200.0, 1000.0, 5000.0]:
+            add("thermal_flux",
+                {"D": D, "r_f": fb["radius_m"], "h_f": fb["center_height_m"], "sep": 200},
+                py_bleve._thermal_flux(D, fb["radius_m"], fb["center_height_m"], 200))
+        for q in [37.5, 12.5, 4.0, 1.6]:
+            add("distance_for_flux",
+                {"q": q, "r_f": fb["radius_m"], "h_f": fb["center_height_m"], "sep": 200},
+                py_bleve._distance_for_flux(q, fb["radius_m"], fb["center_height_m"], 200))
+
     js = _run_js(cases)
     r.check("node produced a result for every case", js is not None and len(js) == len(cases),
             f"{len(js) if js else 0} vs {len(cases)}")
@@ -167,7 +189,85 @@ def main():
                 f"py={py_contours[level]['max_downwind_m']} js={js_contours[level]['max_downwind_m']}")
 
     print(f"\n(worst geographic disagreement across all vertices: {worst:.2e} degrees)")
+
+    # ── Blast: full zone geometry (circle rings) ────────────────────────────
+    r.section("blast zone geometry")
+    for eid, w in [("tnt", 500.0), ("c4", 100.0), ("anfo", 2000.0)]:
+        py_out = py_blast.compute_blast_zones(34.05, -118.25, w, eid)
+        js_out = _run_js([{"fn": "compute_blast_zones",
+                           "args": {"lat": 34.05, "lon": -118.25, "weight_kg": w, "explosive_id": eid}}])[0]["value"]
+        pf = py_out["geojson"]["features"]
+        jf = js_out["geojson"]["features"]
+        same = len(pf) == len(jf) and _coords_match(pf, jf)
+        r.check(f"{eid} {w}kg: same zones and identical ring geometry", same,
+                f"py {len(pf)} feats / js {len(jf)} feats")
+        r.check(f"{eid} {w}kg: W_tnt matches", _close(py_out["W_tnt_kg"], js_out["W_tnt_kg"]),
+                f"py={py_out['W_tnt_kg']} js={js_out['W_tnt_kg']}")
+
+    # ── BLEVE: fireball params + zone geometry ──────────────────────────────
+    r.section("bleve fireball + geometry")
+    for fuel, mass in [("propane", 40000.0), ("lng", 5000.0), ("gasoline", 20000.0)]:
+        py_out = py_bleve.compute_bleve_zones(34.05, -118.25, mass, fuel)
+        js_out = _run_js([{"fn": "compute_bleve_zones",
+                           "args": {"lat": 34.05, "lon": -118.25, "mass": mass, "fuel_id": fuel}}])[0]["value"]
+        r.check(f"{fuel} {mass}kg: fireball radius matches",
+                _close(py_out["fireball"]["radius_m"], js_out["fireball"]["radius_m"]),
+                f"py={py_out['fireball']['radius_m']} js={js_out['fireball']['radius_m']}")
+        r.check(f"{fuel} {mass}kg: duration matches",
+                _close(py_out["fireball"]["duration_s"], js_out["fireball"]["duration_s"]))
+        pf, jf = py_out["geojson"]["features"], js_out["geojson"]["features"]
+        r.check(f"{fuel} {mass}kg: identical zone ring geometry",
+                len(pf) == len(jf) and _coords_match(pf, jf),
+                f"py {len(pf)} feats / js {len(jf)} feats")
+
+    # ── Radiation: dose contours (reuses the plume geometry, Ci units) ──────
+    r.section("radiation dose contours")
+    for rid in ["cs137", "co60", "sr90"]:
+        rad = py_rad.get_radionuclide(rid)
+        rargs = {"Q": 0.5, "u": 3.0, "stability": "D", "dcf": rad["dcf_cloud"],
+                 "lat": 34.05, "lon": -118.25, "wind_from": 270.0, "H": 0.0}
+        py_c = py_rad.compute_radiation_contours(
+            rargs["Q"], rargs["u"], rargs["stability"], rargs["dcf"],
+            rargs["lat"], rargs["lon"], rargs["wind_from"], rargs["H"])
+        js_c = _run_js([{"fn": "compute_radiation_contours", "args": rargs}])[0]["value"]
+        ok = set(py_c) == set(js_c)
+        vworst = 0.0
+        for level in py_c:
+            pl, jl = py_c[level]["latlon"], js_c[level]["latlon"]
+            if len(pl) != len(jl):
+                ok = False
+                continue
+            for (a1, b1), (a2, b2) in zip(pl, jl):
+                vworst = max(vworst, abs(a1 - a2), abs(b1 - b2))
+                if not (_close(a1, a2) and _close(b1, b2)):
+                    ok = False
+        r.check(f"{rid}: dose contours match Python (worst {vworst:.1e} deg)", ok)
+
     return r.report()
+
+
+def _coords_match(py_features, js_features):
+    """Compare two GeoJSON feature lists by geometry coordinates at full precision.
+
+    Only geometry is compared, not properties: properties carry display values
+    rounded with Python's banker's rounding, which differs from JS in the last
+    ulp. The ring/point coordinates are unrounded, so they must agree exactly.
+    """
+    for pf, jf in zip(py_features, js_features):
+        pg, jg = pf["geometry"], jf["geometry"]
+        if pg["type"] != jg["type"]:
+            return False
+        if pg["type"] == "Point":
+            if not all(_close(a, b) for a, b in zip(pg["coordinates"], jg["coordinates"])):
+                return False
+        else:  # Polygon
+            pring, jring = pg["coordinates"][0], jg["coordinates"][0]
+            if len(pring) != len(jring):
+                return False
+            for (px, pyy), (jx, jy) in zip(pring, jring):
+                if not (_close(px, jx) and _close(pyy, jy)):
+                    return False
+    return True
 
 
 if __name__ == "__main__":
