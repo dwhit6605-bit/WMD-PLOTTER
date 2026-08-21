@@ -1,0 +1,19 @@
+{
+  "name": "etl-wmdplotter",
+  "version": "0.1.0",
+  "description": "CloudTAK ETL: broadcast WMD PLOTTER CBRN hazard zones to TAK users",
+  "type": "module",
+  "scripts": {
+    "test": "node transform.test.js",
+    "lint": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@tak-ps/etl": "^10.13.0",
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "comment": "Versions confirmed from the npm registry on 2026-08-12 (etl-base 10.13.0). Pin and re-verify before deploy: the ETL interface moves fast. @sinclair/typebox range should track whatever @tak-ps/etl depends on."
+}

@@ -1,0 +1,33 @@
+{
+    "version": "0.1.0",
+    "name": "WMD PLOTTER Hazard Zones",
+    "description": "Broadcasts WHITWERX Model Display (WMD PLOTTER) CBRN hazard zones — Gaussian plume, blast, radiation, BLEVE, dense-gas, and fire/smoke contours — into TAK as styled, auto-staling drawn shapes. Webhook invocation pushes a plume the moment a responder computes it; the optional schedule keeps a live 'active incidents' layer in sync.",
+    "compute": {
+        "memory": 256,
+        "timeout": 30
+    },
+    "permissions": [
+        {
+            "resource": "feature:*",
+            "required": true,
+            "description": "Posts hazard-zone polygons to the map layer."
+        }
+    ],
+    "invocations": {
+        "incoming": {
+            "webhook": {
+                "description": "WMD PLOTTER POSTs a hazard FeatureCollection to this layer's webhook the moment an operator broadcasts an incident — event-driven, no polling lag.",
+                "default": {
+                    "enabled": true
+                }
+            },
+            "schedule": {
+                "description": "Optional. Polls the configured WMD PLOTTER instance for currently-active incidents and keeps the layer in sync. Leave disabled if you only use event-driven webhook pushes.",
+                "default": {
+                    "enabled": false,
+                    "schedule": "rate(1 minute)"
+                }
+            }
+        }
+    }
+}
