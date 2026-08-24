@@ -70,6 +70,8 @@ _PUBLIC_EXACT = {
     # rate limit on the request form.
     "/reset-password",
     "/auth/forgot-password", "/auth/reset-password", "/auth/reset-password/check",
+    # Public marketing / sales walkthrough — no session, no data, safe to share
+    "/pitch",
     "/sw.js", "/manifest.json",
     # Auth actions that work without a cookie
     "/auth/login", "/auth/logout", "/auth/register", "/auth/registration-status",

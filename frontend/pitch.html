@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WMD PLOTTER — Live CBRN Plume Modeling</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='20' font-size='20'%3E%F0%9F%8C%AB%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{
+    --ground:#0B1220; --surface:#111B29; --panel:#0F1826; --line:#22314633;
+    --ink:#E8EEF5; --muted:#8A9AAE; --faint:#61728A;
+    --accent:#34D6C6; --accent-ink:#052421;
+    --aegl3:#FF4646; --aegl2:#FF9126; --aegl1:#FFD23F;
+    --shadow:0 1px 0 rgba(255,255,255,.03), 0 18px 48px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{margin:0; background:var(--ground); color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,sans-serif; font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased}
+  h1,h2,h3{font-family:"Archivo",system-ui,sans-serif; text-wrap:balance; margin:0; letter-spacing:-.02em}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums}
+  a{color:inherit}
+  .wrap{max-width:1120px; margin:0 auto; padding:0 24px}
+  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent); font-weight:500}
+  .lede{color:var(--muted); font-size:18px; max-width:60ch}
+
+  header{position:sticky; top:0; z-index:1000; backdrop-filter:blur(10px);
+    background:color-mix(in oklab, var(--ground) 82%, transparent); border-bottom:1px solid var(--line)}
+  .bar{display:flex; align-items:center; gap:14px; height:60px}
+  .brand{display:flex; align-items:center; gap:10px; font-family:"Archivo"; font-weight:800}
+  .hex{width:26px;height:26px;flex:none;color:var(--accent)}
+  .bar-cta{margin-left:auto; display:flex; gap:10px; align-items:center}
+  .link{color:var(--muted); font-size:14px; text-decoration:none}
+  .link:hover{color:var(--ink)}
+  .btn{display:inline-flex; align-items:center; gap:8px; font-weight:600; font-size:14px; padding:9px 16px;
+    border-radius:9px; text-decoration:none; cursor:pointer; border:1px solid transparent; font-family:inherit}
+  .btn-primary{background:var(--accent); color:var(--accent-ink)}
+  .btn-primary:hover{filter:brightness(1.06)}
+  .btn-ghost{border-color:var(--line); color:var(--ink); background:transparent}
+  .btn-ghost:hover{border-color:var(--accent); color:var(--accent)}
+  .btn-lg{padding:13px 22px; font-size:15px; border-radius:11px}
+  .btn:disabled{opacity:.55; cursor:default}
+
+  .hero{padding:56px 0 40px}
+  .hero-grid{display:grid; grid-template-columns:1.05fr 1.35fr; gap:40px; align-items:center}
+  .hero h1{font-size:clamp(34px,5vw,60px); font-weight:900; line-height:1.02}
+  .hero .lede{margin-top:18px; font-size:19px}
+  .hero-cta{display:flex; gap:12px; margin-top:26px; flex-wrap:wrap}
+  .trust{margin-top:22px; display:flex; gap:18px; flex-wrap:wrap; color:var(--faint); font-size:13px}
+  .trust b{color:var(--muted); font-weight:600}
+
+  .instr{background:var(--surface); border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow); overflow:hidden}
+  .instr-head{display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); font-size:13px; color:var(--muted)}
+  .live-dot{width:8px;height:8px;border-radius:50%;background:var(--accent); animation:pulse 2.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--accent) 60%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  @media (prefers-reduced-motion:reduce){.live-dot{animation:none}}
+  .map{height:340px; position:relative; background:#0b1017}
+  .zonechip{position:absolute; top:12px; left:12px; z-index:500; display:flex; flex-direction:column; gap:5px}
+  .zc{display:flex; align-items:center; gap:7px; font-size:11px; background:color-mix(in oklab,var(--surface) 88%, transparent);
+    padding:4px 8px; border-radius:7px; border:1px solid var(--line)}
+  .sw{width:11px;height:11px;border-radius:3px}
+  .controls{display:grid; grid-template-columns:1fr 1fr; gap:14px 20px; padding:16px}
+  .ctl label{display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-bottom:6px}
+  .ctl label b{color:var(--ink); font-weight:600}
+  input[type=range]{width:100%; accent-color:var(--accent); height:22px}
+  select{width:100%; background:var(--panel); border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:8px 10px; font-family:inherit; font-size:14px}
+  .readout{display:grid; grid-template-columns:repeat(3,1fr); border-top:1px solid var(--line)}
+  .ro{padding:14px 16px; border-right:1px solid var(--line)}
+  .ro:last-child{border-right:none}
+  .ro .k{font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint)}
+  .ro .v{font-family:"IBM Plex Mono"; font-size:22px; font-weight:600; margin-top:3px}
+  .ro .u{font-size:12px; color:var(--muted)}
+
+  section{padding:64px 0}
+  .sec-head{max-width:64ch; margin-bottom:34px}
+  .sec-head h2{font-size:clamp(26px,3.4vw,38px); font-weight:800; margin-top:10px}
+  .sec-head p{color:var(--muted); margin-top:12px; font-size:17px}
+
+  .scn{background:var(--surface); border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow); overflow:hidden}
+  .scn-grid{display:grid; grid-template-columns:1fr 1.25fr}
+  .scn-left{padding:26px; border-right:1px solid var(--line); display:flex; flex-direction:column}
+  .steps{list-style:none; margin:0 0 auto; padding:0; display:flex; flex-direction:column; gap:2px}
+  .step{display:grid; grid-template-columns:auto 1fr; gap:14px; padding:12px 10px; border-radius:10px; cursor:pointer; transition:background .15s}
+  .step:hover,.step.on{background:var(--panel)}
+  .step .num{width:26px;height:26px;border-radius:50%; border:1px solid var(--line); display:grid;place-items:center;
+    font-family:"IBM Plex Mono"; font-size:12px; color:var(--muted); flex:none}
+  .step.on .num{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+  .step .t{display:block; font-weight:600; font-size:15px}
+  .step .d{display:block; color:var(--muted); font-size:13px; margin-top:2px}
+  .step.on .d{color:var(--ink)}
+  .scn-right{padding:20px; position:relative}
+  .scn-map{height:360px; border-radius:12px; overflow:hidden; border:1px solid var(--line); position:relative}
+  .scn-note{position:absolute; left:12px; right:12px; bottom:12px; z-index:500; background:color-mix(in oklab,var(--surface) 92%, transparent);
+    border:1px solid var(--line); border-radius:9px; padding:10px 12px; font-size:13px}
+  .scn-note .mono{color:var(--accent)}
+  .scn-nav{display:flex; gap:10px; margin-top:16px}
+  .impact-tags{position:absolute; top:30px; left:30px; z-index:500; display:flex; gap:6px; flex-wrap:wrap; max-width:60%}
+  .itag{font-size:10.5px; padding:3px 7px; border-radius:6px; background:color-mix(in oklab,var(--surface) 90%,transparent); border:1px solid var(--line); color:var(--muted)}
+  .itag.hit{color:#fff; background:var(--aegl2); border-color:transparent}
+
+  .grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:20px; box-shadow:var(--shadow)}
+  .card h3{font-size:16px; font-weight:700; margin-bottom:6px}
+  .card p{color:var(--muted); font-size:14px; margin:0}
+  .card .tag{font-family:"IBM Plex Mono"; font-size:11px; color:var(--accent); letter-spacing:.06em}
+
+  .split{display:grid; grid-template-columns:1fr 1fr; gap:40px; align-items:center}
+  .checks{list-style:none; padding:0; margin:18px 0 0; display:flex; flex-direction:column; gap:11px}
+  .checks li{display:grid; grid-template-columns:auto 1fr; gap:11px; align-items:start; font-size:15px}
+  .ck{color:var(--accent); flex:none; margin-top:3px}
+  .soon-badge{display:inline-block; font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.1em; color:var(--aegl2);
+    border:1px solid var(--aegl2); border-radius:20px; padding:3px 10px; margin-bottom:12px}
+  .soon-card{background:var(--surface); border:1px dashed var(--line); border-radius:16px; padding:26px; position:relative; opacity:.96}
+  .phone{max-width:280px; margin:0 auto; background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:14px}
+  .phone .airplane{display:flex; justify-content:space-between; font-size:11px; color:var(--muted); font-family:"IBM Plex Mono"; margin-bottom:8px}
+  .phone-map{aspect-ratio:9/15; background:#0b1017; border-radius:12px; position:relative; overflow:hidden; display:grid; place-items:center}
+  .phone-plume{width:70%; opacity:.5}
+
+  .band{background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:34px; box-shadow:var(--shadow)}
+  .pipe{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:20px; font-size:14px; color:var(--muted)}
+  .node{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-weight:600; color:var(--ink)}
+  .node.you{border-color:var(--accent); color:var(--accent)}
+  .arrow{color:var(--accent); font-family:"IBM Plex Mono",monospace}
+
+  .cta-final{text-align:center; padding:72px 0}
+  .cta-final h2{font-size:clamp(28px,4vw,44px); font-weight:900}
+  .cta-final p{color:var(--muted); font-size:18px; margin:14px auto 0; max-width:52ch}
+  .cta-row{display:flex; gap:14px; justify-content:center; margin-top:28px; flex-wrap:wrap}
+
+  footer{border-top:1px solid var(--line); padding:30px 0 50px; color:var(--faint); font-size:13px}
+  .disclaimer{background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:14px 16px; font-size:12.5px; color:var(--muted); line-height:1.55; margin-bottom:22px}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
+
+  /* Leaflet dark polish */
+  .leaflet-container{background:#0b1017; font-family:"IBM Plex Sans",sans-serif}
+  .leaflet-tile{filter:brightness(.72) saturate(.8) contrast(1.02)}
+  .leaflet-control-attribution{background:rgba(11,18,32,.7)!important; color:#61728A!important}
+  .leaflet-control-attribution a{color:#8A9AAE!important}
+  .src-marker{width:16px;height:16px;border-radius:50%;border:2px solid var(--aegl3);background:rgba(255,70,70,.25);box-shadow:0 0 0 3px rgba(255,70,70,.15)}
+  .fac-label{font-size:11px; color:#dfe7f0; font-weight:600; text-shadow:0 1px 3px #000, 0 0 2px #000; white-space:nowrap}
+  .fac-dot{width:9px;height:9px;border-radius:50%;background:var(--surface);border:1.5px solid var(--muted)}
+  .fac-dot.hit{background:var(--aegl2);border-color:var(--aegl2)}
+
+  @media (max-width:880px){
+    .hero-grid,.scn-grid,.split{grid-template-columns:1fr}
+    .grid3{grid-template-columns:1fr}
+    .scn-left{border-right:none; border-bottom:1px solid var(--line)}
+    .bar .link{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <span class="brand">
+      <svg class="hex" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7L12 2z" stroke="currentColor" stroke-width="1.6"/><path d="M12 7v10M7.5 9.5l9 5M16.5 9.5l-9 5" stroke="currentColor" stroke-width="1.1" opacity=".55"/></svg>
+      WMD&nbsp;PLOTTER
+    </span>
+    <div class="bar-cta">
+      <a class="link" href="#scenario">Walkthrough</a>
+      <a class="link" href="#deploy">Your cloud</a>
+      <a class="link" href="#models">Models</a>
+      <a class="btn btn-primary" href="#pilot">Request a pilot</a>
+    </div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">CBRN hazard modeling · runs on your private cloud</span>
+      <h1>See the plume before it reaches them.</h1>
+      <p class="lede">A chlorine line lets go. Where does the cloud go, who's under it, and what do you tell them — <b>now</b>, not after the report. WMD PLOTTER computes the dispersion live in any browser, on <b>your own cloud server</b>, and pushes the hazard zones straight to your team's TAK map.</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary btn-lg" href="#pilot">Request a pilot →</a>
+        <a class="btn btn-ghost btn-lg" href="#demo">Book a demo</a>
+      </div>
+      <div class="trust">
+        <span><b>Your private cloud</b> · your data</span>
+        <span><b>Any browser</b> · no install</span>
+        <span><b>9</b> hazard models</span>
+        <span><b>TAK / ATAK</b> native</span>
+      </div>
+    </div>
+
+    <div class="instr">
+      <div class="instr-head"><span class="live-dot"></span> Live model on a real map — computing right now, not a screenshot</div>
+      <div class="map" id="heroMap"></div>
+      <div class="controls">
+        <div class="ctl" style="grid-column:1/-1"><label for="chem">Agent</label><select id="chem"></select></div>
+        <div class="ctl"><label for="rate">Release rate <b><span id="rateV"></span> kg/min</b></label><input id="rate" type="range" min="1" max="300" value="70"></div>
+        <div class="ctl"><label for="wspd">Wind speed <b><span id="wspdV"></span> m/s</b></label><input id="wspd" type="range" min="1" max="15" step="0.5" value="3"></div>
+        <div class="ctl"><label for="wdir">Wind from <b><span id="wdirV"></span>°</b></label><input id="wdir" type="range" min="0" max="360" value="270"></div>
+        <div class="ctl"><label for="stab">Stability <b><span id="stabV"></span></b></label><input id="stab" type="range" min="0" max="5" value="3"></div>
+      </div>
+      <div class="readout">
+        <div class="ro"><div class="k">AEGL-2 reach</div><div class="v" id="roReach">—</div><div class="u">downwind</div></div>
+        <div class="ro"><div class="k">Footprint</div><div class="v" id="roArea">—</div><div class="u">AEGL-2 area</div></div>
+        <div class="ro"><div class="k">Est. exposed</div><div class="v" id="roPop">—</div><div class="u">uniform density</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="scenario">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">A real call</span>
+      <h2>Chlorine release at the rail yard</h2>
+      <p>The same model, walked through an incident from the tones dropping to the protective-action call. Step through it — the plume recomputes on the real map at each stage.</p>
+    </div>
+    <div class="scn">
+      <div class="scn-grid">
+        <div class="scn-left">
+          <ol class="steps" id="steps"></ol>
+          <div class="scn-nav">
+            <button class="btn btn-ghost" id="prevBtn">← Back</button>
+            <button class="btn btn-primary" id="nextBtn" style="flex:1">Next stage →</button>
+          </div>
+        </div>
+        <div class="scn-right">
+          <div class="scn-map" id="scnMap"></div>
+          <div class="impact-tags" id="impactTags"></div>
+          <div class="scn-note" id="scnNote"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="deploy" style="background:var(--panel)">
+  <div class="wrap split">
+    <div>
+      <span class="eyebrow">Your infrastructure</span>
+      <h2 style="font-size:clamp(26px,3.4vw,38px);font-weight:800;margin-top:10px">It runs on your cloud. Your data never leaves it.</h2>
+      <p class="lede" style="margin-top:12px">WMD PLOTTER deploys on a server <b>you control</b> — your private cloud, your VPS, your network. Incident locations, facility libraries, and TAK certs stay on your infrastructure, not a vendor's.</p>
+      <ul class="checks">
+        <li><span class="ck">✓</span> Self-hosted on your private cloud or VPS — one command to deploy</li>
+        <li><span class="ck">✓</span> Any browser on your network reaches it — nothing to install on the rig</li>
+        <li><span class="ck">✓</span> Per-organization accounts, roles, and TAK server profiles</li>
+        <li><span class="ck">✓</span> Your incident data and certs stay on your server</li>
+      </ul>
+    </div>
+    <div>
+      <div class="band">
+        <div class="eyebrow">Deployment</div>
+        <div class="pipe" style="margin-top:16px">
+          <span class="node you">Your Cloud Server</span>
+          <span class="arrow mono">└─</span>
+          <span class="node">WMD PLOTTER</span>
+        </div>
+        <div class="pipe">
+          <span class="node">Browser · IC</span><span class="node">Browser · Dispatch</span><span class="node">Browser · Field</span>
+        </div>
+        <p style="color:var(--muted);font-size:14px;margin-top:18px">One deploy. The incident commander, dispatch, and field officers all open the same live model in a browser — on your network, on your terms.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="models">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Not just plumes</span>
+      <h2>Nine hazard models, one tool</h2>
+      <p>Every model runs the same way the plume you just watched does — computed live, validated against the reference science, ready for the call you actually get.</p>
+    </div>
+    <div class="grid3">
+      <div class="card"><div class="tag">CHEM</div><h3>Gaussian plume</h3><p>Pasquill-Gifford dispersion with Briggs (1973) sigmas, AEGL/ERPG thresholds, 48 chemicals.</p></div>
+      <div class="card"><div class="tag">CHEM</div><h3>Dense gas</h3><p>Heavier-than-air correction for chlorine, phosgene, and vapor clouds that hug the ground.</p></div>
+      <div class="card"><div class="tag">EXPLOSIVE</div><h3>Blast overpressure</h3><p>Brode (1955) with Hopkinson-Cranz scaling — structural-damage and injury rings.</p></div>
+      <div class="card"><div class="tag">EXPLOSIVE</div><h3>BLEVE fireball</h3><p>Roberts (1982) thermal radiation zones for pressurized-fuel vessel failures.</p></div>
+      <div class="card"><div class="tag">RAD</div><h3>Radiological (RDD)</h3><p>Cloudshine dose-rate contours with EPA FGR-12 dose conversion factors.</p></div>
+      <div class="card"><div class="tag">FIRE</div><h3>Fire / smoke</h3><p>Heskestad flame height into a buoyant PM2.5 &amp; CO plume for structure and wildland fires.</p></div>
+      <div class="card"><div class="tag">MOVING</div><h3>Line source</h3><p>Superimposed release along a route — a leaking rail car or tanker on the move.</p></div>
+      <div class="card"><div class="tag">CASUALTY</div><h3>Probit casualty</h3><p>Ten Berge dose-response estimates of fatalities and injuries by zone.</p></div>
+      <div class="card"><div class="tag">IMPACT</div><h3>In the hazard zone</h3><p>Which schools, hospitals, and facilities fall inside each contour — and how many people.</p></div>
+    </div>
+  </div>
+</section>
+
+<section style="background:var(--panel)">
+  <div class="wrap split">
+    <div>
+      <span class="soon-badge">◷ COMING SOON</span>
+      <h2 style="font-size:clamp(24px,3.2vw,34px);font-weight:800">On-device &amp; fully offline.</h2>
+      <p class="lede" style="margin-top:12px">The models already run in the browser — the next step puts them on the phone itself. Drop into a rail cut or a parking structure with no signal, and the plume will still compute on the device. In the works now.</p>
+      <ul class="checks">
+        <li><span class="ck">◷</span> All nine models bundled to run on-device</li>
+        <li><span class="ck">◷</span> 48 chemicals + AEGL / ERG reference data on board</li>
+        <li><span class="ck">◷</span> Standalone Android app — proven in airplane mode, in testing</li>
+      </ul>
+    </div>
+    <div>
+      <div class="phone">
+        <div class="airplane"><span>✈︎ 9:41</span><span>No Service</span></div>
+        <div class="phone-map"><svg class="phone-plume" viewBox="0 0 100 60"><path d="M8 30 Q40 6 96 20 Q60 30 96 40 Q40 54 8 30 Z" fill="var(--aegl2)" opacity=".5"/><path d="M8 30 Q30 20 60 26 Q40 30 60 34 Q30 40 8 30Z" fill="var(--aegl3)" opacity=".6"/><circle cx="8" cy="30" r="3" fill="var(--aegl3)"/></svg></div>
+        <div style="text-align:center;font-size:11px;color:var(--muted);margin-top:8px;font-family:'IBM Plex Mono'">preview · roadmap</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="band">
+      <span class="eyebrow">Shared picture</span>
+      <h2 style="font-size:clamp(24px,3vw,34px);font-weight:800;margin-top:10px">One responder computes it. The whole team sees it.</h2>
+      <p style="color:var(--muted);margin-top:12px;max-width:64ch">Push the hazard zones straight into ATAK / WinTAK as styled CoT — through <b>your own TAK server</b> — or into a CloudTAK mission for the browser-based common operating picture. IC, entry team, and dispatch look at the same plume.</p>
+      <div class="pipe">
+        <span class="node you">WMD PLOTTER</span><span class="arrow mono">──▶</span>
+        <span class="node">Your TAK Server</span><span class="arrow mono">──▶</span>
+        <span class="node">ATAK · WinTAK</span><span class="arrow mono">·</span><span class="node">CloudTAK</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="cta-final" id="pilot">
+  <div class="wrap">
+    <span class="eyebrow">Stand it up on your cloud</span>
+    <h2>Model the hazard, not the aftermath.</h2>
+    <p>Run a pilot on your own server with your department, or book a walkthrough with your team. We'll stand it up against a scenario you actually respond to.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary btn-lg" href="#pilot">Request a pilot for your department</a>
+      <a class="btn btn-ghost btn-lg" href="#demo">Book a demo</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="disclaimer"><b>Planning tool — not a life-safety authority.</b> All outputs (plume contours, damage rings, dose rates, casualty and population estimates) are mathematical modeling estimates with significant uncertainty, and must be reviewed by a qualified CBRN/HazMat specialist or incident commander before any protective-action decision. Gaussian plume estimates are order-of-magnitude (±2–5×). Not a substitute for official emergency-management guidance. Scenario locations and facility markers are illustrative.</div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">
+      <span class="brand" style="font-size:14px"><svg class="hex" style="width:20px;height:20px" viewBox="0 0 24 24" fill="none"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7L12 2z" stroke="currentColor" stroke-width="1.6"/></svg>WMD PLOTTER</span>
+      <span>WHITWERX Model Display · CBRN response planning · self-hosted</span>
+    </div>
+  </div>
+</footer>
+
+<script>window.L_DISABLE_3D=true;/* 2D transforms: universal compositing for screen-record / embed */</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* ── Real Gaussian plume — Pasquill-Gifford / Briggs (1973), same math WMD PLOTTER runs ── */
+const SIG={A:[.22,1e-4,-.5,.20,0,1],B:[.16,1e-4,-.5,.12,0,1],C:[.11,1e-4,-.5,.08,2e-4,-.5],
+  D:[.08,1e-4,-.5,.06,15e-4,-.5],E:[.06,1e-4,-.5,.03,3e-4,-1],F:[.04,1e-4,-.5,.016,3e-4,-1]};
+const MIX={A:1500,B:1200,C:900,D:700,E:500,F:300}, MV=24.45;
+const sy=(x,s)=>{const c=SIG[s];return c[0]*x*Math.pow(1+c[1]*x,c[2]);};
+const sz=(x,s)=>{const c=SIG[s];const v=c[4]===0?c[3]*x:c[3]*x*Math.pow(1+c[4]*x,c[5]);return Math.min(v,MIX[s]);};
+const cl=(x,Q,u,s,H)=>{if(x<=0)return 0;u=Math.max(u,.5);const a=sy(x,s),b=sz(x,s);if(a<=0||b<=0)return 0;
+  return Q/(Math.PI*a*b*u)*Math.exp(-.5*Math.pow(H/b,2));};
+const ppm2g=(p,mw)=>p*mw/(MV*1000);
+function maxDown(thr,Q,u,s,H){const x0=Math.max(H*2+1,10);if(cl(x0,Q,u,s,H)<thr)return 0;
+  let lo=x0,hi=150000;for(let i=0;i<60;i++){const m=.5*(lo+hi);cl(m,Q,u,s,H)>=thr?lo=m:hi=m;}return hi;}
+function halfW(x,thr,Q,u,s,H){const c=cl(x,Q,u,s,H);if(c<=thr)return 0;const r=c/thr;return r<=1?0:sy(x,s)*Math.sqrt(2*Math.log(r));}
+function plumeXY(thr,Q,u,s,H,windFrom){
+  const xmax=maxDown(thr,Q,u,s,H); if(xmax<=0)return [];
+  const x0=Math.max(H*2+1,5), N=90, R=[],L=[];
+  for(let i=0;i<N;i++){const x=x0+(xmax-x0)*i/(N-1); const hw=halfW(x,thr,Q,u,s,H); if(hw>0){R.push([x,hw]);L.push([x,-hw]);}}
+  if(!R.length)return [];
+  const ring=[[x0,0],...R,...L.reverse(),[x0,0]];
+  const to=(windFrom+180)%360, rad=Math.PI/180*(90-to);
+  return ring.map(([x,y])=>[x*Math.cos(rad)+y*Math.sin(rad), x*Math.sin(rad)-y*Math.cos(rad)]); // [east,north] m
+}
+function areaKm2(xy){let a=0;for(let i=0,j=xy.length-1;i<xy.length;j=i++)a+=(xy[j][0]+xy[i][0])*(xy[j][1]-xy[i][1]);return Math.abs(a)/2/1e6;}
+function pointInXY(px,py,ring){let inside=false;for(let i=0,j=ring.length-1;i<ring.length;j=i++){const yi=ring[i][1],xi=ring[i][0],yj=ring[j][1],xj=ring[j][0];
+  if((yi>py)!==(yj>py)){const xc=(xj-xi)*(py-yi)/(yj-yi)+xi; if(px<xc)inside=!inside;}}return inside;}
+
+const AGENTS=[
+  {id:'cl2',name:'Chlorine (Cl₂)',mw:70.9,a1:.5,a2:2,a3:20},
+  {id:'nh3',name:'Ammonia (NH₃)',mw:17.03,a1:30,a2:160,a3:1100},
+  {id:'cg', name:'Phosgene (CG)',mw:98.9,a1:.1,a2:.5,a3:1.5},
+  {id:'so2',name:'Sulfur dioxide (SO₂)',mw:64.07,a1:.2,a2:.75,a3:30},
+  {id:'h2s',name:'Hydrogen sulfide (H₂S)',mw:34.08,a1:.51,a2:27,a3:50},
+  {id:'hf', name:'Hydrogen fluoride (HF)',mw:20.01,a1:1,a2:24,a3:44},
+];
+const STAB=['A','B','C','D','E','F'];
+const ZC={a3:'#FF4646',a2:'#FF9126',a1:'#FFD23F'};
+function zones(agent,rate,u,s,wf){const Q=rate*1000/60;const o={};
+  for(const[k,ppm]of[['a1',agent.a1],['a2',agent.a2],['a3',agent.a3]])o[k]=plumeXY(ppm2g(ppm,agent.mw),Q,u,s,0,wf);return o;}
+
+/* a real rail-yard-adjacent location with schools/hospitals nearby (E. Los Angeles) */
+const SRC={lat:34.0224,lon:-118.2085};
+function mToLL(e,n){const lat=SRC.lat+n/111320;const lon=SRC.lon+e/(111320*Math.cos(SRC.lat*Math.PI/180));return [lat,lon];}
+function ringLL(xy){return xy.map(([e,n])=>mToLL(e,n));}
+
+/* Leaflet plume renderer over real tiles */
+function makeMap(id){
+  const m=L.map(id,{zoomControl:true,attributionControl:true,scrollWheelZoom:false,dragging:true});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(m);
+  m.setView([SRC.lat,SRC.lon],13);
+  return m;
+}
+function srcIcon(){return L.divIcon({className:'',html:'<div class="src-marker"></div>',iconSize:[16,16],iconAnchor:[8,8]});}
+function drawPlume(map,group,z,opts){
+  group.clearLayers();
+  for(const k of['a1','a2','a3']){const xy=z[k];if(!xy||!xy.length)continue;
+    L.polygon(ringLL(xy),{color:ZC[k],weight:1.5,opacity:.9,fillColor:ZC[k],fillOpacity:k==='a3'?.5:k==='a2'?.32:.18,interactive:false}).addTo(group);}
+  L.marker([SRC.lat,SRC.lon],{icon:srcIcon(),interactive:false}).addTo(group);
+  if(opts.points)for(const pt of opts.points){const hit=z.a2&&z.a2.length?pointInXY(pt.e,pt.n,z.a2):false;
+    const ll=mToLL(pt.e,pt.n);
+    const ic=L.divIcon({className:'',html:`<span style="display:flex;align-items:center;gap:5px"><span class="fac-dot ${hit?'hit':''}"></span><span class="fac-label">${pt.label}</span></span>`,iconSize:[10,10],iconAnchor:[5,5]});
+    L.marker(ll,{icon:ic,interactive:false}).addTo(group);}
+  if(opts.fit){const b=[];for(const k of['a2','a3'])for(const p of(z[k]||[]))b.push(mToLL(p[0],p[1]));
+    if(opts.points)for(const pt of opts.points)b.push(mToLL(pt.e,pt.n));
+    if(b.length)map.fitBounds(b,{padding:[30,30],maxZoom:15,animate:!opts.noAnim});}
+}
+
+/* ── Hero ── */
+const chemSel=document.getElementById('chem');
+AGENTS.forEach(a=>{const o=document.createElement('option');o.value=a.id;o.textContent=a.name;chemSel.appendChild(o);});
+const R={rate:document.getElementById('rate'),wspd:document.getElementById('wspd'),wdir:document.getElementById('wdir'),stab:document.getElementById('stab')};
+const heroPts=[{e:900,n:60,label:'Elementary'},{e:1900,n:-120,label:'Medical Center'},{e:2700,n:140,label:'Apartments'}];
+const fmtPop=n=>n>=1000?(n/1000).toFixed(1)+'k':Math.round(n).toString();
+let heroMap,heroGroup;
+function updateHero(){
+  const a=AGENTS.find(x=>x.id===chemSel.value),rate=+R.rate.value,u=+R.wspd.value,wf=+R.wdir.value,s=STAB[+R.stab.value];
+  document.getElementById('rateV').textContent=rate;document.getElementById('wspdV').textContent=u.toFixed(1);
+  document.getElementById('wdirV').textContent=wf;document.getElementById('stabV').textContent=s;
+  const z=zones(a,rate,u,s,wf);
+  drawPlume(heroMap,heroGroup,z,{points:heroPts});
+  const reach=z.a2.length?Math.max(...z.a2.map(p=>Math.hypot(p[0],p[1]))):0, area=z.a2.length?areaKm2(z.a2):0;
+  document.getElementById('roReach').textContent=(reach/1000).toFixed(2)+' km';
+  document.getElementById('roArea').textContent=area.toFixed(2)+' km²';
+  document.getElementById('roPop').textContent=fmtPop(area*2200);
+}
+
+/* ── Scenario ── */
+const SCN=[
+  {t:'Dispatch',d:'Chlorine leak reported, industrial rail yard. Crews en route.',
+   p:{agent:'cl2',rate:15,u:4,s:'D',wf:270},note:'Any browser on the network opens the same live model — <span class="mono">no install</span>, placard → agent in two taps.'},
+  {t:'Size-up',d:'One-ton container, valve failing — release rate climbs. The plume reaches the school.',
+   p:{agent:'cl2',rate:50,u:4,s:'D',wf:270},note:'The elementary school two blocks downwind is now inside <span class="mono">AEGL-2</span>.'},
+  {t:'Impact',d:'Who is under it? The school and the apartments are in the disabling zone.',
+   p:{agent:'cl2',rate:100,u:4,s:'D',wf:270},note:'Point-in-zone names the <span class="mono">school &amp; apartments</span> — decisions get names, not guesses.'},
+  {t:'Protective action',d:'Full release now. Re-run — and the zone reaches the medical center downwind.',
+   p:{agent:'cl2',rate:200,u:4,s:'D',wf:270},note:'Re-modeled in <span class="mono">&lt; 1 s</span> — the shelter / evacuate call now includes the medical center.'},
+  {t:'Broadcast',d:'Push the zones to ATAK through your TAK server. IC, entry, and dispatch share one plume.',
+   p:{agent:'cl2',rate:200,u:4,s:'D',wf:270},note:'Hazard zones sent as <span class="mono">CoT</span> to the team map — one common picture.'},
+];
+const scnPts=[{e:1200,n:40,label:'Elementary'},{e:2600,n:90,label:'Apartments'},{e:4800,n:-70,label:'Medical Center'}];
+let scnMap,scnGroup,scnI=0;
+const stepsEl=document.getElementById('steps');
+SCN.forEach((st,i)=>{const li=document.createElement('li');li.className='step';
+  li.innerHTML=`<span class="num">${i+1}</span><span><span class="t">${st.t}</span><span class="d">${st.d}</span></span>`;
+  li.addEventListener('click',()=>{scnI=i;renderScn();});stepsEl.appendChild(li);});
+function renderScn(){
+  [...stepsEl.children].forEach((el,i)=>el.classList.toggle('on',i===scnI));
+  const st=SCN[scnI],a=AGENTS.find(x=>x.id===st.p.agent),z=zones(a,st.p.rate,st.p.u,st.p.s,st.p.wf);
+  drawPlume(scnMap,scnGroup,z,{points:scnPts,fit:true});
+  document.getElementById('scnNote').innerHTML=st.note;
+  document.getElementById('impactTags').innerHTML=scnPts.map(pt=>{const hit=z.a2.length&&pointInXY(pt.e,pt.n,z.a2);
+    return `<span class="itag ${hit?'hit':''}">${hit?'⚠ ':''}${pt.label}</span>`;}).join('');
+  document.getElementById('prevBtn').disabled=scnI===0;
+  document.getElementById('nextBtn').textContent=scnI===SCN.length-1?'Restart ↺':'Next stage →';
+}
+document.getElementById('nextBtn').addEventListener('click',()=>{scnI=(scnI+1)%SCN.length;renderScn();});
+document.getElementById('prevBtn').addEventListener('click',()=>{if(scnI>0){scnI--;renderScn();}});
+
+window.addEventListener('load',()=>{
+  heroMap=makeMap('heroMap');heroGroup=L.layerGroup().addTo(heroMap);
+  scnMap=makeMap('scnMap');scnGroup=L.layerGroup().addTo(scnMap);
+  Object.values(R).forEach(el=>el.addEventListener('input',updateHero));
+  chemSel.addEventListener('change',updateHero);
+  updateHero();renderScn();
+  setTimeout(()=>{heroMap.invalidateSize();scnMap.invalidateSize();updateHero();},250);
+});
+</script>
+</body>
+</html>

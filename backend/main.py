@@ -388,6 +388,13 @@ async def reset_password_page():
     return HTMLResponse((FRONTEND_DIR / "reset_password.html").read_text())
 
 
+@app.get("/pitch", response_class=HTMLResponse)
+async def pitch_page():
+    """Public sales walkthrough — live in-browser plume modeling over real map tiles.
+    No auth, no data access; safe to share as the department-facing pitch."""
+    return HTMLResponse((FRONTEND_DIR / "pitch.html").read_text())
+
+
 # ── Auth API ──────────────────────────────────────────────────────────────────
 
 @app.post("/auth/login")
