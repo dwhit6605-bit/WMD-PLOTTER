@@ -146,6 +146,22 @@
   .fac-dot{width:9px;height:9px;border-radius:50%;background:var(--surface);border:1.5px solid var(--muted)}
   .fac-dot.hit{background:var(--aegl2);border-color:var(--aegl2)}
 
+  .capstrip{display:grid; grid-template-columns:repeat(6,1fr); margin-top:34px; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:var(--surface); box-shadow:var(--shadow)}
+  .capstrip .cap{padding:16px 18px; border-right:1px solid var(--line)}
+  .capstrip .cap:last-child{border-right:none}
+  .capstrip .cap .n{font-family:"Archivo"; font-weight:800; font-size:21px; color:var(--ink); letter-spacing:-.02em; line-height:1}
+  .capstrip .cap .n b{color:var(--accent); font-weight:800}
+  .capstrip .cap .l{font-size:12px; color:var(--muted); margin-top:6px; line-height:1.35}
+
+  .capgrid{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
+  .capcard{background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:20px; box-shadow:var(--shadow)}
+  .capcard .sub{font-family:"IBM Plex Mono"; font-size:11px; color:var(--accent); letter-spacing:.07em; text-transform:uppercase}
+  .capcard h3{font-size:16px; font-weight:700; margin:7px 0 0}
+  .capcard ul{list-style:none; padding:0; margin:12px 0 0; display:flex; flex-direction:column; gap:7px}
+  .capcard li{font-size:13.5px; color:var(--muted); padding-left:16px; position:relative; line-height:1.4}
+  .capcard li::before{content:""; position:absolute; left:0; top:7px; width:6px; height:6px; border-radius:2px; background:var(--accent); opacity:.75}
+  .capcard li b{color:var(--ink); font-weight:600}
+
   .shotwrap{display:grid; grid-template-columns:1.65fr 1fr; gap:18px; align-items:start}
   .shot{border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:var(--shadow); background:var(--panel); margin:0}
   .shot-bar{display:flex; align-items:center; gap:7px; padding:9px 13px; border-bottom:1px solid var(--line); background:color-mix(in oklab,var(--surface) 92%, transparent)}
@@ -156,6 +172,10 @@
 
   @media (max-width:880px){
     .shotwrap{grid-template-columns:1fr}
+    .capstrip{grid-template-columns:repeat(2,1fr)}
+    .capstrip .cap{border-right:none; border-bottom:1px solid var(--line)}
+    .capstrip .cap:nth-child(2n){border-right:none}
+    .capgrid{grid-template-columns:1fr}
     .hero-grid,.scn-grid,.split{grid-template-columns:1fr}
     .grid3{grid-template-columns:1fr}
     .scn-left{border-right:none; border-bottom:1px solid var(--line)}
@@ -174,8 +194,8 @@
     <div class="bar-cta">
       <a class="link" href="#product">The tool</a>
       <a class="link" href="#scenario">Walkthrough</a>
-      <a class="link" href="#deploy">Your cloud</a>
       <a class="link" href="#models">Models</a>
+      <a class="link" href="#capabilities">Capabilities</a>
       <a class="btn btn-primary" href="#pilot">Request a pilot</a>
     </div>
   </div>
@@ -194,7 +214,6 @@
       <div class="trust">
         <span><b>Your private cloud</b> · your data</span>
         <span><b>Any browser</b> · no install</span>
-        <span><b>9</b> hazard models</span>
         <span><b>TAK / ATAK</b> native</span>
       </div>
     </div>
@@ -214,6 +233,16 @@
         <div class="ro"><div class="k">Footprint</div><div class="v" id="roArea">—</div><div class="u">AEGL-2 area</div></div>
         <div class="ro"><div class="k">Est. exposed</div><div class="v" id="roPop">—</div><div class="u">uniform density</div></div>
       </div>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="capstrip">
+      <div class="cap"><div class="n"><b>9</b></div><div class="l">hazard models, one tool</div></div>
+      <div class="cap"><div class="n"><b>48</b></div><div class="l">chemicals · AEGL / ERPG / PAC</div></div>
+      <div class="cap"><div class="n"><b>103</b></div><div class="l">ERG isolation &amp; PAD distances</div></div>
+      <div class="cap"><div class="n">Live</div><div class="l">weather · fire · wildfire · facilities</div></div>
+      <div class="cap"><div class="n">TAK</div><div class="l">ATAK · WinTAK · CloudTAK push</div></div>
+      <div class="cap"><div class="n">Self-host</div><div class="l">your cloud · any browser</div></div>
     </div>
   </div>
 </section>
@@ -313,6 +342,77 @@
       <div class="card"><div class="tag">MOVING</div><h3>Line source</h3><p>Superimposed release along a route — a leaking rail car or tanker on the move.</p></div>
       <div class="card"><div class="tag">CASUALTY</div><h3>Probit casualty</h3><p>Ten Berge dose-response estimates of fatalities and injuries by zone.</p></div>
       <div class="card"><div class="tag">IMPACT</div><h3>In the hazard zone</h3><p>Which schools, hospitals, and facilities fall inside each contour — and how many people.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="capabilities" style="background:var(--panel)">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">The whole response toolkit</span>
+      <h2>Everything from the tones to the tactical picture.</h2>
+      <p>The models are the core — but a plume you can't act on isn't much use. WMD PLOTTER wraps the science in the workflow a HazMat response actually runs: real conditions, real impact, the tactical overlay, and a shared picture pushed to the whole team.</p>
+    </div>
+    <div class="capgrid">
+      <div class="capcard">
+        <div class="sub">Live data on the map</div>
+        <h3>Real conditions, not assumptions</h3>
+        <ul>
+          <li><b>Live weather</b> — Open-Meteo, nearest ASOS station, and NWS forecast, auto-set to the incident</li>
+          <li><b>NASA FIRMS</b> active-fire hotspots</li>
+          <li><b>NIFC</b> wildfire perimeters</li>
+          <li><b>HIFLD</b> critical-infrastructure layer</li>
+        </ul>
+      </div>
+      <div class="capcard">
+        <div class="sub">Who's in the zone</div>
+        <h3>Impact, named</h3>
+        <ul>
+          <li><b>Point-in-plume</b> — the schools, hospitals, and facilities inside each contour</li>
+          <li><b>Population estimate</b> from US Census density per zone</li>
+          <li>Facility presets &amp; your own imported facility library</li>
+          <li>Protective-action call gets <b>names, not guesses</b></li>
+        </ul>
+      </div>
+      <div class="capcard">
+        <div class="sub">Tactical &amp; ICS</div>
+        <h3>Run the scene on the map</h3>
+        <ul>
+          <li><b>ICS markers</b> — command post, staging, decon, medical, LZ, roadblock, shelter</li>
+          <li><b>Hot / Warm / Cold</b> control zones</li>
+          <li>Draw lines, polygons, circles &amp; text labels</li>
+          <li>A / B / C multi-point incidents, named &amp; switchable</li>
+        </ul>
+      </div>
+      <div class="capcard">
+        <div class="sub">Push to the team</div>
+        <h3>One picture, everywhere</h3>
+        <ul>
+          <li><b>CoT to ATAK / WinTAK</b> through your own TAK server</li>
+          <li><b>CloudTAK</b> mission for the browser common operating picture</li>
+          <li>Hazard zones, evac zones &amp; facilities all pushed as styled CoT</li>
+        </ul>
+      </div>
+      <div class="capcard">
+        <div class="sub">Export anywhere</div>
+        <h3>Take it off the screen</h3>
+        <ul>
+          <li><b>KML / KMZ</b> download for Google Earth</li>
+          <li><b>Google Earth network links</b> — live, auto-refreshing feeds</li>
+          <li><b>TAK data packages</b> for offline import</li>
+          <li>Capability-token share links, scoped &amp; expiring</li>
+        </ul>
+      </div>
+      <div class="capcard">
+        <div class="sub">Built for a department</div>
+        <h3>Yours to run</h3>
+        <ul>
+          <li><b>Self-hosted</b> on your private cloud — one command</li>
+          <li>Per-organization accounts, roles &amp; TAK profiles</li>
+          <li>US Customary or Metric SI, one toggle</li>
+          <li>Any browser on your network — nothing to install</li>
+        </ul>
+      </div>
     </div>
   </div>
 </section>
